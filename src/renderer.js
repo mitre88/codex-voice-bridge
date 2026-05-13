@@ -1,0 +1,430 @@
+const statusEl = document.querySelector("#status");
+const connectButton = document.querySelector("#connect");
+const disconnectButton = document.querySelector("#disconnect");
+const runCodexButton = document.querySelector("#runCodex");
+const rejectCodexButton = document.querySelector("#rejectCodex");
+const apiKeyInput = document.querySelector("#apiKey");
+const apiKeyField = document.querySelector("#apiKeyField");
+const keyStatusEl = document.querySelector("#keyStatus");
+const autoRunInput = document.querySelector("#autoRun");
+const voiceModeInput = document.querySelector("#voiceMode");
+const toneInput = document.querySelector("#tone");
+const reasoningInput = document.querySelector("#reasoningEffort");
+const targetLanguageInput = document.querySelector("#targetLanguage");
+const sourceLanguageInput = document.querySelector("#sourceLanguage");
+const myMicDeviceInput = document.querySelector("#myMicDevice");
+const interviewerInputMode = document.querySelector("#interviewerInputMode");
+const interviewerDeviceField = document.querySelector("#interviewerDeviceField");
+const interviewerAudioDeviceInput = document.querySelector("#interviewerAudioDevice");
+const spanishOutputDeviceInput = document.querySelector("#spanishOutputDevice");
+const englishOutputDeviceInput = document.querySelector("#englishOutputDevice");
+const assistantOptions = document.querySelectorAll(".assistant-option");
+const translateOptions = document.querySelectorAll(".translate-option");
+const transcribeOptions = document.querySelectorAll(".transcribe-option");
+const interviewOptions = document.querySelectorAll(".interview-option");
+const captionPanel = document.querySelector("#captionPanel");
+const sourceCaptionLabel = document.querySelector("#sourceCaptionLabel");
+const outputCaptionLabel = document.querySelector("#outputCaptionLabel");
+const sourceCaptionEl = document.querySelector("#sourceCaption");
+const outputCaptionEl = document.querySelector("#outputCaption");
+const pendingPanel = document.querySelector("#pendingPanel");
+const pendingPromptEl = document.querySelector("#pendingPrompt");
+const logEl = document.querySelector("#log");
+const configEl = document.querySelector("#config");
+
+const activeSessions = [];
+const handledToolCalls = new Set();
+let pendingAction;
+let actionDataChannel;
+let hasStoredKey = false;
+let sourceCaption = "";
+let outputCaption = "";
+let baseConfigText = "";
+
+function getBridge() {
+  if (!window.voiceBridge) throw new Error("Electron preload bridge is unavailable.");
+  return window.voiceBridge;
+}
+
+function tryBridge() {
+  return window.voiceBridge;
+}
+
+window.addEventListener("error", (event) => {
+  tryBridge()?.log("window.error", { message: event.message, filename: event.filename, lineno: event.lineno });
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  tryBridge()?.log("window.unhandledrejection", { reason: String(event.reason), stack: event.reason?.stack });
+});
+
+function setStatus(text) {
+  statusEl.textContent = text;
+  document.body.dataset.state = text.toLowerCase().replace(/\s+/g, "-");
+}
+
+function log(message, data) {
+  const suffix = data ? `\n${typeof data === "string" ? data : JSON.stringify(data, null, 2)}` : "";
+  logEl.textContent = `${new Date().toLocaleTimeString()}  ${message}${suffix}\n${logEl.textContent}`;
+  tryBridge()?.log("ui", { message, data }).catch(() => {});
+}
+
+function updateModeControls() {
+  const mode = voiceModeInput.value;
+  assistantOptions.forEach((el) => (el.hidden = mode !== "assistant"));
+  translateOptions.forEach((el) => (el.hidden = mode !== "translate"));
+  transcribeOptions.forEach((el) => (el.hidden = mode !== "transcribe"));
+  interviewOptions.forEach((el) => (el.hidden = mode !== "interview"));
+  interviewerDeviceField.hidden = mode !== "interview" || interviewerInputMode.value !== "device";
+  captionPanel.hidden = mode === "assistant";
+
+  if (mode === "interview") {
+    sourceCaptionLabel.textContent = "Interview English -> Spanish";
+    outputCaptionLabel.textContent = "My Spanish -> English";
+    configEl.textContent = "Route English to BlackHole/Loopback, then select that device as the meeting microphone.";
+  } else {
+    sourceCaptionLabel.textContent = "Source";
+    outputCaptionLabel.textContent = "Output";
+    if (baseConfigText) configEl.textContent = baseConfigText;
+  }
+}
+
+function getVoiceOptions() {
+  return {
+    mode: voiceModeInput.value,
+    tone: toneInput.value,
+    reasoningEffort: reasoningInput.value,
+    targetLanguage: targetLanguageInput.value,
+    sourceLanguage: sourceLanguageInput.value,
+    myMicDeviceId: myMicDeviceInput.value,
+    interviewerInputMode: interviewerInputMode.value,
+    interviewerAudioDeviceId: interviewerAudioDeviceInput.value,
+    spanishOutputDeviceId: spanishOutputDeviceInput.value,
+    englishOutputDeviceId: englishOutputDeviceInput.value,
+  };
+}
+
+function resetCaptions() {
+  sourceCaption = "";
+  outputCaption = "";
+  renderCaptions();
+}
+
+function renderCaptions() {
+  sourceCaptionEl.textContent = sourceCaption.trim() || "...";
+  outputCaptionEl.textContent = outputCaption.trim() || "...";
+}
+
+function appendCaption(kind, text, replace = false) {
+  if (!text) return;
+  if (kind === "source") sourceCaption = replace ? text : `${sourceCaption}${text}`;
+  else outputCaption = replace ? text : `${outputCaption}${text}`;
+  renderCaptions();
+}
+
+function humanizeError(error) {
+  const message = error?.message || String(error);
+  if (message.includes("insufficient_quota") || message.includes("exceeded your current quota")) {
+    return "OpenAI rejected the Realtime call: insufficient_quota. Check billing, project limits, and that the key belongs to the funded organization.";
+  }
+  return message;
+}
+
+function handleTranscriptEvent(event, targets = { source: "source", output: "output" }) {
+  if (event.type === "session.input_transcript.delta" && targets.source) appendCaption(targets.source, event.delta);
+  if (event.type === "session.output_transcript.delta" && targets.output) appendCaption(targets.output, event.delta);
+  if (event.type === "conversation.item.input_audio_transcription.delta" && targets.source) appendCaption(targets.source, event.delta);
+  if (event.type === "conversation.item.input_audio_transcription.completed" && targets.source) {
+    appendCaption(targets.source, event.transcript, true);
+  }
+  if ((event.type === "response.audio_transcript.delta" || event.type === "response.output_audio_transcript.delta") && targets.output) {
+    appendCaption(targets.output, event.delta);
+  }
+  if ((event.type === "response.audio_transcript.done" || event.type === "response.output_audio_transcript.done") && targets.output) {
+    appendCaption(targets.output, event.transcript, true);
+  }
+}
+
+function setPendingAction(action) {
+  pendingAction = action;
+  pendingPanel.hidden = !action;
+  if (!action) pendingPromptEl.value = "";
+  else if (action.kind === "codex") pendingPromptEl.value = action.args?.prompt || "";
+  else pendingPromptEl.value = JSON.stringify(action.args || {}, null, 2);
+  runCodexButton.disabled = !action;
+  rejectCodexButton.disabled = !action;
+}
+
+function applyKeyStatus(status) {
+  hasStoredKey = Boolean(status.hasEnvKey || status.hasSavedKey);
+  apiKeyField.hidden = hasStoredKey;
+  keyStatusEl.hidden = !hasStoredKey;
+  keyStatusEl.textContent = status.hasSavedKey ? "Saved OpenAI key active" : status.hasEnvKey ? "Using OPENAI_API_KEY" : "";
+}
+
+async function ensureApiKeyReady() {
+  const apiKey = apiKeyInput.value.trim();
+  if (apiKey) {
+    const result = await getBridge().setApiKey(apiKey);
+    if (!result.ok) throw new Error("The API key format does not look valid.");
+    apiKeyInput.value = "";
+    applyKeyStatus({ hasEnvKey: false, hasSavedKey: true });
+    return;
+  }
+  if (!hasStoredKey) {
+    const status = await getBridge().keyStatus();
+    applyKeyStatus(status);
+    if (!hasStoredKey) throw new Error("Paste the OpenAI API key once.");
+  }
+}
+
+function getFunctionCall(event) {
+  if (event.type === "response.function_call_arguments.done") {
+    return { callId: event.call_id, name: event.name, argsText: event.arguments };
+  }
+  if (event.type === "conversation.item.done" && event.item?.type === "function_call") {
+    return { callId: event.item.call_id, name: event.item.name, argsText: event.item.arguments };
+  }
+  return null;
+}
+
+async function executeAction(action) {
+  setPendingAction(null);
+  setStatus(action.kind === "codex" ? "Codex running" : "CUA running");
+  const result =
+    action.kind === "codex"
+      ? await getBridge().runCodex({ prompt: action.args.prompt, cwd: action.args.cwd })
+      : action.kind === "cua"
+        ? await getBridge().runCua(action.args)
+        : await getBridge().runMac(action.args);
+  sendFunctionOutput(action.callId, result);
+  setStatus("Listening");
+  log("Local action finished.", result);
+}
+
+async function handleToolEvent(event) {
+  const functionCall = getFunctionCall(event);
+  if (
+    !functionCall ||
+    !["run_codex", "run_cua_driver", "open_app", "type_text_in_front_app", "press_key_in_front_app"].includes(functionCall.name)
+  ) {
+    return;
+  }
+  if (handledToolCalls.has(functionCall.callId)) return;
+  handledToolCalls.add(functionCall.callId);
+
+  const args = JSON.parse(functionCall.argsText || "{}");
+  const isMacAction = ["open_app", "type_text_in_front_app", "press_key_in_front_app"].includes(functionCall.name);
+  const action = {
+    kind: functionCall.name === "run_codex" ? "codex" : functionCall.name === "run_cua_driver" ? "cua" : "mac",
+    callId: functionCall.callId,
+    args: isMacAction ? { action: functionCall.name, ...args } : args,
+  };
+  setPendingAction(action);
+  if (autoRunInput.checked) executeAction(action);
+}
+
+function deviceConstraint(deviceId, options = {}) {
+  const base = {
+    echoCancellation: options.echoCancellation ?? true,
+    noiseSuppression: options.noiseSuppression ?? true,
+    autoGainControl: options.autoGainControl ?? true,
+  };
+  return deviceId ? { ...base, deviceId: { exact: deviceId } } : base;
+}
+
+function setSelectOptions(select, devices, defaultLabel) {
+  const current = select.value;
+  select.replaceChildren(new Option(defaultLabel, ""));
+  devices.forEach((device, index) => select.appendChild(new Option(device.label || `${defaultLabel} ${index + 1}`, device.deviceId)));
+  if ([...select.options].some((option) => option.value === current)) select.value = current;
+}
+
+async function refreshMediaDevices(promptForLabels = false) {
+  let permissionStream;
+  if (promptForLabels) permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    setSelectOptions(myMicDeviceInput, devices.filter((device) => device.kind === "audioinput"), "Default microphone");
+    setSelectOptions(interviewerAudioDeviceInput, devices.filter((device) => device.kind === "audioinput"), "Default input");
+    setSelectOptions(spanishOutputDeviceInput, devices.filter((device) => device.kind === "audiooutput"), "Default output");
+    setSelectOptions(englishOutputDeviceInput, devices.filter((device) => device.kind === "audiooutput"), "Default output");
+  } finally {
+    permissionStream?.getTracks().forEach((track) => track.stop());
+  }
+}
+
+async function getInterviewAudioStream(options) {
+  if (options.interviewerInputMode === "device") {
+    return navigator.mediaDevices.getUserMedia({
+      audio: deviceConstraint(options.interviewerAudioDeviceId, {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      }),
+    });
+  }
+  const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+  stream.getVideoTracks().forEach((track) => track.stop());
+  if (!stream.getAudioTracks().length) throw new Error("No meeting audio was captured.");
+  return new MediaStream(stream.getAudioTracks());
+}
+
+async function applyAudioOutputDevice(audio, deviceId, label) {
+  if (!deviceId) return;
+  if (typeof audio.setSinkId !== "function") {
+    log(`${label}: this runtime cannot select a separate audio output device.`);
+    return;
+  }
+  await audio.setSinkId(deviceId);
+}
+
+async function connectPeerSession({ label, tokenOptions, inputStream, outputDeviceId, transcriptTargets, enableTools = false }) {
+  const token = await getBridge().createClientSecret(tokenOptions);
+  const pc = new RTCPeerConnection();
+  const audio = document.createElement("audio");
+  audio.autoplay = true;
+  await applyAudioOutputDevice(audio, outputDeviceId, label);
+
+  pc.ontrack = (event) => {
+    audio.srcObject = event.streams[0];
+  };
+  pc.addTrack(inputStream.getAudioTracks()[0], inputStream);
+
+  const dc = pc.createDataChannel(`oai-events-${label}`);
+  if (enableTools) actionDataChannel = dc;
+  dc.addEventListener("open", () => log(`${label}: Realtime data channel open.`));
+  dc.addEventListener("message", async (message) => {
+    const event = JSON.parse(message.data);
+    if (event.type?.includes("error")) log(`${label}: Realtime error`, event);
+    handleTranscriptEvent(event, transcriptTargets);
+    if (enableTools) await handleToolEvent(event);
+  });
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  const response = await fetch(token.callEndpoint || "https://api.openai.com/v1/realtime/calls", {
+    method: "POST",
+    body: offer.sdp,
+    headers: {
+      Authorization: `Bearer ${token.value}`,
+      "Content-Type": "application/sdp",
+    },
+  });
+  if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${await response.text()}`);
+  await pc.setRemoteDescription({ type: "answer", sdp: await response.text() });
+  activeSessions.push({ label, pc, dc, stream: inputStream, audio });
+}
+
+async function connectSingleRealtime(options) {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  await connectPeerSession({
+    label: "Assistant",
+    tokenOptions: options,
+    inputStream: stream,
+    transcriptTargets: { source: "source", output: "output" },
+    enableTools: options.mode === "assistant",
+  });
+}
+
+async function connectInterviewRealtime(options) {
+  const interviewerStream = await getInterviewAudioStream(options);
+  const myMicStream = await navigator.mediaDevices.getUserMedia({ audio: deviceConstraint(options.myMicDeviceId) });
+  await connectPeerSession({
+    label: "Interview to Spanish",
+    tokenOptions: { mode: "translate", targetLanguage: "es" },
+    inputStream: interviewerStream,
+    outputDeviceId: options.spanishOutputDeviceId,
+    transcriptTargets: { source: null, output: "source" },
+  });
+  await connectPeerSession({
+    label: "My reply to English",
+    tokenOptions: { mode: "translate", targetLanguage: "en" },
+    inputStream: myMicStream,
+    outputDeviceId: options.englishOutputDeviceId,
+    transcriptTargets: { source: null, output: "output" },
+  });
+}
+
+async function connectRealtime() {
+  setStatus("Connecting");
+  connectButton.disabled = true;
+  handledToolCalls.clear();
+  resetCaptions();
+  try {
+    await ensureApiKeyReady();
+    await refreshMediaDevices(false).catch(() => {});
+    const options = getVoiceOptions();
+    if (options.mode === "interview") await connectInterviewRealtime(options);
+    else await connectSingleRealtime(options);
+    setStatus("Listening");
+    disconnectButton.disabled = false;
+  } catch (error) {
+    disconnectRealtime({ silent: true });
+    log(humanizeError(error));
+    setStatus("Error");
+    connectButton.disabled = false;
+  }
+}
+
+function disconnectRealtime(options = {}) {
+  activeSessions.splice(0).forEach((session) => {
+    session.stream?.getTracks().forEach((track) => track.stop());
+    session.dc?.close();
+    session.pc?.close();
+    if (session.audio) session.audio.srcObject = null;
+  });
+  actionDataChannel = undefined;
+  connectButton.disabled = false;
+  disconnectButton.disabled = true;
+  if (!options.silent) {
+    setStatus("Idle");
+    log("Disconnected.");
+  }
+}
+
+function sendFunctionOutput(callId, output) {
+  if (!actionDataChannel || actionDataChannel.readyState !== "open") return;
+  actionDataChannel.send(
+    JSON.stringify({
+      type: "conversation.item.create",
+      item: { type: "function_call_output", call_id: callId, output: JSON.stringify(output) },
+    }),
+  );
+  actionDataChannel.send(JSON.stringify({ type: "response.create" }));
+}
+
+connectButton.addEventListener("click", connectRealtime);
+disconnectButton.addEventListener("click", disconnectRealtime);
+voiceModeInput.addEventListener("change", async () => {
+  updateModeControls();
+  if (voiceModeInput.value === "interview") refreshMediaDevices(true).catch((error) => log(error.message));
+});
+interviewerInputMode.addEventListener("change", updateModeControls);
+runCodexButton.addEventListener("click", () => pendingAction && executeAction(pendingAction));
+rejectCodexButton.addEventListener("click", () => {
+  if (!pendingAction) return;
+  sendFunctionOutput(pendingAction.callId, { ok: false, stderr: "The human rejected this local action request." });
+  setPendingAction(null);
+});
+navigator.mediaDevices?.addEventListener?.("devicechange", () => refreshMediaDevices(false).catch(() => {}));
+
+try {
+  getBridge().config().then((config) => {
+    if (config.reasoningEffort) reasoningInput.value = config.reasoningEffort;
+    if (config.targetLanguage) targetLanguageInput.value = config.targetLanguage;
+    baseConfigText = `${config.model} / ${config.translateModel} / ${config.transcribeModel} / Cmd+Shift+Space`;
+    configEl.textContent = baseConfigText;
+    updateModeControls();
+  });
+  getBridge().logPath().then((logPath) => log(`Live log: ${logPath}`));
+  getBridge().keyStatus().then((status) => {
+    applyKeyStatus(status);
+    if (status.hasEnvKey || status.hasSavedKey) log(status.hasSavedKey ? "Using saved OpenAI key from Keychain." : "Using OPENAI_API_KEY.");
+  });
+  refreshMediaDevices(false).catch(() => {});
+  updateModeControls();
+} catch (error) {
+  log(error.message);
+  setStatus("Bridge error");
+}

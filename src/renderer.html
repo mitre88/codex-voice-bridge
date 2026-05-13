@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex Voice Bridge</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Codex Voice Bridge</p>
+          <h1>Samantha</h1>
+        </div>
+        <span id="status" class="status">Idle</span>
+      </header>
+
+      <section class="voice-panel">
+        <div class="orb-wrap" aria-hidden="true">
+          <div class="orb"></div>
+        </div>
+        <p class="voice-state">Ready for voice control</p>
+
+        <label id="apiKeyField" class="field">
+          <span>OpenAI API key</span>
+          <input id="apiKey" type="password" autocomplete="off" placeholder="sk-proj-..." />
+        </label>
+        <p id="keyStatus" class="key-status" hidden>Saved OpenAI key active</p>
+
+        <div class="mode-grid">
+          <label class="field">
+            <span>Mode</span>
+            <select id="voiceMode">
+              <option value="assistant">Assistant</option>
+              <option value="interview">Interview</option>
+              <option value="translate">Live translate</option>
+              <option value="transcribe">Live captions</option>
+            </select>
+          </label>
+
+          <label class="field assistant-option">
+            <span>Tone</span>
+            <select id="tone">
+              <option value="calm">Calm</option>
+              <option value="direct">Direct</option>
+              <option value="energetic">Energetic</option>
+            </select>
+          </label>
+
+          <label class="field assistant-option">
+            <span>Reasoning</span>
+            <select id="reasoningEffort">
+              <option value="low">Low</option>
+              <option value="minimal">Minimal</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+
+          <label class="field translate-option" hidden>
+            <span>Translate to</span>
+            <select id="targetLanguage">
+              <option value="es">Spanish</option>
+              <option value="en">English</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="pt">Portuguese</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+              <option value="zh">Chinese</option>
+            </select>
+          </label>
+
+          <label class="field transcribe-option" hidden>
+            <span>Speech language</span>
+            <select id="sourceLanguage">
+              <option value="">Auto</option>
+              <option value="es">Spanish</option>
+              <option value="en">English</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="pt">Portuguese</option>
+            </select>
+          </label>
+
+          <label class="field interview-option" hidden>
+            <span>Your mic</span>
+            <select id="myMicDevice">
+              <option value="">Default microphone</option>
+            </select>
+          </label>
+
+          <label class="field interview-option" hidden>
+            <span>Their audio</span>
+            <select id="interviewerInputMode">
+              <option value="screen">Capture meeting audio</option>
+              <option value="device">Audio input device</option>
+            </select>
+          </label>
+
+          <label id="interviewerDeviceField" class="field interview-option" hidden>
+            <span>Their audio device</span>
+            <select id="interviewerAudioDevice">
+              <option value="">Default input</option>
+            </select>
+          </label>
+
+          <label class="field interview-option" hidden>
+            <span>Spanish to me</span>
+            <select id="spanishOutputDevice">
+              <option value="">Default output</option>
+            </select>
+          </label>
+
+          <label class="field interview-option" hidden>
+            <span>English to call</span>
+            <select id="englishOutputDevice">
+              <option value="">Default output</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="button-row">
+          <button id="connect" class="primary">Connect</button>
+          <button id="disconnect" class="secondary" disabled>Disconnect</button>
+        </div>
+
+        <label class="check">
+          <input id="autoRun" type="checkbox" checked />
+          <span>Auto-run local actions</span>
+        </label>
+        <p id="config" class="meta"></p>
+      </section>
+
+      <section id="captionPanel" class="caption-panel" hidden>
+        <div>
+          <p id="sourceCaptionLabel" class="caption-label">Source</p>
+          <p id="sourceCaption" class="caption-text">...</p>
+        </div>
+        <div>
+          <p id="outputCaptionLabel" class="caption-label">Output</p>
+          <p id="outputCaption" class="caption-text">...</p>
+        </div>
+      </section>
+
+      <section id="pendingPanel" class="pending-panel" hidden>
+        <h2>Pending local action</h2>
+        <textarea id="pendingPrompt" readonly></textarea>
+        <div class="actions">
+          <button id="runCodex" class="primary" disabled>Run action</button>
+          <button id="rejectCodex" class="secondary" disabled>Reject</button>
+        </div>
+      </section>
+
+      <details class="debug-panel">
+        <summary>Debug log</summary>
+        <pre id="log"></pre>
+      </details>
+    </main>
+
+    <script src="./renderer.js" type="module"></script>
+  </body>
+</html>

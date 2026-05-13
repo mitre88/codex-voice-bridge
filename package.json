@@ -1,0 +1,29 @@
+{
+  "name": "codex-voice-bridge",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "A local macOS voice bridge for OpenAI Realtime, Codex CLI, CUA Driver, and bidirectional interview translation.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check src/main.js && node --check src/preload.cjs && node --check src/renderer.js",
+    "smoke:cua": "bash scripts/smoke-cua.sh",
+    "logs": "tail -f ~/Library/Logs/codex-voice-bridge/bridge.log"
+  },
+  "keywords": [
+    "openai",
+    "realtime",
+    "voice",
+    "codex",
+    "cua-driver",
+    "macos",
+    "translation",
+    "interview"
+  ],
+  "author": "Alex Mitre",
+  "license": "MIT",
+  "dependencies": {
+    "electron": "^39.2.6"
+  }
+}
