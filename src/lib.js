@@ -59,6 +59,12 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
   return args;
 }
 
+// cua-driver tool names must be plain snake_case identifiers: anything else
+// (e.g. "--version" or "call --help") would be parsed as CLI options.
+export function isSafeCuaToolName(toolName) {
+  return typeof toolName === "string" && /^[a-z][a-z0-9_]*$/i.test(toolName) && toolName.length <= 100;
+}
+
 export function redactSecrets(value) {
   return String(value).replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED_OPENAI_KEY]");
 }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import {
   escapeAppleScript,
+  isSafeCuaToolName,
   normalizeCuaArgs,
   normalizeReasoningEffort,
   normalizeTone,
@@ -45,6 +46,16 @@ test("normalizeCuaArgs fills bundle_id for launch_app from context", () => {
   );
   assert.deepEqual(normalizeCuaArgs("launch_app", { name: "X" }), { name: "X" });
   assert.deepEqual(normalizeCuaArgs("other_tool", { a: 1 }), { a: 1 });
+});
+
+test("isSafeCuaToolName accepts snake_case identifiers and rejects option-like names", () => {
+  assert.equal(isSafeCuaToolName("launch_app"), true);
+  assert.equal(isSafeCuaToolName("list_apps"), true);
+  assert.equal(isSafeCuaToolName("--version"), false);
+  assert.equal(isSafeCuaToolName("call --help"), false);
+  assert.equal(isSafeCuaToolName(""), false);
+  assert.equal(isSafeCuaToolName("a".repeat(101)), false);
+  assert.equal(isSafeCuaToolName(42), false);
 });
 
 test("redactSecrets masks OpenAI keys", () => {

@@ -160,19 +160,25 @@ function setPendingAction(action) {
 }
 
 function applyKeyStatus(status) {
-  hasStoredKey = Boolean(status.hasEnvKey || status.hasSavedKey);
+  hasStoredKey = Boolean(status.hasEnvKey || status.hasSavedKey || status.hasRuntimeKey);
   apiKeyField.hidden = hasStoredKey;
   keyStatusEl.hidden = !hasStoredKey;
-  keyStatusEl.textContent = status.hasSavedKey ? "Saved OpenAI key active" : status.hasEnvKey ? "Using OPENAI_API_KEY" : "";
+  keyStatusEl.textContent = status.hasSavedKey
+    ? "Saved OpenAI key active"
+    : status.hasEnvKey
+      ? "Using OPENAI_API_KEY"
+      : status.hasRuntimeKey
+        ? "Using in-memory API key"
+        : "";
 }
 
 async function ensureApiKeyReady() {
   const apiKey = apiKeyInput.value.trim();
   if (apiKey) {
     const result = await getBridge().setApiKey(apiKey);
-    if (!result.ok) throw new Error("The API key format does not look valid.");
+    if (!result.ok) throw new Error(result.error || "The API key format does not look valid.");
     apiKeyInput.value = "";
-    applyKeyStatus({ hasEnvKey: false, hasSavedKey: true });
+    applyKeyStatus({ hasEnvKey: false, hasSavedKey: result.saved, hasRuntimeKey: true });
     return;
   }
   if (!hasStoredKey) {

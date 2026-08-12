@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   escapeAppleScript,
+  isSafeCuaToolName,
   normalizeCuaArgs,
   normalizeReasoningEffort,
   normalizeTone,
@@ -167,11 +168,19 @@ function createWindow() {
       sandbox: true,
     },
   });
+  // Drop the reference when the window is closed (Cmd+W on macOS) so shortcut
+  // handlers never touch a destroyed BrowserWindow.
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
   mainWindow.loadFile(path.join(__dirname, "renderer.html"));
 }
 
 function toggleWindow() {
-  if (!mainWindow) return;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
   if (mainWindow.isVisible()) mainWindow.hide();
   else {
     mainWindow.show();
@@ -387,7 +396,10 @@ function assistantTools() {
 
 function runCodex({ prompt, cwd }) {
   const workdir = resolveWorkdir(cwd, DEFAULT_WORKDIR);
-  return runProcess("codex", ["exec", "--cd", workdir, "--sandbox", "read-only", "--skip-git-repo-check", prompt], {
+  // "--" terminates option parsing so a prompt that starts with "-" (e.g. a
+  // model-generated flag) can never be interpreted as a codex CLI option and
+  // escape the read-only sandbox.
+  return runProcess("codex", ["exec", "--cd", workdir, "--sandbox", "read-only", "--skip-git-repo-check", "--", prompt], {
     cwd: workdir,
     timeoutMs: CODEX_TIMEOUT_MS,
     onOutput: (chunk) => mainWindow?.webContents.send("codex-output", chunk),
@@ -398,6 +410,11 @@ function runCuaDriver(input = {}) {
   const toolName = input.tool_name;
   if (!toolName || typeof toolName !== "string") {
     return Promise.resolve({ ok: false, code: -1, stdout: "", stderr: "Missing cua-driver tool_name." });
+  }
+  // Only accept plain snake_case identifiers: a tool_name like "--version" or
+  // "call --help" would otherwise be parsed as a cua-driver CLI option.
+  if (!isSafeCuaToolName(toolName)) {
+    return Promise.resolve({ ok: false, code: -4, stdout: "", stderr: `Invalid cua-driver tool_name: ${toolName}.` });
   }
   if (CUA_BLOCKED_TOOLS.has(toolName)) {
     return Promise.resolve({ ok: false, code: -3, stdout: "", stderr: `Blocked cua-driver tool for safety: ${toolName}.` });
@@ -497,7 +514,7 @@ app.whenReady().then(() => {
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  else mainWindow?.show();
+  else if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
 });
 
 app.on("window-all-closed", () => {
@@ -509,13 +526,22 @@ app.on("will-quit", () => globalShortcut.unregisterAll());
 ipcMain.handle("realtime:create-client-secret", guard((_event, options) => createRealtimeClientSecret(options)));
 ipcMain.handle("realtime:set-api-key", guard(async (_event, apiKey) => {
   runtimeApiKey = String(apiKey || "").trim();
-  if (!runtimeApiKey.startsWith("sk-")) return { ok: false };
+  // Require the sk- prefix and no whitespace/control characters; be permissive
+  // about the payload so exotic-but-valid key formats are not rejected.
+  if (!/^sk-\S+$/.test(runtimeApiKey)) {
+    runtimeApiKey = "";
+    return { ok: false, error: "The API key format does not look valid." };
+  }
   const saved = await saveKeychainApiKey(runtimeApiKey);
-  return { ok: saved.ok, saved: saved.ok, error: saved.stderr };
+  // The key still works for this session even if the Keychain write failed
+  // (e.g. locked keychain); report the save status but do not block use.
+  if (!saved.ok) writeLog("keychain save failed", { error: saved.stderr });
+  return { ok: true, saved: saved.ok, error: saved.stderr };
 }));
 ipcMain.handle("realtime:key-status", guard(async () => ({
   hasEnvKey: Boolean(process.env.OPENAI_API_KEY),
   hasSavedKey: Boolean(await readKeychainApiKey()),
+  hasRuntimeKey: Boolean(runtimeApiKey),
 })));
 ipcMain.handle("codex:run", guard((_event, input) => runCodex(input)));
 ipcMain.handle("cua:run", guard((_event, input) => runCuaDriver(input)));
