@@ -541,7 +541,14 @@ function runCuaDriver(input = {}) {
   if (CUA_BLOCKED_TOOLS.has(toolName)) {
     return Promise.resolve({ ok: false, code: -3, stdout: "", stderr: `Blocked cua-driver tool for safety: ${toolName}.` });
   }
-  const args = ["call", toolName, JSON.stringify(normalizeCuaArgs(toolName, input.json_args, input)), "--compact"];
+  // The serialized args blob becomes a single argv entry (~256 KiB cap on
+  // macOS, ARG_MAX 1 MiB for the whole block), so an unbounded json_args from
+  // the model would make spawn() fail with E2BIG — reject it cleanly like the
+  // prompt/text guards do.
+  const argsBlob = JSON.stringify(normalizeCuaArgs(toolName, input.json_args, input));
+  const argsLengthError = requireMaxLength(argsBlob, "json_args");
+  if (argsLengthError) return Promise.resolve({ ok: false, code: -7, stdout: "", stderr: argsLengthError });
+  const args = ["call", toolName, argsBlob, "--compact"];
   return runProcess("cua-driver", args, {
     timeoutMs: CUA_TIMEOUT_MS,
     onOutput: (chunk) => mainWindow?.webContents.send("codex-output", chunk),

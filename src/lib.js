@@ -95,7 +95,9 @@ export function isPlausibleApiKey(value) {
 }
 
 export function redactSecrets(value) {
-  return String(value).replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED_OPENAI_KEY]");
+  // Include "." in the charset: modern project keys (sk-proj-...) contain
+  // dots, and a key split in two by the old regex would leak its tail.
+  return String(value).replace(/sk-[A-Za-z0-9_.-]+/g, "[REDACTED_OPENAI_KEY]");
 }
 
 // Turn common failure modes into short, actionable messages for the UI.
@@ -112,8 +114,12 @@ export function humanizeError(error) {
   if (name === "TimeoutError" || name === "AbortError") {
     return "The request timed out. Check your network connection and try again.";
   }
-  if (message.includes("insufficient_quota") || message.includes("exceeded your current quota")) {
+  const lower = message.toLowerCase();
+  if (lower.includes("insufficient_quota") || lower.includes("exceeded your current quota")) {
     return "OpenAI rejected the Realtime call: insufficient_quota. Check billing, project limits, and that the key belongs to the funded organization.";
+  }
+  if (lower.includes("invalid_api_key") || lower.includes("incorrect api key")) {
+    return "OpenAI rejected the API key (401). Check that the key is valid, has Realtime access, and belongs to the funded organization, then save it again.";
   }
   return message;
 }

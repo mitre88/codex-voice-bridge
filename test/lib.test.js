@@ -105,6 +105,11 @@ test("redactSecrets masks OpenAI keys", () => {
   assert.equal(redactSecrets("no secrets here"), "no secrets here");
 });
 
+test("redactSecrets masks modern project keys containing dots", () => {
+  assert.equal(redactSecrets("token sk-proj-abc123.def456-ghi"), "token [REDACTED_OPENAI_KEY]");
+  assert.equal(redactSecrets("sk-proj-a.b.c"), "[REDACTED_OPENAI_KEY]");
+});
+
 test("humanizeError maps common failure modes to actionable messages", () => {
   assert.match(humanizeError({ name: "NotAllowedError", message: "denied" }), /microphone or screen access was denied/i);
   assert.match(humanizeError({ name: "NotFoundError", message: "no device" }), /no audio input device/i);
@@ -112,6 +117,11 @@ test("humanizeError maps common failure modes to actionable messages", () => {
   assert.match(humanizeError({ name: "AbortError", message: "aborted" }), /request timed out/i);
   assert.match(humanizeError(new Error("insufficient_quota")), /insufficient_quota/i);
   assert.match(humanizeError(new Error("exceeded your current quota")), /insufficient_quota/i);
+});
+
+test("humanizeError maps invalid API key failures to an actionable message", () => {
+  assert.match(humanizeError(new Error("OpenAI Realtime token failed: 401 invalid_api_key")), /rejected the API key/i);
+  assert.match(humanizeError(new Error("Incorrect API key provided")), /rejected the API key/i);
 });
 
 test("humanizeError passes through unknown messages", () => {
