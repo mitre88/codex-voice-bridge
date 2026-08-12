@@ -443,23 +443,41 @@ async function connectSingleRealtime(options) {
   });
 }
 
+function stopMediaStream(stream) {
+  try {
+    stream?.getTracks().forEach((track) => track.stop());
+  } catch {
+    // Track already stopped.
+  }
+}
+
 async function connectInterviewRealtime(options) {
   const interviewerStream = await getInterviewAudioStream(options);
-  const myMicStream = await navigator.mediaDevices.getUserMedia({ audio: deviceConstraint(options.myMicDeviceId) });
-  await connectPeerSession({
-    label: "Interview to Spanish",
-    tokenOptions: { mode: "translate", targetLanguage: "es" },
-    inputStream: interviewerStream,
-    outputDeviceId: options.spanishOutputDeviceId,
-    transcriptTargets: { source: null, output: "source" },
-  });
-  await connectPeerSession({
-    label: "My reply to English",
-    tokenOptions: { mode: "translate", targetLanguage: "en" },
-    inputStream: myMicStream,
-    outputDeviceId: options.englishOutputDeviceId,
-    transcriptTargets: { source: null, output: "output" },
-  });
+  let myMicStream;
+  try {
+    myMicStream = await navigator.mediaDevices.getUserMedia({ audio: deviceConstraint(options.myMicDeviceId) });
+    await connectPeerSession({
+      label: "Interview to Spanish",
+      tokenOptions: { mode: "translate", targetLanguage: "es" },
+      inputStream: interviewerStream,
+      outputDeviceId: options.spanishOutputDeviceId,
+      transcriptTargets: { source: null, output: "source" },
+    });
+    await connectPeerSession({
+      label: "My reply to English",
+      tokenOptions: { mode: "translate", targetLanguage: "en" },
+      inputStream: myMicStream,
+      outputDeviceId: options.englishOutputDeviceId,
+      transcriptTargets: { source: null, output: "output" },
+    });
+  } catch (error) {
+    // Streams not yet owned by a session stay hot if the second half fails
+    // (mic denied after meeting audio was captured, or the second Realtime
+    // call dies). connectPeerSession / disconnectRealtime stop owned ones.
+    stopMediaStream(interviewerStream);
+    stopMediaStream(myMicStream);
+    throw error;
+  }
 }
 
 async function connectRealtime() {
