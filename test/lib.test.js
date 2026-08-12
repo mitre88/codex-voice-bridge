@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import {
+  accumulateOutput,
   escapeAppleScript,
   isPlausibleApiKey,
   isSafeCuaToolName,
@@ -84,6 +85,20 @@ test("truncateOutput truncates long stdout and preserves metadata", () => {
 test("truncateOutput leaves short output untouched", () => {
   const out = truncateOutput({ ok: true, stdout: "short", stderr: "" }, 50);
   assert.equal(out.stdout, "short");
+});
+
+test("accumulateOutput caps the buffer at maxChars and reports truncation", () => {
+  const over = accumulateOutput("", "x".repeat(100), 50);
+  assert.equal(over.text.length, 50);
+  assert.equal(over.capped, true);
+  // A buffer already at the cap stays put and keeps reporting truncation.
+  const full = accumulateOutput("x".repeat(50), "more", 50);
+  assert.equal(full.text, "x".repeat(50));
+  assert.equal(full.capped, true);
+  // Small chunks pass through untouched while under the cap.
+  const ok = accumulateOutput("abc", "def", 100);
+  assert.equal(ok.text, "abcdef");
+  assert.equal(ok.capped, false);
 });
 
 test("resolveWorkdir keeps paths inside the base workdir", () => {

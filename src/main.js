@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  accumulateOutput,
   escapeAppleScript,
   isPlausibleApiKey,
   isSafeCuaToolName,
@@ -32,6 +33,10 @@ const DEFAULT_WORKDIR = path.resolve(
 );
 const CODEX_TIMEOUT_MS = Number(process.env.CODEX_VOICE_TIMEOUT_MS || 120000);
 const CUA_TIMEOUT_MS = Number(process.env.CODEX_VOICE_CUA_TIMEOUT_MS || 60000);
+const OPENAI_REQUEST_TIMEOUT_MS = Number(process.env.CODEX_VOICE_OPENAI_TIMEOUT_MS || 60000);
+// Bound how much stdout/stderr a child process can accumulate in memory before
+// we drop the excess; a runaway command must not grow the main process forever.
+const MAX_PROCESS_OUTPUT_CHARS = 1024 * 1024;
 const KEYCHAIN_SERVICE = "codex-voice-bridge.openai-api-key";
 const KEYCHAIN_ACCOUNT = process.env.USER || "local";
 const LOG_DIR = path.join(os.homedir(), "Library", "Logs", "codex-voice-bridge");
@@ -102,6 +107,8 @@ function runProcess(command, args, options = {}) {
 
     let stdout = "";
     let stderr = "";
+    let stdoutCapped = false;
+    let stderrCapped = false;
     let settled = false;
 
     function killProcessGroup(signal) {
@@ -129,19 +136,27 @@ function runProcess(command, args, options = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      resolve(result);
+      let out = result.stdout;
+      let err = result.stderr;
+      if (stdoutCapped && typeof out === "string") out += "\n...[stdout truncated at 1MB]";
+      if (stderrCapped && typeof err === "string") err += "\n...[stderr truncated at 1MB]";
+      resolve({ ...result, stdout: String(out ?? "").trim(), stderr: String(err ?? "").trim() });
     }
 
     child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
+      const result = accumulateOutput(stdout, chunk, MAX_PROCESS_OUTPUT_CHARS);
+      stdout = result.text;
+      stdoutCapped = stdoutCapped || result.capped;
       options.onOutput?.(chunk.toString());
     });
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
+      const result = accumulateOutput(stderr, chunk, MAX_PROCESS_OUTPUT_CHARS);
+      stderr = result.text;
+      stderrCapped = stderrCapped || result.capped;
       options.onOutput?.(chunk.toString());
     });
-    child.on("close", (code) => finish({ ok: code === 0, code, stdout: stdout.trim(), stderr: stderr.trim() }));
-    child.on("error", (error) => finish({ ok: false, code: -1, stdout: stdout.trim(), stderr: error.message }));
+    child.on("close", (code) => finish({ ok: code === 0, code, stdout, stderr }));
+    child.on("error", (error) => finish({ ok: false, code: -1, stdout, stderr: error.message }));
   });
 }
 
@@ -331,6 +346,14 @@ function postOpenAIJson(apiKey, url, body) {
       "OpenAI-Safety-Identifier": SAFETY_ID,
     },
     body: JSON.stringify(body),
+    // Never let a hung network call leave the Connect flow (and the IPC
+    // handler behind it) pending forever.
+    signal: AbortSignal.timeout(OPENAI_REQUEST_TIMEOUT_MS),
+  }).catch((error) => {
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      throw new Error(`OpenAI request timed out after ${OPENAI_REQUEST_TIMEOUT_MS / 1000}s: ${url}`);
+    }
+    throw error;
   });
 }
 
