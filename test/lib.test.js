@@ -12,6 +12,7 @@ import {
   normalizeTone,
   parseEnvFile,
   redactSecrets,
+  requireMaxLength,
   requireNonEmptyString,
   resolveAppIdentity,
   resolveWorkdir,
@@ -82,6 +83,16 @@ test("requireNonEmptyString accepts non-empty strings and rejects the rest", () 
   assert.equal(requireNonEmptyString(null, "prompt"), "prompt must be a non-empty string.");
   assert.equal(requireNonEmptyString(42, "text"), "text must be a non-empty string.");
   assert.equal(requireNonEmptyString({ a: 1 }, "key"), "key must be a non-empty string.");
+});
+
+test("requireMaxLength caps oversized argv-bound values", () => {
+  assert.equal(requireMaxLength("short", "prompt"), null);
+  assert.equal(requireMaxLength("x".repeat(200001), "prompt"), "prompt exceeds the maximum length of 200000 characters.");
+  assert.equal(requireMaxLength("y".repeat(50), "key", 100), null);
+  assert.equal(requireMaxLength("y".repeat(101), "key", 100), "key exceeds the maximum length of 100 characters.");
+  // Non-strings pass through: type checks are the caller's job.
+  assert.equal(requireMaxLength(undefined, "prompt"), null);
+  assert.equal(requireMaxLength({ a: 1 }, "prompt"), null);
 });
 
 test("redactSecrets masks OpenAI keys", () => {

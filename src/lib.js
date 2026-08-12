@@ -74,6 +74,19 @@ export function requireNonEmptyString(value, label) {
   return null;
 }
 
+// Cap a value that will be passed to a child process as a single argv entry.
+// macOS limits one argument to MAX_ARG_STRLEN (~256 KiB) and the whole
+// argv+env block to ARG_MAX (1 MiB), so an unbounded prompt or args blob
+// would otherwise make spawn() fail with E2BIG. Returns null when valid, or a
+// short human-readable error message. Non-strings pass through: type checks
+// are the caller's job (see requireNonEmptyString).
+export function requireMaxLength(value, label, maxChars = 200000) {
+  if (typeof value === "string" && value.length > maxChars) {
+    return `${label} exceeds the maximum length of ${maxChars} characters.`;
+  }
+  return null;
+}
+
 // OpenAI keys start with "sk-" and contain no whitespace or control characters.
 // Be permissive about the payload (exotic-but-valid formats are not rejected),
 // but refuse anything that is obviously not a key.

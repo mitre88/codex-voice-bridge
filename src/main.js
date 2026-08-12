@@ -17,6 +17,7 @@ import {
   normalizeTone,
   parseEnvFile,
   redactSecrets,
+  requireMaxLength,
   requireNonEmptyString,
   resolveAppIdentity,
   resolveWorkdir,
@@ -57,6 +58,9 @@ const DEFAULT_WORKDIR = path.resolve(
 const CODEX_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_TIMEOUT_MS, 120000);
 const CUA_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_CUA_TIMEOUT_MS, 60000);
 const OPENAI_REQUEST_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_OPENAI_TIMEOUT_MS, 60000);
+// How long a pending local action may wait for the human to approve/reject it
+// before the renderer auto-rejects it so the model never hangs forever.
+const ACTION_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_ACTION_TIMEOUT_MS, 120000);
 // Bound how much stdout/stderr a child process can accumulate in memory before
 // we drop the excess; a runaway command must not grow the main process forever.
 const MAX_PROCESS_OUTPUT_CHARS = 1024 * 1024;
@@ -163,6 +167,12 @@ function runProcess(command, args, options = {}) {
       // Give children a moment to exit, then force-kill the whole group.
       const hardKill = setTimeout(() => killProcessGroup("SIGKILL"), 3000);
       hardKill.unref();
+      // Flush any partial UTF-8 sequence still held by the decoders, same as
+      // the close handler does, so timed-out output is not missing its tail.
+      const tailOut = stdoutDecoder.end();
+      const tailErr = stderrDecoder.end();
+      if (tailOut) stdout = accumulateOutput(stdout, tailOut, MAX_PROCESS_OUTPUT_CHARS).text;
+      if (tailErr) stderr = accumulateOutput(stderr, tailErr, MAX_PROCESS_OUTPUT_CHARS).text;
       finish({
         ok: false,
         code: -2,
@@ -495,6 +505,10 @@ function runCodex(input) {
   // let the model self-correct from the error message.
   const promptError = requireNonEmptyString(input?.prompt, "prompt");
   if (promptError) return Promise.resolve({ ok: false, code: -5, stdout: "", stderr: promptError });
+  // A single argv entry on macOS is capped (~256 KiB); an unbounded prompt
+  // would make spawn() fail with E2BIG, so reject oversized prompts cleanly.
+  const lengthError = requireMaxLength(input?.prompt, "prompt");
+  if (lengthError) return Promise.resolve({ ok: false, code: -6, stdout: "", stderr: lengthError });
   const { prompt, cwd } = input;
   const workdir = resolveWorkdir(cwd, DEFAULT_WORKDIR);
   // "--" terminates option parsing so a prompt that starts with "-" (e.g. a
@@ -556,6 +570,8 @@ async function openAppVisible(input = {}) {
 async function typeTextInFrontApp(input = {}) {
   const textError = requireNonEmptyString(input.text, "text");
   if (textError) return { ok: false, code: -5, stdout: "", stderr: textError };
+  const textLengthError = requireMaxLength(input.text, "text");
+  if (textLengthError) return { ok: false, code: -6, stdout: "", stderr: textLengthError };
   const active = await getActiveAppFromCua();
   if (!active?.pid) return { ok: false, code: -1, stdout: "", stderr: "No active app pid found." };
   return runCuaDriver({ tool_name: "type_text_chars", json_args: { pid: active.pid, text: input.text, delay_ms: 20 } });
@@ -564,6 +580,8 @@ async function typeTextInFrontApp(input = {}) {
 async function pressKeyInFrontApp(input = {}) {
   const keyError = requireNonEmptyString(input.key, "key");
   if (keyError) return { ok: false, code: -5, stdout: "", stderr: keyError };
+  const keyLengthError = requireMaxLength(input.key, "key", 100);
+  if (keyLengthError) return { ok: false, code: -6, stdout: "", stderr: keyLengthError };
   const active = await getActiveAppFromCua();
   if (!active?.pid) return { ok: false, code: -1, stdout: "", stderr: "No active app pid found." };
   // cua-driver expects an array of modifiers; anything else (a bare string
@@ -678,4 +696,5 @@ ipcMain.handle("app:config", guard(() => ({
   targetLanguage: DEFAULT_TARGET_LANGUAGE,
   workdir: DEFAULT_WORKDIR,
   shortcut: SHORTCUT,
+  actionTimeoutMs: ACTION_TIMEOUT_MS,
 })));

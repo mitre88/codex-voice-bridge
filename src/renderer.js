@@ -37,6 +37,8 @@ const configEl = document.querySelector("#config");
 const activeSessions = [];
 const handledToolCalls = new Set();
 let pendingAction;
+let pendingActionTimer;
+let actionTimeoutMs = 120000;
 let actionDataChannel;
 let hasStoredKey = false;
 let sourceCaption = "";
@@ -150,6 +152,7 @@ function handleTranscriptEvent(event, targets = { source: "source", output: "out
 }
 
 function setPendingAction(action) {
+  clearPendingActionTimer();
   pendingAction = action;
   pendingPanel.hidden = !action;
   if (!action) pendingPromptEl.value = "";
@@ -157,6 +160,27 @@ function setPendingAction(action) {
   else pendingPromptEl.value = JSON.stringify(action.args || {}, null, 2);
   runCodexButton.disabled = !action;
   rejectCodexButton.disabled = !action;
+  // If the human never answers (model waiting on Run/Reject), auto-reject so
+  // the Realtime session does not hang forever on a tool call.
+  if (action && !autoRunInput.checked) {
+    pendingActionTimer = setTimeout(() => {
+      log(`Pending action auto-rejected after ${Math.round(actionTimeoutMs / 1000)}s without a human response.`);
+      sendFunctionOutput(action.callId, {
+        ok: false,
+        code: -97,
+        stdout: "",
+        stderr: `Auto-rejected: no human response within ${Math.round(actionTimeoutMs / 1000)} seconds.`,
+      });
+      setPendingAction(null);
+    }, actionTimeoutMs);
+  }
+}
+
+function clearPendingActionTimer() {
+  if (pendingActionTimer) {
+    clearTimeout(pendingActionTimer);
+    pendingActionTimer = undefined;
+  }
 }
 
 function applyKeyStatus(status) {
@@ -515,6 +539,7 @@ try {
   getBridge().config().then((config) => {
     if (config.reasoningEffort) reasoningInput.value = config.reasoningEffort;
     if (config.targetLanguage) targetLanguageInput.value = config.targetLanguage;
+    if (config.actionTimeoutMs) actionTimeoutMs = config.actionTimeoutMs;
     baseConfigText = `v${config.version || "?"} / ${config.model} / ${config.translateModel} / ${config.transcribeModel} / ${(config.shortcut || "CommandOrControl+Shift+Space").replace(/CommandOrControl/g, "Cmd")}`;
     configEl.textContent = baseConfigText;
     updateModeControls();
