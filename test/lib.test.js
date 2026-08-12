@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 import {
   escapeAppleScript,
   normalizeCuaArgs,
@@ -7,6 +8,7 @@ import {
   normalizeTone,
   redactSecrets,
   resolveAppIdentity,
+  resolveWorkdir,
   truncateOutput,
 } from "../src/lib.js";
 
@@ -61,4 +63,23 @@ test("truncateOutput truncates long stdout and preserves metadata", () => {
 test("truncateOutput leaves short output untouched", () => {
   const out = truncateOutput({ ok: true, stdout: "short", stderr: "" }, 50);
   assert.equal(out.stdout, "short");
+});
+
+test("resolveWorkdir keeps paths inside the base workdir", () => {
+  const base = path.join(path.sep, "Users", "alex", "projects", "app");
+  assert.equal(resolveWorkdir(undefined, base), base);
+  assert.equal(resolveWorkdir("", base), base);
+  assert.equal(resolveWorkdir("  ", base), base);
+  assert.equal(resolveWorkdir("sub/dir", base), path.join(base, "sub", "dir"));
+  assert.equal(resolveWorkdir(path.join(base, "sub"), base), path.join(base, "sub"));
+});
+
+test("resolveWorkdir rejects traversal and outside absolute paths", () => {
+  const base = path.join(path.sep, "Users", "alex", "projects", "app");
+  assert.equal(resolveWorkdir("../outside", base), base);
+  assert.equal(resolveWorkdir("../../etc", base), base);
+  assert.equal(resolveWorkdir(path.join(path.sep, "etc", "passwd"), base), base);
+  // A sibling prefix must not pass the containment check.
+  assert.equal(resolveWorkdir(`${base}2`, base), base);
+  assert.equal(resolveWorkdir(base, base), base);
 });

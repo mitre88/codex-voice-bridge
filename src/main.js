@@ -12,6 +12,7 @@ import {
   normalizeTone,
   redactSecrets,
   resolveAppIdentity,
+  resolveWorkdir,
 } from "./lib.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,8 +34,9 @@ const KEYCHAIN_SERVICE = "codex-voice-bridge.openai-api-key";
 const KEYCHAIN_ACCOUNT = process.env.USER || "local";
 const LOG_DIR = path.join(os.homedir(), "Library", "Logs", "codex-voice-bridge");
 const LOG_FILE = path.join(LOG_DIR, "bridge.log");
+const LOG_MAX_BYTES = 10 * 1024 * 1024;
 const SAFETY_ID = crypto.createHash("sha256").update(`${process.env.USER || "local"}:codex-voice-bridge`).digest("hex");
-const SHORTCUT = "CommandOrControl+Shift+Space";
+const SHORTCUT = process.env.CODEX_VOICE_SHORTCUT || "CommandOrControl+Shift+Space";
 
 const CUA_BLOCKED_TOOLS = new Set(["hotkey", "move_cursor", "replay_trajectory", "set_recording"]);
 
@@ -45,6 +47,12 @@ let logStream = null;
 function getLogStream() {
   if (!logStream) {
     fs.mkdirSync(LOG_DIR, { recursive: true });
+    // Rotate an oversized log on startup so bridge.log cannot grow without bound.
+    try {
+      if (fs.statSync(LOG_FILE).size > LOG_MAX_BYTES) fs.renameSync(LOG_FILE, `${LOG_FILE}.1`);
+    } catch {
+      // First run or file missing: nothing to rotate.
+    }
     logStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
     // Avoid crashing the main process if the disk/log file misbehaves.
     logStream.on("error", () => {});
@@ -53,13 +61,19 @@ function getLogStream() {
 }
 
 function writeLog(message, data) {
-  getLogStream().write(
-    `${JSON.stringify({
+  let payload;
+  try {
+    payload = JSON.stringify({
       ts: new Date().toISOString(),
       message,
       data: data === undefined ? undefined : redactSecrets(JSON.stringify(data)),
-    })}\n`,
-  );
+    });
+  } catch {
+    // Never let a non-serializable payload take down the logging path (or the
+    // uncaughtException handler that calls it).
+    payload = JSON.stringify({ ts: new Date().toISOString(), message, data: String(data) });
+  }
+  getLogStream().write(`${payload}\n`);
 }
 
 function runProcess(command, args, options = {}) {
@@ -369,15 +383,7 @@ function assistantTools() {
   ];
 }
 
-// Keep the model inside the configured workspace: the model may suggest any
-// absolute path, and Codex runs read-only, but we still honor least privilege.
-function resolveWorkdir(requested, baseWorkdir) {
-  const raw = typeof requested === "string" && requested.trim() ? requested.trim() : baseWorkdir;
-  const resolved = path.isAbsolute(raw) ? raw : path.resolve(baseWorkdir, raw);
-  const normalized = path.normalize(resolved);
-  if (normalized !== baseWorkdir && !normalized.startsWith(baseWorkdir + path.sep)) return baseWorkdir;
-  return normalized;
-}
+// Keep the model inside the configured workspace (see resolveWorkdir in lib.js).
 
 function runCodex({ prompt, cwd }) {
   const workdir = resolveWorkdir(cwd, DEFAULT_WORKDIR);
@@ -527,4 +533,5 @@ ipcMain.handle("app:config", guard(() => ({
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   targetLanguage: DEFAULT_TARGET_LANGUAGE,
   workdir: DEFAULT_WORKDIR,
+  shortcut: SHORTCUT,
 })));

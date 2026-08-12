@@ -222,6 +222,9 @@ async function handleToolEvent(event) {
     return;
   }
   if (handledToolCalls.has(functionCall.callId)) return;
+  // Tool call ids are unique per session and never replayed after the fact, so
+  // dropping the whole dedupe set when it gets large is safe and keeps memory bounded.
+  if (handledToolCalls.size >= 1000) handledToolCalls.clear();
   handledToolCalls.add(functionCall.callId);
 
   let args;
@@ -306,42 +309,64 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
   const pc = new RTCPeerConnection();
   const audio = document.createElement("audio");
   audio.autoplay = true;
-  await applyAudioOutputDevice(audio, outputDeviceId, label);
+  try {
+    await applyAudioOutputDevice(audio, outputDeviceId, label);
 
-  pc.ontrack = (event) => {
-    audio.srcObject = event.streams[0];
-  };
-  pc.onconnectionstatechange = () => {
-    if (pc.connectionState !== "failed" && pc.connectionState !== "closed") return;
-    if (!activeSessions.some((session) => session.pc === pc)) return;
-    log(`${label}: Realtime connection ${pc.connectionState}.`);
-    disconnectRealtime();
-  };
-  pc.addTrack(inputStream.getAudioTracks()[0], inputStream);
+    pc.ontrack = (event) => {
+      audio.srcObject = event.streams[0];
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState !== "failed" && pc.connectionState !== "closed") return;
+      if (!activeSessions.some((session) => session.pc === pc)) return;
+      log(`${label}: Realtime connection ${pc.connectionState}.`);
+      disconnectRealtime();
+    };
+    pc.addTrack(inputStream.getAudioTracks()[0], inputStream);
 
-  const dc = pc.createDataChannel(`oai-events-${label}`);
-  if (enableTools) actionDataChannel = dc;
-  dc.addEventListener("open", () => log(`${label}: Realtime data channel open.`));
-  dc.addEventListener("message", async (message) => {
-    const event = JSON.parse(message.data);
-    if (event.type?.includes("error")) log(`${label}: Realtime error`, event);
-    handleTranscriptEvent(event, transcriptTargets);
-    if (enableTools) await handleToolEvent(event);
-  });
+    const dc = pc.createDataChannel(`oai-events-${label}`);
+    if (enableTools) actionDataChannel = dc;
+    dc.addEventListener("open", () => log(`${label}: Realtime data channel open.`));
+    dc.addEventListener("message", async (message) => {
+      let event;
+      try {
+        event = JSON.parse(message.data);
+      } catch (error) {
+        log(`${label}: dropped malformed Realtime event.`, String(error));
+        return;
+      }
+      if (event.type?.includes("error")) log(`${label}: Realtime error`, event);
+      handleTranscriptEvent(event, transcriptTargets);
+      if (enableTools) await handleToolEvent(event);
+    });
 
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  const response = await fetch(token.callEndpoint || "https://api.openai.com/v1/realtime/calls", {
-    method: "POST",
-    body: offer.sdp,
-    headers: {
-      Authorization: `Bearer ${token.value}`,
-      "Content-Type": "application/sdp",
-    },
-  });
-  if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${await response.text()}`);
-  await pc.setRemoteDescription({ type: "answer", sdp: await response.text() });
-  activeSessions.push({ label, pc, dc, stream: inputStream, audio });
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    const response = await fetch(token.callEndpoint || "https://api.openai.com/v1/realtime/calls", {
+      method: "POST",
+      body: offer.sdp,
+      headers: {
+        Authorization: `Bearer ${token.value}`,
+        "Content-Type": "application/sdp",
+      },
+    });
+    if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${await response.text()}`);
+    await pc.setRemoteDescription({ type: "answer", sdp: await response.text() });
+    activeSessions.push({ label, pc, dc, stream: inputStream, audio });
+  } catch (error) {
+    // Never leak the peer connection or leave the microphone hot after a failed connect.
+    try {
+      pc.close();
+    } catch {
+      // Already closed.
+    }
+    try {
+      inputStream.getTracks().forEach((track) => track.stop());
+    } catch {
+      // Track already stopped.
+    }
+    audio.srcObject = null;
+    throw error;
+  }
 }
 
 async function connectSingleRealtime(options) {
@@ -450,7 +475,7 @@ try {
   getBridge().config().then((config) => {
     if (config.reasoningEffort) reasoningInput.value = config.reasoningEffort;
     if (config.targetLanguage) targetLanguageInput.value = config.targetLanguage;
-    baseConfigText = `${config.model} / ${config.translateModel} / ${config.transcribeModel} / Cmd+Shift+Space`;
+    baseConfigText = `${config.model} / ${config.translateModel} / ${config.transcribeModel} / ${(config.shortcut || "CommandOrControl+Shift+Space").replace(/CommandOrControl/g, "Cmd")}`;
     configEl.textContent = baseConfigText;
     updateModeControls();
   });

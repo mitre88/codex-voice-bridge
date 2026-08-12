@@ -1,6 +1,8 @@
 // Pure helpers shared between the Electron main process and the renderer.
 // No Node/Electron-specific APIs here so these stay unit-testable in a plain Node runtime.
 
+import path from "node:path";
+
 export const APP_BUNDLE_ALIASES = new Map([
   ["safari", "com.apple.Safari"],
   ["chrome", "com.google.Chrome"],
@@ -70,4 +72,14 @@ export function truncateOutput(output, maxChars = 30000) {
     }
   }
   return out;
+}
+
+// Keep the model inside the configured workspace: the model may suggest any
+// absolute path, and Codex runs read-only, but we still honor least privilege.
+export function resolveWorkdir(requested, baseWorkdir) {
+  const raw = typeof requested === "string" && requested.trim() ? requested.trim() : baseWorkdir;
+  const resolved = path.isAbsolute(raw) ? raw : path.resolve(baseWorkdir, raw);
+  const normalized = path.normalize(resolved);
+  if (normalized !== baseWorkdir && !normalized.startsWith(baseWorkdir + path.sep)) return baseWorkdir;
+  return normalized;
 }

@@ -89,6 +89,7 @@ export OPENAI_REALTIME_VOICE="marin"                        # assistant voice
 export OPENAI_REALTIME_REASONING_EFFORT="low"               # low | minimal | medium | high
 export OPENAI_REALTIME_TARGET_LANGUAGE="es"                 # es en fr de pt ja ko zh
 export CODEX_VOICE_WORKDIR="/path/to/your/workspace"
+export CODEX_VOICE_SHORTCUT="CommandOrControl+Shift+Space"   # global toggle shortcut
 ```
 
 ---
