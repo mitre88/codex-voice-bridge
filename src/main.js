@@ -21,6 +21,7 @@ import {
   requireNonEmptyString,
   resolveAppIdentity,
   resolveWorkdir,
+  rotateLogIfNeeded,
   toPositiveInt,
 } from "./lib.js";
 
@@ -68,7 +69,7 @@ const KEYCHAIN_SERVICE = "codex-voice-bridge.openai-api-key";
 const KEYCHAIN_ACCOUNT = process.env.USER || "local";
 const LOG_DIR = path.join(os.homedir(), "Library", "Logs", "codex-voice-bridge");
 const LOG_FILE = path.join(LOG_DIR, "bridge.log");
-const LOG_MAX_BYTES = 10 * 1024 * 1024;
+const LOG_MAX_BYTES = 2 * 1024 * 1024;
 const SAFETY_ID = crypto.createHash("sha256").update(`${process.env.USER || "local"}:codex-voice-bridge`).digest("hex");
 const SHORTCUT = process.env.CODEX_VOICE_SHORTCUT || "CommandOrControl+Shift+Space";
 
@@ -105,11 +106,7 @@ function getLogStream() {
 // current stream has written LOG_MAX_BYTES, close it, move the file aside, and
 // start a fresh one. If the rename fails (file locked), the next write retries.
 function rotateLogFile() {
-  try {
-    if (fs.statSync(LOG_FILE).size > LOG_MAX_BYTES) fs.renameSync(LOG_FILE, `${LOG_FILE}.1`);
-  } catch {
-    // First run or file missing: nothing to rotate.
-  }
+  rotateLogIfNeeded(fs, LOG_FILE, LOG_MAX_BYTES);
 }
 
 function writeLog(message, data) {

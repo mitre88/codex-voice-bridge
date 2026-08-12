@@ -1,10 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   accumulateOutput,
   applyEnvOverrides,
   escapeAppleScript,
+  hasVirtualAudioDevice,
   isPlausibleApiKey,
   isSafeCuaToolName,
   normalizeCuaArgs,
@@ -16,6 +19,7 @@ import {
   requireNonEmptyString,
   resolveAppIdentity,
   resolveWorkdir,
+  rotateLogIfNeeded,
   toPositiveInt,
   truncateOutput,
 } from "../src/lib.js";
@@ -190,4 +194,41 @@ test("toPositiveInt accepts positive integers and falls back otherwise", () => {
   assert.equal(toPositiveInt("1.5", 60000), 60000);
   assert.equal(toPositiveInt("", 60000), 60000);
   assert.equal(toPositiveInt(undefined, 60000), 60000);
+});
+
+test("hasVirtualAudioDevice matches BlackHole, Loopback, and virtual labels", () => {
+  assert.equal(hasVirtualAudioDevice([{ label: "MacBook Pro Microphone" }]), false);
+  assert.equal(hasVirtualAudioDevice([{ label: "BlackHole 2ch" }]), true);
+  assert.equal(hasVirtualAudioDevice([{ label: "Loopback Audio" }]), true);
+  assert.equal(hasVirtualAudioDevice([{ label: "Virtual Cable" }]), true);
+  assert.equal(hasVirtualAudioDevice([]), false);
+});
+
+test("rotateLogIfNeeded ignores a missing log file", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-voice-bridge-log-"));
+  const logFile = path.join(dir, "bridge.log");
+  assert.equal(rotateLogIfNeeded(fs, logFile, 16), false);
+  assert.equal(fs.existsSync(logFile), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("rotateLogIfNeeded keeps a small log file in place", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-voice-bridge-log-"));
+  const logFile = path.join(dir, "bridge.log");
+  fs.writeFileSync(logFile, "small");
+  assert.equal(rotateLogIfNeeded(fs, logFile, 16), false);
+  assert.equal(fs.readFileSync(logFile, "utf8"), "small");
+  assert.equal(fs.existsSync(`${logFile}.1`), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("rotateLogIfNeeded keeps only the previous oversized file as .1", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-voice-bridge-log-"));
+  const logFile = path.join(dir, "bridge.log");
+  fs.writeFileSync(`${logFile}.1`, "older");
+  fs.writeFileSync(logFile, "current-oversize");
+  assert.equal(rotateLogIfNeeded(fs, logFile, 8), true);
+  assert.equal(fs.existsSync(logFile), false);
+  assert.equal(fs.readFileSync(`${logFile}.1`, "utf8"), "current-oversize");
+  fs.rmSync(dir, { recursive: true, force: true });
 });

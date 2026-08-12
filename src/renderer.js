@@ -1,4 +1,9 @@
-import { truncateOutput } from "./lib.js";
+import { hasVirtualAudioDevice, truncateOutput } from "./lib.js";
+
+const INTERVIEW_SETUP_TEXT =
+  "Route English to BlackHole/Loopback, then select that device as the meeting microphone.";
+const INTERVIEW_VIRTUAL_AUDIO_WARNING =
+  "Warning: no BlackHole, Loopback, or virtual audio device found. English can still play through speakers, but the meeting will only hear it if your microphone picks up that output.";
 
 const statusEl = document.querySelector("#status");
 const connectButton = document.querySelector("#connect");
@@ -44,6 +49,8 @@ let hasStoredKey = false;
 let sourceCaption = "";
 let outputCaption = "";
 let baseConfigText = "";
+let lastMediaDevices = [];
+let warnedMissingVirtualAudio = false;
 
 function getBridge() {
   if (!window.voiceBridge) throw new Error("Electron preload bridge is unavailable.");
@@ -87,12 +94,28 @@ function updateModeControls() {
   if (mode === "interview") {
     sourceCaptionLabel.textContent = "Interview English -> Spanish";
     outputCaptionLabel.textContent = "My Spanish -> English";
-    configEl.textContent = "Route English to BlackHole/Loopback, then select that device as the meeting microphone.";
+    updateInterviewAudioWarning();
   } else {
     sourceCaptionLabel.textContent = "Source";
     outputCaptionLabel.textContent = "Output";
+    configEl.classList.remove("is-warning");
     if (baseConfigText) configEl.textContent = baseConfigText;
   }
+}
+
+function updateInterviewAudioWarning(devices = lastMediaDevices) {
+  if (voiceModeInput.value !== "interview") return;
+  if (!hasVirtualAudioDevice(devices)) {
+    configEl.textContent = INTERVIEW_VIRTUAL_AUDIO_WARNING;
+    configEl.classList.add("is-warning");
+    if (!warnedMissingVirtualAudio) {
+      warnedMissingVirtualAudio = true;
+      log("Interview virtual audio missing. Speaker fallback is still available.");
+    }
+    return;
+  }
+  configEl.textContent = INTERVIEW_SETUP_TEXT;
+  configEl.classList.remove("is-warning");
 }
 
 function getVoiceOptions() {
@@ -300,10 +323,12 @@ async function refreshMediaDevices(promptForLabels = false) {
   if (promptForLabels) permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
+    lastMediaDevices = devices;
     setSelectOptions(myMicDeviceInput, devices.filter((device) => device.kind === "audioinput"), "Default microphone");
     setSelectOptions(interviewerAudioDeviceInput, devices.filter((device) => device.kind === "audioinput"), "Default input");
     setSelectOptions(spanishOutputDeviceInput, devices.filter((device) => device.kind === "audiooutput"), "Default output");
     setSelectOptions(englishOutputDeviceInput, devices.filter((device) => device.kind === "audiooutput"), "Default output");
+    updateInterviewAudioWarning(devices);
   } finally {
     permissionStream?.getTracks().forEach((track) => track.stop());
   }

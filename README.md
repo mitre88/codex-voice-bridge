@@ -45,7 +45,7 @@ Talk to your Mac. It listens, speaks, inspects your code with Codex CLI, operate
 - API key stored in **macOS Keychain** (`codex-voice-bridge.openai-api-key`) — never in source files
 - Codex CLI runs in a **read-only sandbox** by default
 - CUA Driver tools are intentionally limited; unsafe tools are blocked
-- Logs stay local at `~/Library/Logs/codex-voice-bridge/bridge.log`
+- Logs stay local at `~/Library/Logs/codex-voice-bridge/bridge.log` and rotate at 2 MB (`bridge.log.1`)
 
 ---
 
@@ -152,13 +152,15 @@ npm run smoke:cua # CUA Driver connectivity check (requires CUA Driver)
 npm start
 ```
 
+CI on `main` runs `npm ci`, `npm test`, and `npm run check` on Node 20.
+
 ---
 
 ## Security notes
 
 - Never commit `.env` files or real API keys.
 - API keys pasted into the app are stored in macOS Keychain under `codex-voice-bridge.openai-api-key`.
-- Logs are written to `~/Library/Logs/codex-voice-bridge/bridge.log`.
+- Logs are written to `~/Library/Logs/codex-voice-bridge/bridge.log` and rotate at 2 MB.
 - Tool calls are intentionally limited; some CUA Driver tools are blocked for safety.
 - Codex CLI runs with a read-only sandbox by default.
 
@@ -177,6 +179,7 @@ codex-voice-bridge/
 │   └── smoke-cua.sh     # CUA Driver connectivity check
 ├── test/
 │   └── lib.test.js      # Unit tests (node:test)
+├── .github/workflows/   # CI: npm test + npm run check
 ├── package.json
 └── .env.example
 ```

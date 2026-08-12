@@ -46,6 +46,10 @@ textarea {
   font-size: 11px;
 }
 
+.meta.is-warning {
+  color: rgba(247, 247, 242, 0.78);
+}
+
 h1,
 h2 {
   margin: 0;

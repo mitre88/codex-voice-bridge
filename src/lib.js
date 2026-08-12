@@ -176,3 +176,23 @@ export function resolveWorkdir(requested, baseWorkdir) {
   if (normalized !== baseWorkdir && !normalized.startsWith(baseWorkdir + path.sep)) return baseWorkdir;
   return normalized;
 }
+
+export const VIRTUAL_AUDIO_LABEL = /blackhole|loopback|virtual/i;
+
+export function hasVirtualAudioDevice(devices = []) {
+  return devices.some((device) => VIRTUAL_AUDIO_LABEL.test(device?.label || ""));
+}
+
+export const LOG_MAX_BYTES = 2 * 1024 * 1024;
+
+export function rotateLogIfNeeded(fsLike, logFile, maxBytes = LOG_MAX_BYTES) {
+  try {
+    if (fsLike.statSync(logFile).size > maxBytes) {
+      fsLike.renameSync(logFile, `${logFile}.1`);
+      return true;
+    }
+  } catch {
+    // First run or file missing: nothing to rotate.
+  }
+  return false;
+}
