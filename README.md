@@ -90,7 +90,12 @@ export OPENAI_REALTIME_REASONING_EFFORT="low"               # low | minimal | me
 export OPENAI_REALTIME_TARGET_LANGUAGE="es"                 # es en fr de pt ja ko zh
 export CODEX_VOICE_WORKDIR="/path/to/your/workspace"
 export CODEX_VOICE_SHORTCUT="CommandOrControl+Shift+Space"   # global toggle shortcut
+export CODEX_VOICE_TIMEOUT_MS="120000"                       # codex CLI timeout
+export CODEX_VOICE_CUA_TIMEOUT_MS="60000"                    # cua-driver timeout
+export CODEX_VOICE_OPENAI_TIMEOUT_MS="60000"                 # OpenAI HTTP timeout
 ```
+
+You can also put these in a `.env` file in the directory you launch from (see `.env.example`); it is loaded automatically on start. Variables already set in your shell always take precedence, and `CODEX_VOICE_ENV_FILE` can point to a `.env` elsewhere. Timeout values are validated — an invalid value falls back to the default instead of misbehaving.
 
 ---
 

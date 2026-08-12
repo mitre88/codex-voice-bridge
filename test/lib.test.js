@@ -3,15 +3,18 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import {
   accumulateOutput,
+  applyEnvOverrides,
   escapeAppleScript,
   isPlausibleApiKey,
   isSafeCuaToolName,
   normalizeCuaArgs,
   normalizeReasoningEffort,
   normalizeTone,
+  parseEnvFile,
   redactSecrets,
   resolveAppIdentity,
   resolveWorkdir,
+  toPositiveInt,
   truncateOutput,
 } from "../src/lib.js";
 
@@ -118,4 +121,50 @@ test("resolveWorkdir rejects traversal and outside absolute paths", () => {
   // A sibling prefix must not pass the containment check.
   assert.equal(resolveWorkdir(`${base}2`, base), base);
   assert.equal(resolveWorkdir(base, base), base);
+});
+
+test("parseEnvFile parses KEY=VALUE lines, comments, blanks, and quoted values", () => {
+  assert.deepEqual(
+    parseEnvFile(`
+      # full-line comment
+      OPENAI_API_KEY=sk-test-123
+      EMPTY=
+      QUOTED="hello world"
+      SINGLE='a=b'
+      INLINE=sk-x-1 # trailing comment
+      bad line
+      =novalue
+    `),
+    {
+      OPENAI_API_KEY: "sk-test-123",
+      EMPTY: "",
+      QUOTED: "hello world",
+      SINGLE: "a=b",
+      INLINE: "sk-x-1",
+    },
+  );
+  assert.deepEqual(parseEnvFile(""), {});
+  assert.deepEqual(parseEnvFile(null), {});
+  assert.deepEqual(parseEnvFile(42), {});
+});
+
+test("parseEnvFile keeps '#' inside unquoted values without preceding whitespace", () => {
+  assert.deepEqual(parseEnvFile("KEY=sk-x#note\nQUOTED=\"a # b\""), { KEY: "sk-x#note", QUOTED: "a # b" });
+});
+
+test("applyEnvOverrides never overrides existing environment variables", () => {
+  const env = { EXISTING: "keep" };
+  applyEnvOverrides({ EXISTING: "new", NEW: "added" }, env);
+  assert.equal(env.EXISTING, "keep");
+  assert.equal(env.NEW, "added");
+});
+
+test("toPositiveInt accepts positive integers and falls back otherwise", () => {
+  assert.equal(toPositiveInt("120000", 60000), 120000);
+  assert.equal(toPositiveInt("abc", 60000), 60000);
+  assert.equal(toPositiveInt("0", 60000), 60000);
+  assert.equal(toPositiveInt("-5", 60000), 60000);
+  assert.equal(toPositiveInt("1.5", 60000), 60000);
+  assert.equal(toPositiveInt("", 60000), 60000);
+  assert.equal(toPositiveInt(undefined, 60000), 60000);
 });

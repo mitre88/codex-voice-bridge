@@ -7,18 +7,39 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   accumulateOutput,
+  applyEnvOverrides,
   escapeAppleScript,
   isPlausibleApiKey,
   isSafeCuaToolName,
   normalizeCuaArgs,
   normalizeReasoningEffort,
   normalizeTone,
+  parseEnvFile,
   redactSecrets,
   resolveAppIdentity,
   resolveWorkdir,
+  toPositiveInt,
 } from "./lib.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Optional .env support with zero dependencies: load <cwd>/.env — or the file
+// pointed to by CODEX_VOICE_ENV_FILE — before any configuration constant is
+// read. Variables already present in the environment are never overridden.
+// This must run before DEFAULT_MODEL/DEFAULT_WORKDIR/... are evaluated.
+function loadDotEnv() {
+  const candidates = [process.env.CODEX_VOICE_ENV_FILE, path.join(process.cwd(), ".env")].filter(Boolean);
+  for (const file of candidates) {
+    try {
+      if (!fs.existsSync(file)) continue;
+      const loaded = applyEnvOverrides(parseEnvFile(fs.readFileSync(file, "utf8")), process.env);
+      console.log(`codex-voice-bridge: loaded env overrides from ${file} (${Object.keys(loaded).length} vars present)`);
+    } catch {
+      // An unreadable .env must never block startup.
+    }
+  }
+}
+loadDotEnv();
 
 const DEFAULT_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2";
 const DEFAULT_TRANSLATE_MODEL = process.env.OPENAI_REALTIME_TRANSLATE_MODEL || "gpt-realtime-translate";
@@ -31,9 +52,9 @@ const processCwd = process.cwd();
 const DEFAULT_WORKDIR = path.resolve(
   process.env.CODEX_VOICE_WORKDIR || (processCwd === path.parse(processCwd).root ? os.homedir() : processCwd),
 );
-const CODEX_TIMEOUT_MS = Number(process.env.CODEX_VOICE_TIMEOUT_MS || 120000);
-const CUA_TIMEOUT_MS = Number(process.env.CODEX_VOICE_CUA_TIMEOUT_MS || 60000);
-const OPENAI_REQUEST_TIMEOUT_MS = Number(process.env.CODEX_VOICE_OPENAI_TIMEOUT_MS || 60000);
+const CODEX_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_TIMEOUT_MS, 120000);
+const CUA_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_CUA_TIMEOUT_MS, 60000);
+const OPENAI_REQUEST_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_OPENAI_TIMEOUT_MS, 60000);
 // Bound how much stdout/stderr a child process can accumulate in memory before
 // we drop the excess; a runaway command must not grow the main process forever.
 const MAX_PROCESS_OUTPUT_CHARS = 1024 * 1024;

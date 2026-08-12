@@ -98,6 +98,53 @@ export function truncateOutput(output, maxChars = 30000) {
   return out;
 }
 
+// Parse a dotenv-style file (KEY=VALUE lines, # comments, optional quotes)
+// into a plain object. Never throws: blank lines, comments, and malformed
+// lines are skipped. Inline comments (" # ...") are stripped from unquoted
+// values, matching common dotenv behavior.
+export function parseEnvFile(contents) {
+  const result = {};
+  if (typeof contents !== "string") return result;
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue; // no key or no separator
+    const key = line.slice(0, eq).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    let value = line.slice(eq + 1).trim();
+    if (!value.startsWith('"') && !value.startsWith("'")) {
+      const hash = value.search(/\s#/);
+      if (hash !== -1) value = value.slice(0, hash).trim();
+    } else if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
+// Merge parsed .env variables into an environment object, never overriding
+// variables that are already set (same default behavior as dotenv): an
+// explicit environment always wins over a .env file.
+export function applyEnvOverrides(parsed, env) {
+  for (const [key, value] of Object.entries(parsed)) {
+    if (env[key] === undefined) env[key] = value;
+  }
+  return env;
+}
+
+// Env-var style numeric parsing for timeouts: refuse NaN, zero, negative, and
+// fractional values so a misconfigured variable can never produce a
+// setTimeout of 0 (which would fire immediately) or a negative delay.
+export function toPositiveInt(value, fallback) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
 // Keep the model inside the configured workspace: the model may suggest any
 // absolute path, and Codex runs read-only, but we still honor least privilege.
 export function resolveWorkdir(requested, baseWorkdir) {
