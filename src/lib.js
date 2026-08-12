@@ -98,6 +98,26 @@ export function redactSecrets(value) {
   return String(value).replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED_OPENAI_KEY]");
 }
 
+// Turn common failure modes into short, actionable messages for the UI.
+// Pure so it stays unit-testable; anything unrecognized passes through as-is.
+export function humanizeError(error) {
+  const name = error?.name;
+  const message = error?.message || String(error);
+  if (name === "NotAllowedError") {
+    return "Microphone or screen access was denied. Allow microphone permission for Codex Voice Bridge in System Settings > Privacy & Security, then retry.";
+  }
+  if (name === "NotFoundError") {
+    return "No audio input device was found. Check that a microphone is connected and enabled.";
+  }
+  if (name === "TimeoutError" || name === "AbortError") {
+    return "The request timed out. Check your network connection and try again.";
+  }
+  if (message.includes("insufficient_quota") || message.includes("exceeded your current quota")) {
+    return "OpenAI rejected the Realtime call: insufficient_quota. Check billing, project limits, and that the key belongs to the funded organization.";
+  }
+  return message;
+}
+
 // Append a chunk to a growing process-output buffer, capping the total length
 // so a runaway command cannot accumulate unbounded memory in the main process.
 // Returns { text, capped } where capped reports whether this chunk pushed the

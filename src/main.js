@@ -89,6 +89,10 @@ const CUA_BLOCKED_TOOLS = new Set(["hotkey", "move_cursor", "replay_trajectory",
 let mainWindow;
 let runtimeApiKey = "";
 let logStream = null;
+// Live child processes (codex, cua-driver, osascript, security). They are
+// spawned detached in their own process group; tracking them lets us terminate
+// any still-running group on quit so a long Codex run cannot outlive the app.
+const runningChildren = new Set();
 
 function getLogStream() {
   if (!logStream) {
@@ -138,6 +142,7 @@ function runProcess(command, args, options = {}) {
       stdio: ["pipe", "pipe", "pipe"],
       detached: true, // own process group so we can kill descendants too
     });
+    runningChildren.add(child);
     child.stdin.end(options.stdin || "");
 
     let stdout = "";
@@ -204,6 +209,7 @@ function runProcess(command, args, options = {}) {
       options.onOutput?.(text);
     });
     child.on("close", (code) => {
+      runningChildren.delete(child);
       // Flush any trailing partial UTF-8 sequence held by the decoders so the
       // final captured output is never missing its last character.
       const tailOut = stdoutDecoder.end();
@@ -212,7 +218,11 @@ function runProcess(command, args, options = {}) {
       if (tailErr) stderr = accumulateOutput(stderr, tailErr, MAX_PROCESS_OUTPUT_CHARS).text;
       finish({ ok: code === 0, code, stdout, stderr });
     });
-    child.on("error", (error) => finish({ ok: false, code: -1, stdout, stderr: error.message }));
+    child.on("error", (error) => {
+      // A failed spawn never emits "close", so drop the tracking entry here.
+      runningChildren.delete(child);
+      finish({ ok: false, code: -1, stdout, stderr: error.message });
+    });
   });
 }
 
@@ -653,7 +663,18 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("will-quit", () => globalShortcut.unregisterAll());
+app.on("will-quit", () => {
+  globalShortcut.unregisterAll();
+  // Terminate any still-running child process groups (e.g. a long Codex run)
+  // so nothing keeps executing after the app exits.
+  for (const child of runningChildren) {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
+      // Process group already gone.
+    }
+  }
+});
 
 ipcMain.handle("realtime:create-client-secret", guard((_event, options) => createRealtimeClientSecret(options)));
 ipcMain.handle("realtime:set-api-key", guard(async (_event, apiKey) => {

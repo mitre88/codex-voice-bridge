@@ -1,4 +1,9 @@
-import { hasVirtualAudioDevice, truncateOutput } from "./lib.js";
+import { hasVirtualAudioDevice, humanizeError, truncateOutput } from "./lib.js";
+
+// How long the Realtime SDP exchange may take before we give up. The main
+// process already times out the token fetch; this bounds the second network
+// hop so a hung connection cannot leave the UI stuck on "Connecting" forever.
+const OPENAI_CALL_TIMEOUT_MS = 60000;
 
 const INTERVIEW_SETUP_TEXT =
   "Route English to BlackHole/Loopback, then select that device as the meeting microphone.";
@@ -149,14 +154,6 @@ function appendCaption(kind, text, replace = false) {
   if (kind === "source") sourceCaption = replace ? text : `${sourceCaption}${text}`;
   else outputCaption = replace ? text : `${outputCaption}${text}`;
   renderCaptions();
-}
-
-function humanizeError(error) {
-  const message = error?.message || String(error);
-  if (message.includes("insufficient_quota") || message.includes("exceeded your current quota")) {
-    return "OpenAI rejected the Realtime call: insufficient_quota. Check billing, project limits, and that the key belongs to the funded organization.";
-  }
-  return message;
 }
 
 function handleTranscriptEvent(event, targets = { source: "source", output: "output" }) {
@@ -409,6 +406,9 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
         Authorization: `Bearer ${token.value}`,
         "Content-Type": "application/sdp",
       },
+      // Never let a hung network call leave the Connect flow pending forever;
+      // humanizeError turns the resulting TimeoutError into a clear message.
+      signal: AbortSignal.timeout(OPENAI_CALL_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${await response.text()}`);
     await pc.setRemoteDescription({ type: "answer", sdp: await response.text() });

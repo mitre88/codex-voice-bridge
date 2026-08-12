@@ -8,6 +8,7 @@ import {
   applyEnvOverrides,
   escapeAppleScript,
   hasVirtualAudioDevice,
+  humanizeError,
   isPlausibleApiKey,
   isSafeCuaToolName,
   normalizeCuaArgs,
@@ -102,6 +103,22 @@ test("requireMaxLength caps oversized argv-bound values", () => {
 test("redactSecrets masks OpenAI keys", () => {
   assert.equal(redactSecrets("key sk-proj-abc123_DEF"), "key [REDACTED_OPENAI_KEY]");
   assert.equal(redactSecrets("no secrets here"), "no secrets here");
+});
+
+test("humanizeError maps common failure modes to actionable messages", () => {
+  assert.match(humanizeError({ name: "NotAllowedError", message: "denied" }), /microphone or screen access was denied/i);
+  assert.match(humanizeError({ name: "NotFoundError", message: "no device" }), /no audio input device/i);
+  assert.match(humanizeError({ name: "TimeoutError", message: "aborted" }), /request timed out/i);
+  assert.match(humanizeError({ name: "AbortError", message: "aborted" }), /request timed out/i);
+  assert.match(humanizeError(new Error("insufficient_quota")), /insufficient_quota/i);
+  assert.match(humanizeError(new Error("exceeded your current quota")), /insufficient_quota/i);
+});
+
+test("humanizeError passes through unknown messages", () => {
+  assert.equal(humanizeError(new Error("boom")), "boom");
+  assert.equal(humanizeError("plain string"), "plain string");
+  assert.equal(humanizeError(undefined), "undefined");
+  assert.equal(humanizeError(null), "null");
 });
 
 test("truncateOutput truncates long stdout and preserves metadata", () => {
