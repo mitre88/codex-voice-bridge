@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   accumulateOutput,
@@ -143,6 +144,11 @@ function runProcess(command, args, options = {}) {
     let stdoutCapped = false;
     let stderrCapped = false;
     let settled = false;
+    // Decode UTF-8 incrementally: chunk.toString() alone would garble any
+    // multi-byte character split across two chunks (common with streaming
+    // Codex output, e.g. accented Spanish) into U+FFFD replacement chars.
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
 
     function killProcessGroup(signal) {
       try {
@@ -177,18 +183,28 @@ function runProcess(command, args, options = {}) {
     }
 
     child.stdout.on("data", (chunk) => {
-      const result = accumulateOutput(stdout, chunk, MAX_PROCESS_OUTPUT_CHARS);
+      const text = stdoutDecoder.write(chunk);
+      const result = accumulateOutput(stdout, text, MAX_PROCESS_OUTPUT_CHARS);
       stdout = result.text;
       stdoutCapped = stdoutCapped || result.capped;
-      options.onOutput?.(chunk.toString());
+      options.onOutput?.(text);
     });
     child.stderr.on("data", (chunk) => {
-      const result = accumulateOutput(stderr, chunk, MAX_PROCESS_OUTPUT_CHARS);
+      const text = stderrDecoder.write(chunk);
+      const result = accumulateOutput(stderr, text, MAX_PROCESS_OUTPUT_CHARS);
       stderr = result.text;
       stderrCapped = stderrCapped || result.capped;
-      options.onOutput?.(chunk.toString());
+      options.onOutput?.(text);
     });
-    child.on("close", (code) => finish({ ok: code === 0, code, stdout, stderr }));
+    child.on("close", (code) => {
+      // Flush any trailing partial UTF-8 sequence held by the decoders so the
+      // final captured output is never missing its last character.
+      const tailOut = stdoutDecoder.end();
+      const tailErr = stderrDecoder.end();
+      if (tailOut) stdout = accumulateOutput(stdout, tailOut, MAX_PROCESS_OUTPUT_CHARS).text;
+      if (tailErr) stderr = accumulateOutput(stderr, tailErr, MAX_PROCESS_OUTPUT_CHARS).text;
+      finish({ ok: code === 0, code, stdout, stderr });
+    });
     child.on("error", (error) => finish({ ok: false, code: -1, stdout, stderr: error.message }));
   });
 }
