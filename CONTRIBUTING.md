@@ -10,6 +10,8 @@ Thanks for improving Codex Voice Bridge.
 
 ```bash
 npm run check
+npm run lint
+npm test
 ```
 
 4. If your change touches CUA Driver integration and you have it installed:

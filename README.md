@@ -138,8 +138,10 @@ The app expects the `cua-driver` command to be available in your `PATH`.
 
 ```bash
 npm install
-npm run check
-npm run smoke:cua
+npm run check     # syntax check for all source files
+npm run lint      # ESLint
+npm test          # unit tests (node:test)
+npm run smoke:cua # CUA Driver connectivity check (requires CUA Driver)
 npm start
 ```
 
@@ -162,9 +164,12 @@ codex-voice-bridge/
 │   ├── preload.cjs      # Context bridge (secure IPC)
 │   ├── renderer.html    # UI — modes, voices, tones, reasoning, languages
 │   ├── renderer.js      # UI logic — WebRTC, audio routing, mode switching
+│   ├── lib.js           # Pure, unit-tested helpers shared by main and renderer
 │   └── styles.css       # Dark theme (#070808 / #f7f7f2)
 ├── scripts/
 │   └── smoke-cua.sh     # CUA Driver connectivity check
+├── test/
+│   └── lib.test.js      # Unit tests (node:test)
 ├── package.json
 └── .env.example
 ```

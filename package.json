@@ -5,11 +5,17 @@
   "type": "module",
   "description": "A local macOS voice bridge for OpenAI Realtime, Codex CLI, CUA Driver, and bidirectional interview translation.",
   "main": "src/main.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "electron .",
-    "check": "node --check src/main.js && node --check src/preload.cjs && node --check src/renderer.js",
+    "check": "node --check src/main.js && node --check src/preload.cjs && node --check src/renderer.js && node --check src/lib.js",
+    "lint": "eslint src",
+    "test": "node --test test/*.test.js",
     "smoke:cua": "bash scripts/smoke-cua.sh",
-    "logs": "tail -f ~/Library/Logs/codex-voice-bridge/bridge.log"
+    "logs": "tail -f ~/Library/Logs/codex-voice-bridge/bridge.log",
+    "dist": "electron-builder"
   },
   "keywords": [
     "openai",
@@ -25,5 +31,25 @@
   "license": "MIT",
   "dependencies": {
     "electron": "^39.2.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "electron-builder": "^26.15.3",
+    "eslint": "^9.39.5"
+  },
+  "build": {
+    "appId": "com.mitre.codex-voice-bridge",
+    "productName": "Codex Voice Bridge",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    }
   }
 }

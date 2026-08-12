@@ -1,10 +1,18 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, shell } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain } from "electron";
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  escapeAppleScript,
+  normalizeCuaArgs,
+  normalizeReasoningEffort,
+  normalizeTone,
+  redactSecrets,
+  resolveAppIdentity,
+} from "./lib.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -14,7 +22,11 @@ const DEFAULT_TRANSCRIBE_MODEL = process.env.OPENAI_REALTIME_TRANSCRIBE_MODEL ||
 const DEFAULT_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
 const DEFAULT_REASONING_EFFORT = process.env.OPENAI_REALTIME_REASONING_EFFORT || "low";
 const DEFAULT_TARGET_LANGUAGE = process.env.OPENAI_REALTIME_TARGET_LANGUAGE || "es";
-const DEFAULT_WORKDIR = path.resolve(process.env.CODEX_VOICE_WORKDIR || process.cwd());
+// Fall back to the home directory when launched from Finder/Dock (cwd === "/").
+const processCwd = process.cwd();
+const DEFAULT_WORKDIR = path.resolve(
+  process.env.CODEX_VOICE_WORKDIR || (processCwd === path.parse(processCwd).root ? os.homedir() : processCwd),
+);
 const CODEX_TIMEOUT_MS = Number(process.env.CODEX_VOICE_TIMEOUT_MS || 120000);
 const CUA_TIMEOUT_MS = Number(process.env.CODEX_VOICE_CUA_TIMEOUT_MS || 60000);
 const KEYCHAIN_SERVICE = "codex-voice-bridge.openai-api-key";
@@ -22,34 +34,26 @@ const KEYCHAIN_ACCOUNT = process.env.USER || "local";
 const LOG_DIR = path.join(os.homedir(), "Library", "Logs", "codex-voice-bridge");
 const LOG_FILE = path.join(LOG_DIR, "bridge.log");
 const SAFETY_ID = crypto.createHash("sha256").update(`${process.env.USER || "local"}:codex-voice-bridge`).digest("hex");
+const SHORTCUT = "CommandOrControl+Shift+Space";
 
 const CUA_BLOCKED_TOOLS = new Set(["hotkey", "move_cursor", "replay_trajectory", "set_recording"]);
-const APP_BUNDLE_ALIASES = new Map([
-  ["safari", "com.apple.Safari"],
-  ["chrome", "com.google.Chrome"],
-  ["google chrome", "com.google.Chrome"],
-  ["finder", "com.apple.finder"],
-  ["terminal", "com.apple.Terminal"],
-  ["codex", "com.openai.codex"],
-  ["xcode", "com.apple.dt.Xcode"],
-  ["whatsapp", "net.whatsapp.WhatsApp"],
-  ["obsidian", "md.obsidian"],
-  ["notes", "com.apple.Notes"],
-  ["textedit", "com.apple.TextEdit"],
-  ["preview", "com.apple.Preview"],
-]);
 
 let mainWindow;
 let runtimeApiKey = "";
+let logStream = null;
 
-function redactSecrets(value) {
-  return String(value).replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED_OPENAI_KEY]");
+function getLogStream() {
+  if (!logStream) {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    logStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
+    // Avoid crashing the main process if the disk/log file misbehaves.
+    logStream.on("error", () => {});
+  }
+  return logStream;
 }
 
 function writeLog(message, data) {
-  fs.mkdirSync(LOG_DIR, { recursive: true });
-  fs.appendFileSync(
-    LOG_FILE,
+  getLogStream().write(
     `${JSON.stringify({
       ts: new Date().toISOString(),
       message,
@@ -64,14 +68,27 @@ function runProcess(command, args, options = {}) {
       cwd: options.cwd || DEFAULT_WORKDIR,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: true, // own process group so we can kill descendants too
     });
     child.stdin.end(options.stdin || "");
 
     let stdout = "";
     let stderr = "";
     let settled = false;
+
+    function killProcessGroup(signal) {
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        // Process group already gone.
+      }
+    }
+
     const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
+      killProcessGroup("SIGTERM");
+      // Give children a moment to exit, then force-kill the whole group.
+      const hardKill = setTimeout(() => killProcessGroup("SIGKILL"), 3000);
+      hardKill.unref();
       finish({
         ok: false,
         code: -2,
@@ -112,8 +129,13 @@ async function readKeychainApiKey() {
   return result.ok ? result.stdout.trim() : "";
 }
 
+// Pass the key via stdin so it never shows up in `ps` output.
 function saveKeychainApiKey(apiKey) {
-  return runProcess("security", ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w", apiKey, "-U"]);
+  return runProcess(
+    "security",
+    ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w", "-U"],
+    { stdin: apiKey },
+  );
 }
 
 function createWindow() {
@@ -128,6 +150,7 @@ function createWindow() {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
   mainWindow.loadFile(path.join(__dirname, "renderer.html"));
@@ -157,7 +180,7 @@ async function createAssistantClientSecret(apiKey, options = {}) {
     session: {
       type: "realtime",
       model: DEFAULT_MODEL,
-      reasoning: { effort: normalizeReasoningEffort(options.reasoningEffort) },
+      reasoning: { effort: normalizeReasoningEffort(options.reasoningEffort, DEFAULT_REASONING_EFFORT) },
       instructions: [
         "You are Samantha for Codex, a concise Spanish voice interface for a local macOS coding agent.",
         `Speak naturally and briefly. Tone: ${normalizeTone(options.tone)}.`,
@@ -272,18 +295,6 @@ function normalizeRealtimeToken(payload, meta) {
   return { ...meta, value };
 }
 
-function normalizeReasoningEffort(value) {
-  return ["minimal", "low", "medium", "high", "xhigh"].includes(value) ? value : DEFAULT_REASONING_EFFORT;
-}
-
-function normalizeTone(value) {
-  return {
-    calm: "calm, warm, focused, and concise",
-    direct: "direct, practical, and concise",
-    energetic: "upbeat, clear, and action-oriented",
-  }[value] || "calm, warm, focused, and concise";
-}
-
 function assistantTools() {
   return [
     {
@@ -358,9 +369,18 @@ function assistantTools() {
   ];
 }
 
+// Keep the model inside the configured workspace: the model may suggest any
+// absolute path, and Codex runs read-only, but we still honor least privilege.
+function resolveWorkdir(requested, baseWorkdir) {
+  const raw = typeof requested === "string" && requested.trim() ? requested.trim() : baseWorkdir;
+  const resolved = path.isAbsolute(raw) ? raw : path.resolve(baseWorkdir, raw);
+  const normalized = path.normalize(resolved);
+  if (normalized !== baseWorkdir && !normalized.startsWith(baseWorkdir + path.sep)) return baseWorkdir;
+  return normalized;
+}
+
 function runCodex({ prompt, cwd }) {
-  const requestedCwd = typeof cwd === "string" && cwd.trim() ? cwd.trim() : DEFAULT_WORKDIR;
-  const workdir = path.isAbsolute(requestedCwd) ? requestedCwd : path.resolve(DEFAULT_WORKDIR, requestedCwd);
+  const workdir = resolveWorkdir(cwd, DEFAULT_WORKDIR);
   return runProcess("codex", ["exec", "--cd", workdir, "--sandbox", "read-only", "--skip-git-repo-check", prompt], {
     cwd: workdir,
     timeoutMs: CODEX_TIMEOUT_MS,
@@ -433,29 +453,6 @@ async function getActiveAppFromCua() {
   }
 }
 
-function resolveAppIdentity(input = {}) {
-  if (input.bundle_id) return { bundle_id: input.bundle_id };
-  if (input.app_name) {
-    const appName = String(input.app_name).toLowerCase();
-    return APP_BUNDLE_ALIASES.has(appName) ? { bundle_id: APP_BUNDLE_ALIASES.get(appName) } : { name: input.app_name };
-  }
-  return {};
-}
-
-function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}) {
-  const args = jsonArgs && typeof jsonArgs === "object" ? { ...jsonArgs } : {};
-  if (toolName === "launch_app" && !args.bundle_id && !args.name) {
-    const text = JSON.stringify({ args, fullInput }).toLowerCase();
-    for (const [alias, bundleId] of APP_BUNDLE_ALIASES.entries()) {
-      if (text.includes(alias)) {
-        args.bundle_id = bundleId;
-        break;
-      }
-    }
-  }
-  return args;
-}
-
 function activateApp(appIdentity) {
   const escaped = escapeAppleScript(appIdentity.bundle_id || appIdentity.name);
   return appIdentity.bundle_id
@@ -463,8 +460,24 @@ function activateApp(appIdentity) {
     : runProcess("osascript", ["-e", `tell application "${escaped}" to activate`]);
 }
 
-function escapeAppleScript(value = "") {
-  return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+// Only accept IPC from our own renderer (defense in depth).
+function isTrustedSender(event) {
+  try {
+    const url = new URL(event.senderFrame?.url || "");
+    return url.protocol === "file:" && url.pathname.endsWith(path.join("src", "renderer.html"));
+  } catch {
+    return false;
+  }
+}
+
+function guard(handler) {
+  return (event, ...args) => {
+    if (!isTrustedSender(event)) {
+      writeLog("blocked IPC call from untrusted sender", { url: event.senderFrame?.url });
+      return { ok: false, error: "Untrusted IPC sender." };
+    }
+    return handler(event, ...args);
+  };
 }
 
 process.on("uncaughtException", (error) => writeLog("main uncaughtException", { message: error.message, stack: error.stack }));
@@ -472,7 +485,13 @@ process.on("unhandledRejection", (reason) => writeLog("main unhandledRejection",
 
 app.whenReady().then(() => {
   createWindow();
-  globalShortcut.register("CommandOrControl+Shift+Space", toggleWindow);
+  const registered = globalShortcut.register(SHORTCUT, toggleWindow);
+  if (!registered) writeLog("globalShortcut register failed", { shortcut: SHORTCUT });
+});
+
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  else mainWindow?.show();
 });
 
 app.on("window-all-closed", () => {
@@ -481,27 +500,26 @@ app.on("window-all-closed", () => {
 
 app.on("will-quit", () => globalShortcut.unregisterAll());
 
-ipcMain.handle("realtime:create-client-secret", (_event, options) => createRealtimeClientSecret(options));
-ipcMain.handle("realtime:set-api-key", async (_event, apiKey) => {
+ipcMain.handle("realtime:create-client-secret", guard((_event, options) => createRealtimeClientSecret(options)));
+ipcMain.handle("realtime:set-api-key", guard(async (_event, apiKey) => {
   runtimeApiKey = String(apiKey || "").trim();
   if (!runtimeApiKey.startsWith("sk-")) return { ok: false };
   const saved = await saveKeychainApiKey(runtimeApiKey);
   return { ok: saved.ok, saved: saved.ok, error: saved.stderr };
-});
-ipcMain.handle("realtime:key-status", async () => ({
+}));
+ipcMain.handle("realtime:key-status", guard(async () => ({
   hasEnvKey: Boolean(process.env.OPENAI_API_KEY),
   hasSavedKey: Boolean(await readKeychainApiKey()),
-}));
-ipcMain.handle("codex:run", (_event, input) => runCodex(input));
-ipcMain.handle("cua:run", (_event, input) => runCuaDriver(input));
-ipcMain.handle("mac:run", (_event, input) => runMacAction(input));
-ipcMain.handle("log:renderer", (_event, message, data) => {
+})));
+ipcMain.handle("codex:run", guard((_event, input) => runCodex(input)));
+ipcMain.handle("cua:run", guard((_event, input) => runCuaDriver(input)));
+ipcMain.handle("mac:run", guard((_event, input) => runMacAction(input)));
+ipcMain.handle("log:renderer", guard((_event, message, data) => {
   writeLog(`renderer:${message}`, data);
   return { ok: true };
-});
-ipcMain.handle("log:path", () => LOG_FILE);
-ipcMain.handle("app:open-external", (_event, url) => shell.openExternal(url));
-ipcMain.handle("app:config", () => ({
+}));
+ipcMain.handle("log:path", guard(() => LOG_FILE));
+ipcMain.handle("app:config", guard(() => ({
   model: DEFAULT_MODEL,
   translateModel: DEFAULT_TRANSLATE_MODEL,
   transcribeModel: DEFAULT_TRANSCRIBE_MODEL,
@@ -509,4 +527,4 @@ ipcMain.handle("app:config", () => ({
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   targetLanguage: DEFAULT_TARGET_LANGUAGE,
   workdir: DEFAULT_WORKDIR,
-}));
+})));

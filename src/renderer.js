@@ -1,3 +1,5 @@
+import { truncateOutput } from "./lib.js";
+
 const statusEl = document.querySelector("#status");
 const connectButton = document.querySelector("#connect");
 const disconnectButton = document.querySelector("#disconnect");
@@ -66,6 +68,8 @@ function setStatus(text) {
 function log(message, data) {
   const suffix = data ? `\n${typeof data === "string" ? data : JSON.stringify(data, null, 2)}` : "";
   logEl.textContent = `${new Date().toLocaleTimeString()}  ${message}${suffix}\n${logEl.textContent}`;
+  // Cap the in-memory log so long Codex streams cannot grow the DOM forever.
+  if (logEl.textContent.length > 50000) logEl.textContent = logEl.textContent.slice(0, 50000);
   tryBridge()?.log("ui", { message, data }).catch(() => {});
 }
 
@@ -191,12 +195,19 @@ function getFunctionCall(event) {
 async function executeAction(action) {
   setPendingAction(null);
   setStatus(action.kind === "codex" ? "Codex running" : "CUA running");
-  const result =
-    action.kind === "codex"
-      ? await getBridge().runCodex({ prompt: action.args.prompt, cwd: action.args.cwd })
-      : action.kind === "cua"
-        ? await getBridge().runCua(action.args)
-        : await getBridge().runMac(action.args);
+  let result;
+  try {
+    result =
+      action.kind === "codex"
+        ? await getBridge().runCodex({ prompt: action.args.prompt, cwd: action.args.cwd })
+        : action.kind === "cua"
+          ? await getBridge().runCua(action.args)
+          : await getBridge().runMac(action.args);
+  } catch (error) {
+    // Never leave the Realtime session waiting for a tool output that will not come.
+    result = { ok: false, code: -99, stdout: "", stderr: error?.message || String(error) };
+    log("Local action error.", error);
+  }
   sendFunctionOutput(action.callId, result);
   setStatus("Listening");
   log("Local action finished.", result);
@@ -213,7 +224,18 @@ async function handleToolEvent(event) {
   if (handledToolCalls.has(functionCall.callId)) return;
   handledToolCalls.add(functionCall.callId);
 
-  const args = JSON.parse(functionCall.argsText || "{}");
+  let args;
+  try {
+    args = JSON.parse(functionCall.argsText || "{}");
+  } catch (error) {
+    sendFunctionOutput(functionCall.callId, {
+      ok: false,
+      code: -98,
+      stdout: "",
+      stderr: `Invalid tool arguments JSON: ${error?.message || error}`,
+    });
+    return;
+  }
   const isMacAction = ["open_app", "type_text_in_front_app", "press_key_in_front_app"].includes(functionCall.name);
   const action = {
     kind: functionCall.name === "run_codex" ? "codex" : functionCall.name === "run_cua_driver" ? "cua" : "mac",
@@ -288,6 +310,12 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
 
   pc.ontrack = (event) => {
     audio.srcObject = event.streams[0];
+  };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState !== "failed" && pc.connectionState !== "closed") return;
+    if (!activeSessions.some((session) => session.pc === pc)) return;
+    log(`${label}: Realtime connection ${pc.connectionState}.`);
+    disconnectRealtime();
   };
   pc.addTrack(inputStream.getAudioTracks()[0], inputStream);
 
@@ -374,6 +402,7 @@ function disconnectRealtime(options = {}) {
     session.pc?.close();
     if (session.audio) session.audio.srcObject = null;
   });
+  flushCodexOutput();
   actionDataChannel = undefined;
   connectButton.disabled = false;
   disconnectButton.disabled = true;
@@ -388,7 +417,7 @@ function sendFunctionOutput(callId, output) {
   actionDataChannel.send(
     JSON.stringify({
       type: "conversation.item.create",
-      item: { type: "function_call_output", call_id: callId, output: JSON.stringify(output) },
+      item: { type: "function_call_output", call_id: callId, output: JSON.stringify(truncateOutput(output)) },
     }),
   );
   actionDataChannel.send(JSON.stringify({ type: "response.create" }));
@@ -409,6 +438,14 @@ rejectCodexButton.addEventListener("click", () => {
 });
 navigator.mediaDevices?.addEventListener?.("devicechange", () => refreshMediaDevices(false).catch(() => {}));
 
+let codexOutputBuffer = "";
+
+function flushCodexOutput() {
+  if (!codexOutputBuffer) return;
+  log("codex output", codexOutputBuffer);
+  codexOutputBuffer = "";
+}
+
 try {
   getBridge().config().then((config) => {
     if (config.reasoningEffort) reasoningInput.value = config.reasoningEffort;
@@ -421,6 +458,11 @@ try {
   getBridge().keyStatus().then((status) => {
     applyKeyStatus(status);
     if (status.hasEnvKey || status.hasSavedKey) log(status.hasSavedKey ? "Using saved OpenAI key from Keychain." : "Using OPENAI_API_KEY.");
+  });
+  // Stream Codex/CUA progress into the debug log (batched to avoid DOM spam).
+  getBridge().onCodexOutput((chunk) => {
+    codexOutputBuffer += chunk;
+    if (codexOutputBuffer.length >= 4000) flushCodexOutput();
   });
   refreshMediaDevices(false).catch(() => {});
   updateModeControls();
