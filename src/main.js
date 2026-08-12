@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   escapeAppleScript,
+  isPlausibleApiKey,
   isSafeCuaToolName,
   normalizeCuaArgs,
   normalizeReasoningEffort,
@@ -49,16 +50,23 @@ function getLogStream() {
   if (!logStream) {
     fs.mkdirSync(LOG_DIR, { recursive: true });
     // Rotate an oversized log on startup so bridge.log cannot grow without bound.
-    try {
-      if (fs.statSync(LOG_FILE).size > LOG_MAX_BYTES) fs.renameSync(LOG_FILE, `${LOG_FILE}.1`);
-    } catch {
-      // First run or file missing: nothing to rotate.
-    }
+    rotateLogFile();
     logStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
     // Avoid crashing the main process if the disk/log file misbehaves.
     logStream.on("error", () => {});
   }
   return logStream;
+}
+
+// Long-running sessions never restart, so also rotate while running: once the
+// current stream has written LOG_MAX_BYTES, close it, move the file aside, and
+// start a fresh one. If the rename fails (file locked), the next write retries.
+function rotateLogFile() {
+  try {
+    if (fs.statSync(LOG_FILE).size > LOG_MAX_BYTES) fs.renameSync(LOG_FILE, `${LOG_FILE}.1`);
+  } catch {
+    // First run or file missing: nothing to rotate.
+  }
 }
 
 function writeLog(message, data) {
@@ -73,6 +81,11 @@ function writeLog(message, data) {
     // Never let a non-serializable payload take down the logging path (or the
     // uncaughtException handler that calls it).
     payload = JSON.stringify({ ts: new Date().toISOString(), message, data: String(data) });
+  }
+  if (logStream && logStream.bytesWritten >= LOG_MAX_BYTES) {
+    logStream.end();
+    logStream = null;
+    rotateLogFile();
   }
   getLogStream().write(`${payload}\n`);
 }
@@ -173,6 +186,12 @@ function createWindow() {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+  // Defense in depth: the renderer never opens windows or navigates away from
+  // its own HTML, so deny both. This complements the exact-URL IPC sender check.
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url !== RENDERER_URL) event.preventDefault();
+  });
   mainWindow.loadFile(path.join(__dirname, "renderer.html"));
 }
 
@@ -183,6 +202,9 @@ function toggleWindow() {
   }
   if (mainWindow.isVisible()) mainWindow.hide();
   else {
+    // A hidden-but-minimized window would otherwise stay in the Dock and only
+    // show a restored-but-unfocused window.
+    if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
   }
@@ -539,7 +561,7 @@ ipcMain.handle("realtime:set-api-key", guard(async (_event, apiKey) => {
   runtimeApiKey = String(apiKey || "").trim();
   // Require the sk- prefix and no whitespace/control characters; be permissive
   // about the payload so exotic-but-valid key formats are not rejected.
-  if (!/^sk-\S+$/.test(runtimeApiKey)) {
+  if (!isPlausibleApiKey(runtimeApiKey)) {
     runtimeApiKey = "";
     return { ok: false, error: "The API key format does not look valid." };
   }

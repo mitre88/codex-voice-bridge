@@ -65,6 +65,13 @@ export function isSafeCuaToolName(toolName) {
   return typeof toolName === "string" && /^[a-z][a-z0-9_]*$/i.test(toolName) && toolName.length <= 100;
 }
 
+// OpenAI keys start with "sk-" and contain no whitespace or control characters.
+// Be permissive about the payload (exotic-but-valid formats are not rejected),
+// but refuse anything that is obviously not a key.
+export function isPlausibleApiKey(value) {
+  return typeof value === "string" && /^sk-\S+$/.test(value);
+}
+
 export function redactSecrets(value) {
   return String(value).replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED_OPENAI_KEY]");
 }

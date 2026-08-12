@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import {
   escapeAppleScript,
+  isPlausibleApiKey,
   isSafeCuaToolName,
   normalizeCuaArgs,
   normalizeReasoningEffort,
@@ -56,6 +57,15 @@ test("isSafeCuaToolName accepts snake_case identifiers and rejects option-like n
   assert.equal(isSafeCuaToolName(""), false);
   assert.equal(isSafeCuaToolName("a".repeat(101)), false);
   assert.equal(isSafeCuaToolName(42), false);
+});
+
+test("isPlausibleApiKey accepts sk- keys and rejects obvious non-keys", () => {
+  assert.equal(isPlausibleApiKey("sk-proj-abc123_DEF"), true);
+  assert.equal(isPlausibleApiKey("sk-abc"), true);
+  assert.equal(isPlausibleApiKey(""), false);
+  assert.equal(isPlausibleApiKey("sk- with space"), false);
+  assert.equal(isPlausibleApiKey("not-a-key"), false);
+  assert.equal(isPlausibleApiKey(42), false);
 });
 
 test("redactSecrets masks OpenAI keys", () => {

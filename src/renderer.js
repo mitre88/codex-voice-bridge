@@ -307,7 +307,13 @@ async function applyAudioOutputDevice(audio, deviceId, label) {
     log(`${label}: this runtime cannot select a separate audio output device.`);
     return;
   }
-  await audio.setSinkId(deviceId);
+  try {
+    await audio.setSinkId(deviceId);
+  } catch (error) {
+    // A failed sink switch (device unplugged, permissions) must not abort the
+    // whole connection: fall back to the default output device instead.
+    log(`${label}: could not use the selected output device, using the default.`, error?.message || String(error));
+  }
 }
 
 async function connectPeerSession({ label, tokenOptions, inputStream, outputDeviceId, transcriptTargets, enableTools = false }) {
@@ -437,6 +443,9 @@ function disconnectRealtime(options = {}) {
   });
   flushCodexOutput();
   actionDataChannel = undefined;
+  // A tool call awaiting approval is meaningless once the session is gone;
+  // leaving it would strand a stale Run/Reject panel on screen.
+  setPendingAction(null);
   connectButton.disabled = false;
   disconnectButton.disabled = true;
   if (!options.silent) {
