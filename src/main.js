@@ -16,6 +16,7 @@ import {
   normalizeTone,
   parseEnvFile,
   redactSecrets,
+  requireNonEmptyString,
   resolveAppIdentity,
   resolveWorkdir,
   toPositiveInt,
@@ -65,6 +66,17 @@ const LOG_FILE = path.join(LOG_DIR, "bridge.log");
 const LOG_MAX_BYTES = 10 * 1024 * 1024;
 const SAFETY_ID = crypto.createHash("sha256").update(`${process.env.USER || "local"}:codex-voice-bridge`).digest("hex");
 const SHORTCUT = process.env.CODEX_VOICE_SHORTCUT || "CommandOrControl+Shift+Space";
+
+// Read the version for the UI config line and support/debug reports. Never
+// block startup if package.json is missing or unreadable.
+function readAppVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")).version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+const APP_VERSION = readAppVersion();
 
 const CUA_BLOCKED_TOOLS = new Set(["hotkey", "move_cursor", "replay_trajectory", "set_recording"]);
 
@@ -460,7 +472,14 @@ function assistantTools() {
 
 // Keep the model inside the configured workspace (see resolveWorkdir in lib.js).
 
-function runCodex({ prompt, cwd }) {
+function runCodex(input) {
+  // The model may omit the required prompt field (or send a non-string). A
+  // missing prompt would otherwise reach spawn() as the literal string
+  // "undefined" and trigger a pointless Codex run, so refuse it cleanly and
+  // let the model self-correct from the error message.
+  const promptError = requireNonEmptyString(input?.prompt, "prompt");
+  if (promptError) return Promise.resolve({ ok: false, code: -5, stdout: "", stderr: promptError });
+  const { prompt, cwd } = input;
   const workdir = resolveWorkdir(cwd, DEFAULT_WORKDIR);
   // "--" terminates option parsing so a prompt that starts with "-" (e.g. a
   // model-generated flag) can never be interpreted as a codex CLI option and
@@ -519,17 +538,22 @@ async function openAppVisible(input = {}) {
 }
 
 async function typeTextInFrontApp(input = {}) {
-  if (!input.text) return { ok: false, code: -1, stdout: "", stderr: "Missing text." };
+  const textError = requireNonEmptyString(input.text, "text");
+  if (textError) return { ok: false, code: -5, stdout: "", stderr: textError };
   const active = await getActiveAppFromCua();
   if (!active?.pid) return { ok: false, code: -1, stdout: "", stderr: "No active app pid found." };
   return runCuaDriver({ tool_name: "type_text_chars", json_args: { pid: active.pid, text: input.text, delay_ms: 20 } });
 }
 
 async function pressKeyInFrontApp(input = {}) {
-  if (!input.key) return { ok: false, code: -1, stdout: "", stderr: "Missing key." };
+  const keyError = requireNonEmptyString(input.key, "key");
+  if (keyError) return { ok: false, code: -5, stdout: "", stderr: keyError };
   const active = await getActiveAppFromCua();
   if (!active?.pid) return { ok: false, code: -1, stdout: "", stderr: "No active app pid found." };
-  return runCuaDriver({ tool_name: "press_key", json_args: { pid: active.pid, key: input.key, modifiers: input.modifiers || [] } });
+  // cua-driver expects an array of modifiers; anything else (a bare string
+  // like "cmd") would be misparsed, so normalize defensively.
+  const modifiers = Array.isArray(input.modifiers) ? input.modifiers : [];
+  return runCuaDriver({ tool_name: "press_key", json_args: { pid: active.pid, key: input.key, modifiers } });
 }
 
 async function getActiveAppFromCua() {
@@ -629,6 +653,7 @@ ipcMain.handle("log:renderer", guard((_event, message, data) => {
 }));
 ipcMain.handle("log:path", guard(() => LOG_FILE));
 ipcMain.handle("app:config", guard(() => ({
+  version: APP_VERSION,
   model: DEFAULT_MODEL,
   translateModel: DEFAULT_TRANSLATE_MODEL,
   transcribeModel: DEFAULT_TRANSCRIBE_MODEL,

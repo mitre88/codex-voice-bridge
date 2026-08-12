@@ -65,6 +65,15 @@ export function isSafeCuaToolName(toolName) {
   return typeof toolName === "string" && /^[a-z][a-z0-9_]*$/i.test(toolName) && toolName.length <= 100;
 }
 
+// Validate a model tool-call argument that must be a non-empty string. Returns
+// null when valid, or a short human-readable error message. Without this, a
+// missing prompt would reach spawn() as the literal string "undefined" and a
+// null IPC payload would throw a TypeError while destructuring.
+export function requireNonEmptyString(value, label) {
+  if (typeof value !== "string" || !value.trim()) return `${label} must be a non-empty string.`;
+  return null;
+}
+
 // OpenAI keys start with "sk-" and contain no whitespace or control characters.
 // Be permissive about the payload (exotic-but-valid formats are not rejected),
 // but refuse anything that is obviously not a key.

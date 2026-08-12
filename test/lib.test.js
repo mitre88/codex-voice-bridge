@@ -12,6 +12,7 @@ import {
   normalizeTone,
   parseEnvFile,
   redactSecrets,
+  requireNonEmptyString,
   resolveAppIdentity,
   resolveWorkdir,
   toPositiveInt,
@@ -70,6 +71,17 @@ test("isPlausibleApiKey accepts sk- keys and rejects obvious non-keys", () => {
   assert.equal(isPlausibleApiKey("sk- with space"), false);
   assert.equal(isPlausibleApiKey("not-a-key"), false);
   assert.equal(isPlausibleApiKey(42), false);
+});
+
+test("requireNonEmptyString accepts non-empty strings and rejects the rest", () => {
+  assert.equal(requireNonEmptyString("run the tests", "prompt"), null);
+  assert.equal(requireNonEmptyString("  spaced  ", "prompt"), null);
+  assert.equal(requireNonEmptyString("", "prompt"), "prompt must be a non-empty string.");
+  assert.equal(requireNonEmptyString("   ", "prompt"), "prompt must be a non-empty string.");
+  assert.equal(requireNonEmptyString(undefined, "prompt"), "prompt must be a non-empty string.");
+  assert.equal(requireNonEmptyString(null, "prompt"), "prompt must be a non-empty string.");
+  assert.equal(requireNonEmptyString(42, "text"), "text must be a non-empty string.");
+  assert.equal(requireNonEmptyString({ a: 1 }, "key"), "key must be a non-empty string.");
 });
 
 test("redactSecrets masks OpenAI keys", () => {
