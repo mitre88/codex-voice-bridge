@@ -376,7 +376,9 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
 }
 
 async function connectSingleRealtime(options) {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  // Respect the microphone selected in the UI (it was previously ignored
+  // outside interview mode, silently falling back to the system default).
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: deviceConstraint(options.myMicDeviceId) });
   await connectPeerSession({
     label: "Assistant",
     tokenOptions: options,
@@ -444,14 +446,37 @@ function disconnectRealtime(options = {}) {
 }
 
 function sendFunctionOutput(callId, output) {
-  if (!actionDataChannel || actionDataChannel.readyState !== "open") return;
-  actionDataChannel.send(
+  const messages = [
     JSON.stringify({
       type: "conversation.item.create",
       item: { type: "function_call_output", call_id: callId, output: JSON.stringify(truncateOutput(output)) },
     }),
+    JSON.stringify({ type: "response.create" }),
+  ];
+  const send = () => messages.forEach((message) => actionDataChannel.send(message));
+  if (actionDataChannel && actionDataChannel.readyState === "open") {
+    send();
+    return;
+  }
+  // Dropping the output here would leave the Realtime session waiting forever
+  // for a tool response (e.g. the user approved an action right after connect,
+  // before the data channel finished opening). Wait briefly instead.
+  if (!actionDataChannel) {
+    log("No data channel to deliver function output.");
+    return;
+  }
+  const channel = actionDataChannel;
+  const timeout = setTimeout(() => {
+    log("Data channel did not open in time; function output dropped.");
+  }, 5000);
+  channel.addEventListener(
+    "open",
+    () => {
+      clearTimeout(timeout);
+      send();
+    },
+    { once: true },
   );
-  actionDataChannel.send(JSON.stringify({ type: "response.create" }));
 }
 
 connectButton.addEventListener("click", connectRealtime);

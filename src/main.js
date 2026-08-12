@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   escapeAppleScript,
   isSafeCuaToolName,
@@ -483,14 +483,12 @@ function activateApp(appIdentity) {
     : runProcess("osascript", ["-e", `tell application "${escaped}" to activate`]);
 }
 
-// Only accept IPC from our own renderer (defense in depth).
+// Only accept IPC from our own renderer (defense in depth). Exact URL match:
+// a suffix check would let any file named src/renderer.html elsewhere on disk
+// (e.g. /tmp/src/renderer.html) masquerade as the trusted renderer.
+const RENDERER_URL = pathToFileURL(path.join(__dirname, "renderer.html")).href;
 function isTrustedSender(event) {
-  try {
-    const url = new URL(event.senderFrame?.url || "");
-    return url.protocol === "file:" && url.pathname.endsWith(path.join("src", "renderer.html"));
-  } catch {
-    return false;
-  }
+  return event.senderFrame?.url === RENDERER_URL;
 }
 
 function guard(handler) {
@@ -506,11 +504,24 @@ function guard(handler) {
 process.on("uncaughtException", (error) => writeLog("main uncaughtException", { message: error.message, stack: error.stack }));
 process.on("unhandledRejection", (reason) => writeLog("main unhandledRejection", { reason: String(reason), stack: reason?.stack }));
 
-app.whenReady().then(() => {
-  createWindow();
-  const registered = globalShortcut.register(SHORTCUT, toggleWindow);
-  if (!registered) writeLog("globalShortcut register failed", { shortcut: SHORTCUT });
-});
+// A second launch would create a second window fighting over the same global
+// shortcut and Keychain entries, so keep a single instance and focus it instead.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
+  app.whenReady().then(() => {
+    createWindow();
+    const registered = globalShortcut.register(SHORTCUT, toggleWindow);
+    if (!registered) writeLog("globalShortcut register failed", { shortcut: SHORTCUT });
+  });
+}
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();

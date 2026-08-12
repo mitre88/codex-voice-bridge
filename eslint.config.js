@@ -47,6 +47,7 @@ export default [
         Option: "readonly",
         console: "readonly",
         setTimeout: "readonly",
+        clearTimeout: "readonly",
         fetch: "readonly",
       },
     },
