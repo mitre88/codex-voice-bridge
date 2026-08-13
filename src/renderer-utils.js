@@ -93,20 +93,40 @@ export function humanizeError(error) {
   if (lower.includes("rate_limit_exceeded") || lower.includes("rate limit")) {
     return "OpenAI rate limit reached (429). Wait a moment and retry, or check your plan's requests-per-minute (RPM) and tokens-per-minute (TPM) limits.";
   }
-  if (lower.includes("invalid_api_key") || lower.includes("incorrect api key")) {
+  // A bare "401 Unauthorized" (proxy, opaque body, or a response whose text is
+  // not the usual JSON error) would otherwise pass through raw even though the
+  // status alone is a definitive key problem. The status must be exactly three
+  // digits (401\b) so a stray 4+ digit number in an unrelated message cannot
+  // false-positive, mirroring the 5xx branch below.
+  if (
+    lower.includes("invalid_api_key") ||
+    lower.includes("incorrect api key") ||
+    /(?:token|call) failed: 401\b/.test(lower) ||
+    /error code: 401\b/.test(lower)
+  ) {
     return "OpenAI rejected the API key (401). Check that the key is valid, has Realtime access, and belongs to the funded organization, then save it again.";
   }
   // 403 permission errors ("insufficient_permissions", "You do not have access
   // to the realtime API") usually mean the key/project lacks the Realtime
   // entitlement or the model is not enabled for it; a raw pass-through leaves
   // the user guessing whether the problem is the key, the project, or the model.
-  if (lower.includes("insufficient_permissions") || lower.includes("do not have access to the realtime")) {
+  if (
+    lower.includes("insufficient_permissions") ||
+    lower.includes("do not have access to the realtime") ||
+    /(?:token|call) failed: 403\b/.test(lower) ||
+    /error code: 403\b/.test(lower)
+  ) {
     return "OpenAI rejected the request with insufficient permissions (403). Check that the API key belongs to a project with the Realtime API enabled and that the requested model is available to it.";
   }
   // 404 model errors ("The model 'x' does not exist or you do not have access
   // to it.") are usually a typo in the .env model names or a model the account
   // cannot use; a raw pass-through leaves the user guessing which one.
-  if (lower.includes("model_not_found") || (lower.includes("does not exist") && lower.includes("model"))) {
+  if (
+    lower.includes("model_not_found") ||
+    (lower.includes("does not exist") && lower.includes("model")) ||
+    /(?:token|call) failed: 404\b/.test(lower) ||
+    /error code: 404\b/.test(lower)
+  ) {
     return "OpenAI could not find the requested Realtime model (404). Check the model names in .env (OPENAI_REALTIME_MODEL, OPENAI_REALTIME_TRANSLATE_MODEL, OPENAI_REALTIME_TRANSCRIBE_MODEL) for typos, or confirm the model is available to your account.";
   }
   // 5xx responses ("OpenAI Realtime token failed: 500 Internal Server Error",

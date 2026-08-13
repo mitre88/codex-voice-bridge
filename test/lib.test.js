@@ -258,6 +258,12 @@ test("humanizeError maps stale media device selections to an actionable message"
 test("humanizeError maps invalid API key failures to an actionable message", () => {
   assert.match(humanizeError(new Error("OpenAI Realtime token failed: 401 invalid_api_key")), /rejected the API key/i);
   assert.match(humanizeError(new Error("Incorrect API key provided")), /rejected the API key/i);
+  // A bare status (opaque body, proxy) must still map to the key message.
+  assert.match(humanizeError(new Error("OpenAI Realtime token failed: 401 Unauthorized")), /rejected the API key/i);
+  assert.match(humanizeError(new Error("Assistant: Realtime call failed: 401")), /rejected the API key/i);
+  assert.match(humanizeError(new Error("Error code: 401")), /rejected the API key/i);
+  // A 4-digit number must not false-positive on the 401 branch.
+  assert.equal(humanizeError(new Error("OpenAI Realtime token failed: 4011")), "OpenAI Realtime token failed: 4011");
 });
 
 test("humanizeError maps network failures to a connectivity message", () => {
@@ -288,6 +294,8 @@ test("humanizeError maps TLS certificate failures to a certificate message", () 
 test("humanizeError maps insufficient permissions failures to an actionable message", () => {
   assert.match(humanizeError(new Error("Error code: 403 - insufficient_permissions for project")), /insufficient permissions \(403\)/i);
   assert.match(humanizeError(new Error("You do not have access to the realtime API")), /insufficient permissions \(403\)/i);
+  // A bare 403 status must still map to the permissions message.
+  assert.match(humanizeError(new Error("OpenAI Realtime token failed: 403 Forbidden")), /insufficient permissions \(403\)/i);
   // A 404 model error must keep mapping to the 404 branch, not the 403 one.
   assert.match(
     humanizeError(new Error("Error code: 404 - The model 'gpt-realtime-2' does not exist or you do not have access to it.")),
@@ -303,6 +311,8 @@ test("humanizeError maps rate limit failures to an actionable message", () => {
 test("humanizeError maps missing model failures to an actionable message", () => {
   assert.match(humanizeError(new Error("Error code: 404 - The model 'gpt-realtime-2' does not exist or you do not have access to it.")), /could not find the requested realtime model \(404\)/i);
   assert.match(humanizeError(new Error("model_not_found")), /could not find the requested realtime model \(404\)/i);
+  // A bare 404 status must still map to the model message.
+  assert.match(humanizeError(new Error("OpenAI Realtime token failed: 404 Not Found")), /could not find the requested realtime model \(404\)/i);
   // A generic "does not exist" that is not about a model still passes through.
   assert.equal(humanizeError(new Error("the file does not exist")), "the file does not exist");
 });
