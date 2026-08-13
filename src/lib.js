@@ -312,11 +312,18 @@ export function parseEnvFile(contents) {
     if (!value.startsWith('"') && !value.startsWith("'")) {
       const hash = value.search(/\s#/);
       if (hash !== -1) value = value.slice(0, hash).trim();
-    } else if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
+    } else if (value.startsWith('"') || value.startsWith("'")) {
+      // Strip a quoted value, tolerating an inline comment after the closing
+      // quote: `KEY="v" # comment` must parse as "v", not `"v" # comment`
+      // (the latter would silently corrupt e.g. a quoted API key). If the
+      // quote never closes or stray text follows the closing quote, keep the
+      // raw value untouched, matching the previous behavior.
+      const quote = value[0];
+      const closing = value.indexOf(quote, 1);
+      if (closing !== -1) {
+        const tail = value.slice(closing + 1).trim();
+        if (!tail || tail.startsWith("#")) value = value.slice(1, closing);
+      }
     }
     result[key] = value;
   }

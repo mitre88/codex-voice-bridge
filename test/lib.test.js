@@ -350,6 +350,13 @@ test("parseEnvFile keeps '#' inside unquoted values without preceding whitespace
   assert.deepEqual(parseEnvFile("KEY=sk-x#note\nQUOTED=\"a # b\""), { KEY: "sk-x#note", QUOTED: "a # b" });
 });
 
+test("parseEnvFile strips inline comments after quoted values", () => {
+  assert.deepEqual(parseEnvFile('QUOTED="hello world" # trailing comment'), { QUOTED: "hello world" });
+  assert.deepEqual(parseEnvFile("SINGLE='a=b' # comment"), { SINGLE: "a=b" });
+  // A stray quote with non-comment text after it keeps the raw value.
+  assert.deepEqual(parseEnvFile('KEY="a"b'), { KEY: '"a"b' });
+});
+
 test("applyEnvOverrides never overrides existing environment variables", () => {
   const env = { EXISTING: "keep" };
   applyEnvOverrides({ EXISTING: "new", NEW: "added" }, env);
