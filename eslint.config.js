@@ -34,7 +34,7 @@ export default [
     },
   },
   {
-    files: ["src/renderer.js"],
+    files: ["src/renderer.js", "src/renderer-utils.js"],
     ...js.configs.recommended,
     languageOptions: {
       ecmaVersion: 2023,

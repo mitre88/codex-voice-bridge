@@ -173,12 +173,14 @@ codex-voice-bridge/
 │   ├── preload.cjs      # Context bridge (secure IPC)
 │   ├── renderer.html    # UI — modes, voices, tones, reasoning, languages
 │   ├── renderer.js      # UI logic — WebRTC, audio routing, mode switching
-│   ├── lib.js           # Pure, unit-tested helpers shared by main and renderer
+│   ├── renderer-utils.js# Browser-safe helpers for the sandboxed renderer (zero imports)
+│   ├── lib.js           # Pure, unit-tested helpers for the main process (re-exports renderer-utils)
 │   └── styles.css       # Dark theme (#070808 / #f7f7f2)
 ├── scripts/
 │   └── smoke-cua.sh     # CUA Driver connectivity check
 ├── test/
-│   └── lib.test.js      # Unit tests (node:test)
+│   ├── lib.test.js      # Unit tests for lib.js helpers (node:test)
+│   └── renderer-graph.test.js  # Static guard: renderer stays free of node: imports
 ├── .github/workflows/   # CI: npm test + npm run check
 ├── package.json
 └── .env.example

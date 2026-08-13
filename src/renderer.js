@@ -283,19 +283,29 @@ async function executeAction(action) {
   log("Local action finished.", result);
 }
 
+const KNOWN_TOOLS = ["run_codex", "run_cua_driver", "open_app", "type_text_in_front_app", "press_key_in_front_app"];
+
 async function handleToolEvent(event) {
   const functionCall = getFunctionCall(event);
-  if (
-    !functionCall ||
-    !["run_codex", "run_cua_driver", "open_app", "type_text_in_front_app", "press_key_in_front_app"].includes(functionCall.name)
-  ) {
-    return;
-  }
+  if (!functionCall) return;
   if (handledToolCalls.has(functionCall.callId)) return;
   // Tool call ids are unique per session and never replayed after the fact, so
   // dropping the whole dedupe set when it gets large is safe and keeps memory bounded.
   if (handledToolCalls.size >= 1000) handledToolCalls.clear();
   handledToolCalls.add(functionCall.callId);
+
+  if (!KNOWN_TOOLS.includes(functionCall.name)) {
+    // A hallucinated or stale tool name must not stall the session waiting
+    // forever for a function_call_output that will never come: answer with an
+    // error so the model can self-correct from the message.
+    sendFunctionOutput(functionCall.callId, {
+      ok: false,
+      code: -100,
+      stdout: "",
+      stderr: `Unknown tool: ${functionCall.name}.`,
+    });
+    return;
+  }
 
   let args;
   try {
