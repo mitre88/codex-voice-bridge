@@ -39,8 +39,13 @@ function loadDotEnv() {
   for (const file of candidates) {
     try {
       if (!fs.existsSync(file)) continue;
-      const loaded = applyEnvOverrides(parseEnvFile(fs.readFileSync(file, "utf8")), process.env);
-      console.log(`codex-voice-bridge: loaded env overrides from ${file} (${Object.keys(loaded).length} vars present)`);
+      const parsed = parseEnvFile(fs.readFileSync(file, "utf8"));
+      // Count what this file actually contributes: applyEnvOverrides returns
+      // the whole env object, so counting its keys would report every
+      // process variable (PATH, HOME, ...) instead of the file's vars.
+      const applied = Object.keys(parsed).filter((key) => process.env[key] === undefined).length;
+      applyEnvOverrides(parsed, process.env);
+      console.log(`codex-voice-bridge: loaded ${applied} env override(s) from ${file}`);
     } catch {
       // An unreadable .env must never block startup.
     }
