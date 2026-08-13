@@ -89,6 +89,22 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
   return args;
 }
 
+// cua-driver's launch_app must honor the same safety rules as open_app: the
+// model can call run_cua_driver directly with tool_name "launch_app", so an
+// unvalidated file:// or custom-scheme URL (or an unsafe app identity) would
+// otherwise bypass the http/https gate that the open_app path enforces. Returns
+// true only when the args carry a safe app identity and only http/https URLs
+// (a urls array, or the singular url form some callers use). Nothing unsafe is
+// rejected beyond that: missing identities/URLs are cua-driver's problem.
+export function isSafeCuaLaunchArgs(args = {}) {
+  const identity = args.bundle_id ? { bundle_id: args.bundle_id } : args.name ? { name: args.name } : null;
+  if (identity && !isSafeAppIdentity(identity)) return false;
+  const hasUrls = args.urls !== undefined || args.url !== undefined;
+  if (!hasUrls) return true;
+  const urls = args.urls !== undefined ? args.urls : [args.url];
+  return Array.isArray(urls) && urls.every((url) => isSafeLaunchUrl(url));
+}
+
 // Decide what open_app should launch. An app identity (bundle_id/name) wins;
 // with none, a plain http/https URL opens in the default browser. Returns:
 //   { kind: "app", identity }        -> launch the app (cua-driver + activate)

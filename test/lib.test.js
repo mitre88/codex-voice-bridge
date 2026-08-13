@@ -11,6 +11,7 @@ import {
   humanizeError,
   isPlausibleApiKey,
   isSafeAppIdentity,
+  isSafeCuaLaunchArgs,
   isSafeCuaToolName,
   isSafeLaunchUrl,
   normalizeCuaArgs,
@@ -90,6 +91,29 @@ test("normalizeCuaArgs fills bundle_id for launch_app from context", () => {
   );
   assert.deepEqual(normalizeCuaArgs("launch_app", { name: "X" }), { name: "X" });
   assert.deepEqual(normalizeCuaArgs("other_tool", { a: 1 }), { a: 1 });
+});
+
+test("isSafeCuaLaunchArgs accepts safe launch_app identities and http/https urls", () => {
+  assert.equal(isSafeCuaLaunchArgs({ bundle_id: "com.apple.Safari" }), true);
+  assert.equal(isSafeCuaLaunchArgs({ name: "Visual Studio Code" }), true);
+  assert.equal(isSafeCuaLaunchArgs({ bundle_id: "com.apple.Safari", urls: ["https://example.com"] }), true);
+  assert.equal(isSafeCuaLaunchArgs({ name: "Safari", url: "http://localhost:3000" }), true);
+  // No identity and no urls is not unsafe per se: cua-driver reports the miss.
+  assert.equal(isSafeCuaLaunchArgs({}), true);
+  assert.equal(isSafeCuaLaunchArgs({ reason: "open something" }), true);
+});
+
+test("isSafeCuaLaunchArgs rejects unsafe identities and non-http urls", () => {
+  assert.equal(isSafeCuaLaunchArgs({ name: 'x"\ndo shell script' }), false);
+  assert.equal(isSafeCuaLaunchArgs({ bundle_id: "a; do shell script" }), false);
+  assert.equal(isSafeCuaLaunchArgs({ name: "Música\u0007" }), false);
+  assert.equal(isSafeCuaLaunchArgs({ bundle_id: "com.apple.Terminal", urls: ["file:///etc/passwd"] }), false);
+  assert.equal(isSafeCuaLaunchArgs({ name: "Safari", urls: ["x-apple.systempreferences:com.apple.preference.general"] }), false);
+  assert.equal(isSafeCuaLaunchArgs({ name: "Safari", url: "javascript:alert(1)" }), false);
+  // A urls value that is not an array is not a shape cua-driver accepts.
+  assert.equal(isSafeCuaLaunchArgs({ name: "Safari", urls: "https://example.com" }), false);
+  // One bad url poisons the whole array.
+  assert.equal(isSafeCuaLaunchArgs({ name: "Safari", urls: ["https://ok.example", "file:///etc/hosts"] }), false);
 });
 
 test("resolveOpenAppTarget prefers an app identity over a url", () => {

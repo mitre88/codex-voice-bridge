@@ -12,6 +12,7 @@ import {
   escapeAppleScript,
   isPlausibleApiKey,
   isSafeAppIdentity,
+  isSafeCuaLaunchArgs,
   isSafeCuaToolName,
   isSafeLaunchUrl,
   normalizeCuaArgs,
@@ -562,7 +563,19 @@ function runCuaDriver(input = {}) {
   // macOS, ARG_MAX 1 MiB for the whole block), so an unbounded json_args from
   // the model would make spawn() fail with E2BIG — reject it cleanly like the
   // prompt/text guards do.
-  const argsBlob = JSON.stringify(normalizeCuaArgs(toolName, input.json_args, input));
+  const normalizedArgs = normalizeCuaArgs(toolName, input.json_args, input);
+  // launch_app reaches the same local-app machinery as the open_app path, so
+  // it must obey the same gates: a model-supplied file:// or custom-scheme URL
+  // (or an unsafe app identity) must not slip past the checks open_app applies.
+  if (toolName === "launch_app" && !isSafeCuaLaunchArgs(normalizedArgs)) {
+    return {
+      ok: false,
+      code: -9,
+      stdout: "",
+      stderr: "Rejected unsafe launch_app arguments (only http/https URLs and a safe app identity may be used).",
+    };
+  }
+  const argsBlob = JSON.stringify(normalizedArgs);
   const argsLengthError = requireMaxLength(argsBlob, "json_args");
   if (argsLengthError) return Promise.resolve({ ok: false, code: -7, stdout: "", stderr: argsLengthError });
   const args = ["call", toolName, argsBlob, "--compact"];
