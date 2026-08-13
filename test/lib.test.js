@@ -67,6 +67,14 @@ test("isSafeAppIdentity allowlists bundle ids and simple app names", () => {
   assert.equal(isSafeAppIdentity({}), false);
 });
 
+test("isSafeAppIdentity accepts accented app names but not controls", () => {
+  assert.equal(isSafeAppIdentity({ name: "Música" }), true);
+  assert.equal(isSafeAppIdentity({ name: "Números 2024" }), true);
+  assert.equal(isSafeAppIdentity({ name: "Música\u0007" }), false); // control char still rejected
+  assert.equal(isSafeAppIdentity({ name: "Música\u2028" }), false); // line separator still rejected
+  assert.equal(isSafeAppIdentity({ name: "Música\\" }), false); // backslash still rejected
+});
+
 test("resolveAppIdentity maps aliases and falls back to name", () => {
   assert.deepEqual(resolveAppIdentity({ app_name: "Safari" }), { bundle_id: "com.apple.Safari" });
   assert.deepEqual(resolveAppIdentity({ app_name: "google chrome" }), { bundle_id: "com.google.Chrome" });

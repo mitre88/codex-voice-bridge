@@ -53,7 +53,12 @@ export function escapeAppleScript(value = "") {
 }
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,253}$/;
-const APP_NAME_RE = /^[\w .'+-]{1,100}$/;
+// Printable Unicode letters/digits (so accented app names like "Música" or
+// "Números" pass, matching escapeAppleScript which preserves them) plus
+// ASCII-safe punctuation. Control characters, quotes, backslashes, and shell
+// metacharacters stay excluded: escapeAppleScript is the real injection
+// defense, this is only the coarse gate.
+const APP_NAME_RE = /^[\p{L}\p{N}_ .'+-]{1,100}$/u;
 
 export function isSafeAppIdentity(identity = {}) {
   if (identity.bundle_id) return BUNDLE_ID_RE.test(String(identity.bundle_id));
