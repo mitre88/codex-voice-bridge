@@ -142,6 +142,24 @@ export function humanizeError(error) {
     return "The request timed out. Check your network connection and try again.";
   }
   const lower = message.toLowerCase();
+  // Network-level failures (DNS lookup, connection refused/reset, offline)
+  // surface as TypeError "fetch failed" in the main process or "NetworkError"
+  // in the renderer; a raw pass-through leaves the user guessing whether the
+  // problem is the key, the server, or their connection.
+  if (
+    lower.includes("fetch failed") ||
+    lower.includes("failed to fetch") ||
+    lower.includes("networkerror") ||
+    lower.includes("enotfound") ||
+    lower.includes("econnrefused") ||
+    lower.includes("econnreset") ||
+    lower.includes("eai_again") ||
+    lower.includes("getaddrinfo") ||
+    lower.includes("socket hang up") ||
+    lower.includes("network is unreachable")
+  ) {
+    return "Could not reach the OpenAI API. Check your internet connection and firewall, then retry.";
+  }
   if (lower.includes("insufficient_quota") || lower.includes("exceeded your current quota")) {
     return "OpenAI rejected the Realtime call: insufficient_quota. Check billing, project limits, and that the key belongs to the funded organization.";
   }

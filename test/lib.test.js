@@ -153,6 +153,16 @@ test("humanizeError maps invalid API key failures to an actionable message", () 
   assert.match(humanizeError(new Error("Incorrect API key provided")), /rejected the API key/i);
 });
 
+test("humanizeError maps network failures to a connectivity message", () => {
+  assert.match(humanizeError(new TypeError("fetch failed")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("getaddrinfo ENOTFOUND api.openai.com")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("fetch failed: ECONNREFUSED")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("socket hang up")), /could not reach the openai api/i);
+  assert.match(humanizeError(new TypeError("NetworkError when attempting to fetch resource.")), /could not reach the openai api/i);
+  // A network error must not shadow a more specific API error.
+  assert.match(humanizeError(new Error("Error code: 401 - invalid_api_key")), /rejected the API key/i);
+});
+
 test("humanizeError maps insufficient permissions failures to an actionable message", () => {
   assert.match(humanizeError(new Error("Error code: 403 - insufficient_permissions for project")), /insufficient permissions \(403\)/i);
   assert.match(humanizeError(new Error("You do not have access to the realtime API")), /insufficient permissions \(403\)/i);
