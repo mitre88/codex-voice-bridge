@@ -173,6 +173,20 @@ function handleTranscriptEvent(event, targets = { source: "source", output: "out
 
 function setPendingAction(action) {
   clearPendingActionTimer();
+  // The Realtime API can emit several function calls in one turn (parallel
+  // tool use). If a second call arrives while the first still awaits a human
+  // Run/Reject answer, the first would never receive its function_call_output
+  // and the session would stall waiting for it — so auto-reject the superseded
+  // call before showing the new one. (setPendingAction(null) is the "answered"
+  // path and never triggers this.)
+  if (action && pendingAction && pendingAction.callId !== action.callId) {
+    sendFunctionOutput(pendingAction.callId, {
+      ok: false,
+      code: -96,
+      stdout: "",
+      stderr: "Superseded by another tool call before the human could respond.",
+    });
+  }
   pendingAction = action;
   pendingPanel.hidden = !action;
   if (!action) pendingPromptEl.value = "";
