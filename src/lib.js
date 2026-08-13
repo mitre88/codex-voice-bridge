@@ -304,11 +304,16 @@ export function parseEnvFile(contents) {
   for (const rawLine of contents.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
+    // Allow the shell-style "export KEY=v" prefix (the syntax shown in the
+    // README and accepted by dotenv/dotenvx) so such lines parse identically
+    // to "KEY=v". Only a real prefix followed by whitespace is stripped, so a
+    // key literally named "export" or "exported" is never affected.
+    const body = /^export[ \t]+/.test(line) ? line.replace(/^export[ \t]+/, "") : line;
+    const eq = body.indexOf("=");
     if (eq <= 0) continue; // no key or no separator
-    const key = line.slice(0, eq).trim();
+    const key = body.slice(0, eq).trim();
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    let value = line.slice(eq + 1).trim();
+    let value = body.slice(eq + 1).trim();
     if (!value.startsWith('"') && !value.startsWith("'")) {
       const hash = value.search(/\s#/);
       if (hash !== -1) value = value.slice(0, hash).trim();

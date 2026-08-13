@@ -357,6 +357,15 @@ test("parseEnvFile strips inline comments after quoted values", () => {
   assert.deepEqual(parseEnvFile('KEY="a"b'), { KEY: '"a"b' });
 });
 
+test("parseEnvFile accepts the shell-style export prefix", () => {
+  assert.deepEqual(
+    parseEnvFile("export OPENAI_API_KEY=sk-test-123\nexport QUOTED='a=b' # comment\nexport UNQUOTED=val # trailing"),
+    { OPENAI_API_KEY: "sk-test-123", QUOTED: "a=b", UNQUOTED: "val" },
+  );
+  // A key literally named "export" or "exported" is not treated as a prefix.
+  assert.deepEqual(parseEnvFile("export=1\nexported=2"), { export: "1", exported: "2" });
+});
+
 test("applyEnvOverrides never overrides existing environment variables", () => {
   const env = { EXISTING: "keep" };
   applyEnvOverrides({ EXISTING: "new", NEW: "added" }, env);
