@@ -132,9 +132,16 @@ export function isSafeCuaToolName(toolName) {
 // model-controlled URL. Requires a real hostname so "https://" alone fails.
 export function isSafeLaunchUrl(value) {
   if (typeof value !== "string") return false;
+  // Model-generated JSON often wraps values in stray whitespace or a trailing
+  // newline (e.g. a template literal); trim before parsing so a perfectly
+  // safe URL is not rejected for cosmetic reasons. Trimming cannot weaken the
+  // checks below: it only strips ASCII whitespace at both ends, and the
+  // scheme/hostname gates still apply to the trimmed value.
+  const trimmed = value.trim();
+  if (!trimmed) return false;
   let parsed;
   try {
-    parsed = new URL(value);
+    parsed = new URL(trimmed);
   } catch {
     return false;
   }

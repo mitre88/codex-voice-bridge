@@ -161,6 +161,17 @@ test("isSafeLaunchUrl accepts http/https URLs with a hostname", () => {
   assert.equal(isSafeLaunchUrl("https://example.com"), true);
 });
 
+test("isSafeLaunchUrl tolerates surrounding whitespace", () => {
+  assert.equal(isSafeLaunchUrl("  https://example.com  "), true);
+  assert.equal(isSafeLaunchUrl("https://example.com\n"), true);
+  assert.equal(isSafeLaunchUrl("\thttp://localhost:3000\t"), true);
+  assert.equal(isSafeLaunchUrl("   "), false);
+  // Trimming must not smuggle a different scheme or hostname past the gates.
+  assert.equal(isSafeLaunchUrl(" file:///etc/passwd "), false);
+  assert.equal(isSafeLaunchUrl(" javascript:alert(1) "), false);
+  assert.equal(isSafeLaunchUrl("https://"), false);
+});
+
 test("isSafeLaunchUrl rejects non-http schemes and malformed input", () => {
   assert.equal(isSafeLaunchUrl("file:///etc/passwd"), false);
   assert.equal(isSafeLaunchUrl("ssh://evil-host"), false);
