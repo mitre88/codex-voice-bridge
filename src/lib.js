@@ -170,28 +170,61 @@ export function humanizeError(error) {
     return "The request timed out. Check your network connection and try again.";
   }
   const lower = message.toLowerCase();
+  // undici (Node's fetch) buries the real reason in error.cause — e.g.
+  // TypeError "fetch failed" with cause "unable to verify the first
+  // certificate" — and syscall codes (ENOTFOUND, ECONNREFUSED, ...) may live
+  // only on error.code. Search all three so the specific diagnosis wins over
+  // the generic message instead of a raw pass-through.
+  const haystack = [lower, error?.cause?.message, error?.cause?.code, error?.code]
+    .filter((value) => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
   // An exact deviceId (the mic/output selected in the UI) that is unplugged,
   // renamed, or otherwise gone rejects getUserMedia with OverconstrainedError;
   // the raw Chromium message ("Constraints could not be satisfied") leaves the
   // user guessing whether the app or the hardware is at fault.
-  if (name === "OverconstrainedError" || lower.includes("constraints could not be satisfied")) {
+  if (name === "OverconstrainedError" || haystack.includes("constraints could not be satisfied")) {
     return "The selected microphone or audio device is no longer available. Check that it is still connected, then reconnect or refresh the device list and try again.";
+  }
+  // TLS/certificate verification failures (corporate proxy/VPN interception,
+  // expired certificate, wrong system clock) surface as raw OpenSSL strings or
+  // as the cause of an undici "fetch failed"; without this branch users see
+  // the generic connectivity message or an opaque error and blame the wrong
+  // thing. Placed before the network branch so a wrapped cert error is not
+  // shadowed by "fetch failed".
+  if (
+    haystack.includes("unable to verify the first certificate") ||
+    haystack.includes("unable to get local issuer certificate") ||
+    haystack.includes("unable to verify leaf signature") ||
+    haystack.includes("self-signed certificate") ||
+    haystack.includes("certificate has expired") ||
+    haystack.includes("certificate is not yet valid") ||
+    // OpenSSL error codes (underscore form) as they appear on error.code.
+    haystack.includes("unable_to_get_issuer_cert_locally") ||
+    haystack.includes("unable_to_verify_leaf_signature") ||
+    haystack.includes("self_signed_cert_in_chain") ||
+    haystack.includes("cert_has_expired") ||
+    haystack.includes("cert_not_yet_valid") ||
+    haystack.includes("depth_zero_self_signed") ||
+    haystack.includes("err_cert_")
+  ) {
+    return "Could not verify the OpenAI API server's TLS certificate. This usually means a corporate proxy or VPN is intercepting traffic, the system clock is wrong, or the certificate expired — check those and retry.";
   }
   // Network-level failures (DNS lookup, connection refused/reset, offline)
   // surface as TypeError "fetch failed" in the main process or "NetworkError"
   // in the renderer; a raw pass-through leaves the user guessing whether the
   // problem is the key, the server, or their connection.
   if (
-    lower.includes("fetch failed") ||
-    lower.includes("failed to fetch") ||
-    lower.includes("networkerror") ||
-    lower.includes("enotfound") ||
-    lower.includes("econnrefused") ||
-    lower.includes("econnreset") ||
-    lower.includes("eai_again") ||
-    lower.includes("getaddrinfo") ||
-    lower.includes("socket hang up") ||
-    lower.includes("network is unreachable")
+    haystack.includes("fetch failed") ||
+    haystack.includes("failed to fetch") ||
+    haystack.includes("networkerror") ||
+    haystack.includes("enotfound") ||
+    haystack.includes("econnrefused") ||
+    haystack.includes("econnreset") ||
+    haystack.includes("eai_again") ||
+    haystack.includes("getaddrinfo") ||
+    haystack.includes("socket hang up") ||
+    haystack.includes("network is unreachable")
   ) {
     return "Could not reach the OpenAI API. Check your internet connection and firewall, then retry.";
   }

@@ -213,6 +213,21 @@ test("humanizeError maps network failures to a connectivity message", () => {
   assert.match(humanizeError(new Error("Error code: 401 - invalid_api_key")), /rejected the API key/i);
 });
 
+test("humanizeError maps TLS certificate failures to a certificate message", () => {
+  assert.match(humanizeError(new Error("unable to verify the first certificate")), /tls certificate/i);
+  assert.match(humanizeError(new Error("self-signed certificate in certificate chain")), /tls certificate/i);
+  assert.match(humanizeError(new Error("certificate has expired")), /tls certificate/i);
+  assert.match(humanizeError(new Error("UNABLE_TO_GET_ISSUER_CERT_LOCALLY")), /tls certificate/i);
+  assert.match(humanizeError(new Error("net::ERR_CERT_DATE_INVALID")), /tls certificate/i);
+  // undici wraps the real reason in error.cause; the generic "fetch failed"
+  // must not shadow the certificate diagnosis.
+  const wrapped = new TypeError("fetch failed");
+  wrapped.cause = new Error("unable to verify the first certificate");
+  assert.match(humanizeError(wrapped), /tls certificate/i);
+  // A network error without a certificate cause still maps to connectivity.
+  assert.match(humanizeError(new TypeError("fetch failed")), /could not reach the openai api/i);
+});
+
 test("humanizeError maps insufficient permissions failures to an actionable message", () => {
   assert.match(humanizeError(new Error("Error code: 403 - insufficient_permissions for project")), /insufficient permissions \(403\)/i);
   assert.match(humanizeError(new Error("You do not have access to the realtime API")), /insufficient permissions \(403\)/i);
