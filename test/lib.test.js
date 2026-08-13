@@ -153,6 +153,16 @@ test("humanizeError maps invalid API key failures to an actionable message", () 
   assert.match(humanizeError(new Error("Incorrect API key provided")), /rejected the API key/i);
 });
 
+test("humanizeError maps insufficient permissions failures to an actionable message", () => {
+  assert.match(humanizeError(new Error("Error code: 403 - insufficient_permissions for project")), /insufficient permissions \(403\)/i);
+  assert.match(humanizeError(new Error("You do not have access to the realtime API")), /insufficient permissions \(403\)/i);
+  // A 404 model error must keep mapping to the 404 branch, not the 403 one.
+  assert.match(
+    humanizeError(new Error("Error code: 404 - The model 'gpt-realtime-2' does not exist or you do not have access to it.")),
+    /could not find the requested realtime model \(404\)/i,
+  );
+});
+
 test("humanizeError maps rate limit failures to an actionable message", () => {
   assert.match(humanizeError(new Error("Error code: 429 - rate_limit_exceeded for gpt-realtime-2")), /rate limit reached \(429\)/i);
   assert.match(humanizeError(new Error("Rate limit reached for model on requests per min (RPM)")), /rate limit reached \(429\)/i);

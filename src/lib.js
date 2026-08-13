@@ -151,6 +151,13 @@ export function humanizeError(error) {
   if (lower.includes("invalid_api_key") || lower.includes("incorrect api key")) {
     return "OpenAI rejected the API key (401). Check that the key is valid, has Realtime access, and belongs to the funded organization, then save it again.";
   }
+  // 403 permission errors ("insufficient_permissions", "You do not have access
+  // to the realtime API") usually mean the key/project lacks the Realtime
+  // entitlement or the model is not enabled for it; a raw pass-through leaves
+  // the user guessing whether the problem is the key, the project, or the model.
+  if (lower.includes("insufficient_permissions") || lower.includes("do not have access to the realtime")) {
+    return "OpenAI rejected the request with insufficient permissions (403). Check that the API key belongs to a project with the Realtime API enabled and that the requested model is available to it.";
+  }
   // 404 model errors ("The model 'x' does not exist or you do not have access
   // to it.") are usually a typo in the .env model names or a model the account
   // cannot use; a raw pass-through leaves the user guessing which one.
