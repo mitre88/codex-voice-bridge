@@ -549,7 +549,21 @@ function sendFunctionOutput(callId, output) {
     }),
     JSON.stringify({ type: "response.create" }),
   ];
-  const send = () => messages.forEach((message) => actionDataChannel.send(message));
+  const send = () => {
+    // The channel can close between the readyState check and send() (e.g. the
+    // user disconnected while a long Codex run was finishing); send() on a
+    // closing/closed channel throws InvalidStateError, so guard both the state
+    // and the call itself.
+    if (!actionDataChannel || actionDataChannel.readyState !== "open") {
+      log("Data channel closed before the function output could be sent.");
+      return;
+    }
+    try {
+      messages.forEach((message) => actionDataChannel.send(message));
+    } catch (error) {
+      log("Function output could not be sent; data channel closed.", String(error));
+    }
+  };
   if (actionDataChannel && actionDataChannel.readyState === "open") {
     send();
     return;
