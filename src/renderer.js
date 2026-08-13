@@ -1,4 +1,4 @@
-import { hasVirtualAudioDevice, humanizeError, truncateOutput } from "./lib.js";
+import { hasVirtualAudioDevice, humanizeError, truncateOutput } from "./renderer-utils.js";
 
 // How long the Realtime SDP exchange may take before we give up. The main
 // process already times out the token fetch; this bounds the second network
