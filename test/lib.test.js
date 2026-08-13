@@ -134,6 +134,11 @@ test("humanizeError maps invalid API key failures to an actionable message", () 
   assert.match(humanizeError(new Error("Incorrect API key provided")), /rejected the API key/i);
 });
 
+test("humanizeError maps rate limit failures to an actionable message", () => {
+  assert.match(humanizeError(new Error("Error code: 429 - rate_limit_exceeded for gpt-realtime-2")), /rate limit reached \(429\)/i);
+  assert.match(humanizeError(new Error("Rate limit reached for model on requests per min (RPM)")), /rate limit reached \(429\)/i);
+});
+
 test("humanizeError passes through unknown messages", () => {
   assert.equal(humanizeError(new Error("boom")), "boom");
   assert.equal(humanizeError("plain string"), "plain string");

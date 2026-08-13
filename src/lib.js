@@ -130,6 +130,9 @@ export function humanizeError(error) {
   if (lower.includes("insufficient_quota") || lower.includes("exceeded your current quota")) {
     return "OpenAI rejected the Realtime call: insufficient_quota. Check billing, project limits, and that the key belongs to the funded organization.";
   }
+  if (lower.includes("rate_limit_exceeded") || lower.includes("rate limit")) {
+    return "OpenAI rate limit reached (429). Wait a moment and retry, or check your plan's requests-per-minute (RPM) and tokens-per-minute (TPM) limits.";
+  }
   if (lower.includes("invalid_api_key") || lower.includes("incorrect api key")) {
     return "OpenAI rejected the API key (401). Check that the key is valid, has Realtime access, and belongs to the funded organization, then save it again.";
   }
