@@ -10,6 +10,7 @@ import {
   accumulateOutput,
   applyEnvOverrides,
   escapeAppleScript,
+  extractFirstJsonObject,
   isPlausibleApiKey,
   isSafeAppIdentity,
   isSafeCuaLaunchArgs,
@@ -661,8 +662,11 @@ async function pressKeyInFrontApp(input = {}) {
 async function getActiveAppFromCua() {
   const result = await runCuaDriver({ tool_name: "list_apps", json_args: {} });
   if (!result.ok) return null;
+  // cua-driver may prefix its JSON payload with log lines; a strict parse of
+  // the whole stdout would fail and make type/press tools report "No active
+  // app" for a valid response.
   try {
-    return JSON.parse(result.stdout)?.apps?.find((appInfo) => appInfo.active) || null;
+    return extractFirstJsonObject(result.stdout)?.apps?.find((appInfo) => appInfo.active) || null;
   } catch {
     return null;
   }

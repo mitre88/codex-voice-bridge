@@ -7,6 +7,7 @@ import {
   accumulateOutput,
   applyEnvOverrides,
   escapeAppleScript,
+  extractFirstJsonObject,
   hasVirtualAudioDevice,
   humanizeError,
   isPlausibleApiKey,
@@ -473,4 +474,27 @@ test("rotateLogIfNeeded keeps only the previous oversized file as .1", () => {
   assert.equal(fs.existsSync(logFile), false);
   assert.equal(fs.readFileSync(`${logFile}.1`, "utf8"), "current-oversize");
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("extractFirstJsonObject finds the first JSON object amid log noise", () => {
+  assert.deepEqual(extractFirstJsonObject('{"apps":[]}'), { apps: [] });
+  assert.deepEqual(extractFirstJsonObject('2026-08-13 23:00:00 INFO starting\n{"apps":[{"pid":1,"active":true}]}'), {
+    apps: [{ pid: 1, active: true }],
+  });
+  // Braces inside strings must not confuse the brace matcher.
+  assert.deepEqual(extractFirstJsonObject('{"a":"{not json}","b":1}'), { a: "{not json}", b: 1 });
+  // Nested objects and arrays still match to the correct closing brace.
+  assert.deepEqual(extractFirstJsonObject('{"apps":[{"nested":{"x":1}}],"ok":true}'), {
+    apps: [{ nested: { x: 1 } }],
+    ok: true,
+  });
+});
+
+test("extractFirstJsonObject returns null for non-JSON or non-string input", () => {
+  assert.equal(extractFirstJsonObject("no json here"), null);
+  assert.equal(extractFirstJsonObject(""), null);
+  assert.equal(extractFirstJsonObject("{\"unterminated"), null);
+  assert.equal(extractFirstJsonObject(null), null);
+  assert.equal(extractFirstJsonObject(undefined), null);
+  assert.equal(extractFirstJsonObject(42), null);
 });

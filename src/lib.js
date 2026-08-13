@@ -203,6 +203,44 @@ export function accumulateOutput(buffer, chunk, maxChars = 1024 * 1024) {
   return { text: next, capped: false };
 }
 
+// Find the first top-level JSON object in a string. cua-driver may emit log
+// lines before its JSON payload, and a strict JSON.parse of the whole stdout
+// would then fail and make callers report "no result" for a perfectly valid
+// response. Scans for the first '{', brace-matches (skipping braces inside
+// strings), and parses just that object. Returns null when no object parses
+// or the input is not a string.
+export function extractFirstJsonObject(text) {
+  if (typeof text !== "string") return null;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "{") continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          try {
+            return JSON.parse(text.slice(i, j + 1));
+          } catch {
+            break; // malformed object starting here; try the next '{'
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
 // Parse a dotenv-style file (KEY=VALUE lines, # comments, optional quotes)
 // into a plain object. Never throws: blank lines, comments, and malformed
 // lines are skipped. Inline comments (" # ...") are stripped from unquoted
