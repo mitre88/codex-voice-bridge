@@ -10,7 +10,8 @@
 export const VIRTUAL_AUDIO_LABEL = /blackhole|loopback|virtual/i;
 
 export function hasVirtualAudioDevice(devices = []) {
-  return devices.some((device) => VIRTUAL_AUDIO_LABEL.test(device?.label || ""));
+  // Guard non-array input (a buggy caller must not crash the UI on connect).
+  return Array.isArray(devices) && devices.some((device) => VIRTUAL_AUDIO_LABEL.test(device?.label || ""));
 }
 
 // Turn common failure modes into short, actionable messages for the UI.

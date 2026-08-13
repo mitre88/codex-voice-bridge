@@ -10,7 +10,7 @@
   },
   "scripts": {
     "start": "electron .",
-    "check": "node --check src/main.js && node --check src/preload.cjs && node --check src/renderer.js && node --check src/lib.js",
+    "check": "node --check src/main.js && node --check src/preload.cjs && node --check src/renderer.js && node --check src/lib.js && node --check src/renderer-utils.js",
     "lint": "eslint src",
     "test": "node --test test/*.test.js",
     "smoke:cua": "bash scripts/smoke-cua.sh",

@@ -82,7 +82,11 @@ export function resolveAppIdentity(input = {}, aliases = APP_BUNDLE_ALIASES) {
 
 export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliases = APP_BUNDLE_ALIASES) {
   const args = jsonArgs && typeof jsonArgs === "object" ? { ...jsonArgs } : {};
-  if (toolName === "launch_app" && !args.bundle_id && !args.name) {
+  // Only guess an app from context when the call carries neither an explicit
+  // identity nor a URL. A url/urls field is an explicit "open in the default
+  // browser" intent, so a keyword in the reason text (e.g. "open the chrome
+  // docs") must not silently redirect that URL to a guessed app.
+  if (toolName === "launch_app" && !args.bundle_id && !args.name && !args.urls && !args.url) {
     const text = JSON.stringify({ args, fullInput }).toLowerCase();
     for (const [alias, bundleId] of aliases.entries()) {
       if (text.includes(alias)) {

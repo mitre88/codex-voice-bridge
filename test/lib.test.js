@@ -93,6 +93,19 @@ test("normalizeCuaArgs fills bundle_id for launch_app from context", () => {
   assert.deepEqual(normalizeCuaArgs("other_tool", { a: 1 }), { a: 1 });
 });
 
+test("normalizeCuaArgs does not guess an app when launch_app already carries a URL", () => {
+  // An explicit URL means "open in the default browser"; a keyword in the
+  // reason text must not silently redirect it to a guessed app.
+  assert.deepEqual(
+    normalizeCuaArgs("launch_app", { urls: ["https://example.com"] }, { reason: "open the chrome docs" }),
+    { urls: ["https://example.com"] },
+  );
+  assert.deepEqual(
+    normalizeCuaArgs("launch_app", { url: "https://example.com" }, { reason: "open safari" }),
+    { url: "https://example.com" },
+  );
+});
+
 test("isSafeCuaLaunchArgs accepts safe launch_app identities and http/https urls", () => {
   assert.equal(isSafeCuaLaunchArgs({ bundle_id: "com.apple.Safari" }), true);
   assert.equal(isSafeCuaLaunchArgs({ name: "Visual Studio Code" }), true);
@@ -424,6 +437,13 @@ test("hasVirtualAudioDevice matches BlackHole, Loopback, and virtual labels", ()
   assert.equal(hasVirtualAudioDevice([{ label: "Loopback Audio" }]), true);
   assert.equal(hasVirtualAudioDevice([{ label: "Virtual Cable" }]), true);
   assert.equal(hasVirtualAudioDevice([]), false);
+});
+
+test("hasVirtualAudioDevice tolerates non-array input", () => {
+  assert.equal(hasVirtualAudioDevice(null), false);
+  assert.equal(hasVirtualAudioDevice(undefined), false);
+  assert.equal(hasVirtualAudioDevice("BlackHole"), false);
+  assert.equal(hasVirtualAudioDevice({ label: "BlackHole 2ch" }), false);
 });
 
 test("rotateLogIfNeeded ignores a missing log file", () => {
