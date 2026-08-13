@@ -34,9 +34,22 @@ export function normalizeTone(value) {
 
 // AppleScript string literals escape a quote by doubling it. A backslash is
 // a literal, not an escape — JS-style \" closes the string and lets a
-// model-controlled app_name inject `do shell script`.
+// model-controlled app_name inject `do shell script`. Only control characters
+// (C0, DEL, C1) are stripped so a model-controlled name cannot smuggle a
+// newline or other terminator; printable non-ASCII characters (e.g. accented
+// Spanish app names like "Música" or "Números") are kept — inside a quoted
+// AppleScript string they are plain data, and stripping them would make
+// osascript fail to find the app.
 export function escapeAppleScript(value = "") {
-  return String(value).replace(/[^\u0020-\u007E]/g, "").replace(/"/g, '""');
+  let out = "";
+  for (const char of String(value)) {
+    const code = char.codePointAt(0);
+    // Strip control characters (C0 0x00-0x1F, DEL 0x7F, C1 0x80-0x9F) so a
+    // model-controlled name cannot smuggle a newline or other terminator.
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
+    out += char === '"' ? '""' : char;
+  }
+  return out;
 }
 
 const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,253}$/;

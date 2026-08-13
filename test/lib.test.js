@@ -47,6 +47,18 @@ test("escapeAppleScript doubles quotes the AppleScript way", () => {
   assert.equal(escapeAppleScript('x"\ndo shell script "id"'), 'x""do shell script ""id""');
 });
 
+test("escapeAppleScript keeps printable non-ASCII (accented app names)", () => {
+  assert.equal(escapeAppleScript("Música"), "Música");
+  assert.equal(escapeAppleScript("Números"), "Números");
+  assert.equal(escapeAppleScript("Páginas"), "Páginas");
+});
+
+test("escapeAppleScript still strips control characters", () => {
+  assert.equal(escapeAppleScript("a\u0007b\nc"), "abc");
+  assert.equal(escapeAppleScript("a\u0085b"), "ab"); // C1 control
+  assert.equal(escapeAppleScript("a\u007Fb"), "ab"); // DEL
+});
+
 test("isSafeAppIdentity allowlists bundle ids and simple app names", () => {
   assert.equal(isSafeAppIdentity({ bundle_id: "com.apple.Safari" }), true);
   assert.equal(isSafeAppIdentity({ name: "Visual Studio Code" }), true);
