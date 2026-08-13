@@ -217,6 +217,20 @@ export function humanizeError(error) {
   if (lower.includes("model_not_found") || (lower.includes("does not exist") && lower.includes("model"))) {
     return "OpenAI could not find the requested Realtime model (404). Check the model names in .env (OPENAI_REALTIME_MODEL, OPENAI_REALTIME_TRANSLATE_MODEL, OPENAI_REALTIME_TRANSCRIBE_MODEL) for typos, or confirm the model is available to your account.";
   }
+  // 5xx responses ("OpenAI Realtime token failed: 500 Internal Server Error",
+  // "Error code: 502 - Bad Gateway", "Realtime call failed: 503 Service
+  // Unavailable") are OpenAI-side outages; a raw pass-through makes the user
+  // suspect their key or network when the fix is simply to retry. Placed after
+  // the specific 4xx branches so a client error is never shadowed. The status
+  // must be exactly three digits (5\d\d\b) so a stray 4+ digit number in an
+  // unrelated message cannot false-positive.
+  if (
+    /(?:token|call) failed: 5\d\d\b/.test(lower) ||
+    /error code: 5\d\d\b/.test(lower) ||
+    /(^|[^0-9])5\d\d\s+(internal server error|bad gateway|service unavailable|gateway timeout)/.test(lower)
+  ) {
+    return "OpenAI API is temporarily unavailable (5xx server error). Wait a few seconds and retry — this is an OpenAI-side outage, not your connection or key.";
+  }
   return message;
 }
 

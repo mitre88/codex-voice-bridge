@@ -235,6 +235,16 @@ test("humanizeError maps missing model failures to an actionable message", () =>
   assert.equal(humanizeError(new Error("the file does not exist")), "the file does not exist");
 });
 
+test("humanizeError maps 5xx server errors to a retry message", () => {
+  assert.match(humanizeError(new Error("OpenAI Realtime token failed: 500 Internal Server Error")), /temporarily unavailable \(5xx/i);
+  assert.match(humanizeError(new Error("OpenAI Realtime translation token failed: 502 Bad Gateway")), /temporarily unavailable \(5xx/i);
+  assert.match(humanizeError(new Error("Error code: 503 - Service Unavailable")), /temporarily unavailable \(5xx/i);
+  assert.match(humanizeError(new Error("Realtime call failed: 503 Service Unavailable")), /temporarily unavailable \(5xx/i);
+  // A client error mentioning a 5xx-looking number must not hit the 5xx branch.
+  assert.match(humanizeError(new Error("Error code: 401 - invalid_api_key")), /rejected the API key/i);
+  assert.equal(humanizeError(new Error("error code: 5000 is my favorite number")), "error code: 5000 is my favorite number");
+});
+
 test("humanizeError passes through unknown messages", () => {
   assert.equal(humanizeError(new Error("boom")), "boom");
   assert.equal(humanizeError("plain string"), "plain string");
