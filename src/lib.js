@@ -77,6 +77,21 @@ export function isSafeCuaToolName(toolName) {
   return typeof toolName === "string" && /^[a-z][a-z0-9_]*$/i.test(toolName) && toolName.length <= 100;
 }
 
+// Only http/https URLs may be handed to launch_app: other schemes (file:,
+// ssh:, x-apple-*, javascript:, custom handlers) could open local files,
+// trigger shell handlers, or cause unintended side effects from a
+// model-controlled URL. Requires a real hostname so "https://" alone fails.
+export function isSafeLaunchUrl(value) {
+  if (typeof value !== "string") return false;
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  return (parsed.protocol === "http:" || parsed.protocol === "https:") && Boolean(parsed.hostname);
+}
+
 // Validate a model tool-call argument that must be a non-empty string. Returns
 // null when valid, or a short human-readable error message. Without this, a
 // missing prompt would reach spawn() as the literal string "undefined" and a

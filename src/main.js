@@ -13,6 +13,7 @@ import {
   isPlausibleApiKey,
   isSafeAppIdentity,
   isSafeCuaToolName,
+  isSafeLaunchUrl,
   normalizeCuaArgs,
   normalizeReasoningEffort,
   normalizeTone,
@@ -573,7 +574,14 @@ async function openAppVisible(input = {}) {
   const launchArgs = {};
   if (resolved.bundle_id) launchArgs.bundle_id = resolved.bundle_id;
   else launchArgs.name = resolved.name;
-  if (input.url) launchArgs.urls = [input.url];
+  if (input.url) {
+    // Only http/https URLs may be opened: a model-controlled file:// or custom
+    // scheme URL could open local files or trigger unintended handlers.
+    if (!isSafeLaunchUrl(input.url)) {
+      return { ok: false, code: -9, stdout: "", stderr: "Rejected unsafe url (only http/https URLs may be opened)." };
+    }
+    launchArgs.urls = [input.url];
+  }
 
   const cuaResult = await runCuaDriver({ tool_name: "launch_app", json_args: launchArgs, reason: input.reason || "Open app visibly." });
   const activateResult = await activateApp(resolved);

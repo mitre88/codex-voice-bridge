@@ -12,6 +12,7 @@ import {
   isPlausibleApiKey,
   isSafeAppIdentity,
   isSafeCuaToolName,
+  isSafeLaunchUrl,
   normalizeCuaArgs,
   normalizeReasoningEffort,
   normalizeTone,
@@ -78,6 +79,24 @@ test("isSafeCuaToolName accepts snake_case identifiers and rejects option-like n
   assert.equal(isSafeCuaToolName(""), false);
   assert.equal(isSafeCuaToolName("a".repeat(101)), false);
   assert.equal(isSafeCuaToolName(42), false);
+});
+
+test("isSafeLaunchUrl accepts http/https URLs with a hostname", () => {
+  assert.equal(isSafeLaunchUrl("https://meet.google.com/abc"), true);
+  assert.equal(isSafeLaunchUrl("http://localhost:3000/page"), true);
+  assert.equal(isSafeLaunchUrl("https://example.com"), true);
+});
+
+test("isSafeLaunchUrl rejects non-http schemes and malformed input", () => {
+  assert.equal(isSafeLaunchUrl("file:///etc/passwd"), false);
+  assert.equal(isSafeLaunchUrl("ssh://evil-host"), false);
+  assert.equal(isSafeLaunchUrl("x-apple.systempreferences:com.apple.preference.general"), false);
+  assert.equal(isSafeLaunchUrl("javascript:alert(1)"), false);
+  assert.equal(isSafeLaunchUrl("https://"), false);
+  assert.equal(isSafeLaunchUrl("not a url"), false);
+  assert.equal(isSafeLaunchUrl(""), false);
+  assert.equal(isSafeLaunchUrl(42), false);
+  assert.equal(isSafeLaunchUrl(undefined), false);
 });
 
 test("isPlausibleApiKey accepts sk- keys and rejects obvious non-keys", () => {
