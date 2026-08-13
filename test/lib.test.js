@@ -178,6 +178,14 @@ test("humanizeError maps common failure modes to actionable messages", () => {
   assert.match(humanizeError(new Error("exceeded your current quota")), /insufficient_quota/i);
 });
 
+test("humanizeError maps stale media device selections to an actionable message", () => {
+  assert.match(
+    humanizeError({ name: "OverconstrainedError", message: "Constraints could not be satisfied" }),
+    /no longer available/i,
+  );
+  assert.match(humanizeError(new Error("Constraints could not be satisfied")), /no longer available/i);
+});
+
 test("humanizeError maps invalid API key failures to an actionable message", () => {
   assert.match(humanizeError(new Error("OpenAI Realtime token failed: 401 invalid_api_key")), /rejected the API key/i);
   assert.match(humanizeError(new Error("Incorrect API key provided")), /rejected the API key/i);

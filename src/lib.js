@@ -157,6 +157,13 @@ export function humanizeError(error) {
     return "The request timed out. Check your network connection and try again.";
   }
   const lower = message.toLowerCase();
+  // An exact deviceId (the mic/output selected in the UI) that is unplugged,
+  // renamed, or otherwise gone rejects getUserMedia with OverconstrainedError;
+  // the raw Chromium message ("Constraints could not be satisfied") leaves the
+  // user guessing whether the app or the hardware is at fault.
+  if (name === "OverconstrainedError" || lower.includes("constraints could not be satisfied")) {
+    return "The selected microphone or audio device is no longer available. Check that it is still connected, then reconnect or refresh the device list and try again.";
+  }
   // Network-level failures (DNS lookup, connection refused/reset, offline)
   // surface as TypeError "fetch failed" in the main process or "NetworkError"
   // in the renderer; a raw pass-through leaves the user guessing whether the
