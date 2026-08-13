@@ -32,8 +32,20 @@ export function normalizeTone(value) {
   );
 }
 
+// AppleScript string literals escape a quote by doubling it. A backslash is
+// a literal, not an escape — JS-style \" closes the string and lets a
+// model-controlled app_name inject `do shell script`.
 export function escapeAppleScript(value = "") {
-  return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return String(value).replace(/[^\u0020-\u007E]/g, "").replace(/"/g, '""');
+}
+
+const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,253}$/;
+const APP_NAME_RE = /^[\w .'+-]{1,100}$/;
+
+export function isSafeAppIdentity(identity = {}) {
+  if (identity.bundle_id) return BUNDLE_ID_RE.test(String(identity.bundle_id));
+  if (identity.name) return APP_NAME_RE.test(String(identity.name));
+  return false;
 }
 
 export function resolveAppIdentity(input = {}, aliases = APP_BUNDLE_ALIASES) {

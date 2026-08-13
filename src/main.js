@@ -11,6 +11,7 @@ import {
   applyEnvOverrides,
   escapeAppleScript,
   isPlausibleApiKey,
+  isSafeAppIdentity,
   isSafeCuaToolName,
   normalizeCuaArgs,
   normalizeReasoningEffort,
@@ -565,6 +566,9 @@ async function runMacAction(input = {}) {
 async function openAppVisible(input = {}) {
   const resolved = resolveAppIdentity(input);
   if (!resolved.bundle_id && !resolved.name) return { ok: false, code: -1, stdout: "", stderr: "Missing app_name or bundle_id." };
+  if (!isSafeAppIdentity(resolved)) {
+    return { ok: false, code: -8, stdout: "", stderr: "Rejected unsafe app_name or bundle_id." };
+  }
 
   const launchArgs = {};
   if (resolved.bundle_id) launchArgs.bundle_id = resolved.bundle_id;
@@ -615,6 +619,9 @@ async function getActiveAppFromCua() {
 }
 
 function activateApp(appIdentity) {
+  if (!isSafeAppIdentity(appIdentity)) {
+    return Promise.resolve({ ok: false, code: -8, stdout: "", stderr: "Rejected unsafe app identity." });
+  }
   const escaped = escapeAppleScript(appIdentity.bundle_id || appIdentity.name);
   return appIdentity.bundle_id
     ? runProcess("osascript", ["-e", `tell application id "${escaped}" to activate`])

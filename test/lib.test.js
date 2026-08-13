@@ -10,6 +10,7 @@ import {
   hasVirtualAudioDevice,
   humanizeError,
   isPlausibleApiKey,
+  isSafeAppIdentity,
   isSafeCuaToolName,
   normalizeCuaArgs,
   normalizeReasoningEffort,
@@ -38,9 +39,18 @@ test("normalizeTone maps known tones and defaults to calm", () => {
   assert.match(normalizeTone("unknown"), /calm/);
 });
 
-test("escapeAppleScript escapes quotes and backslashes", () => {
-  assert.equal(escapeAppleScript('a"b\\c'), 'a\\"b\\\\c');
+test("escapeAppleScript doubles quotes the AppleScript way", () => {
+  assert.equal(escapeAppleScript('a"b\\c'), 'a""b\\c');
   assert.equal(escapeAppleScript("plain"), "plain");
+  assert.equal(escapeAppleScript('x"\ndo shell script "id"'), 'x""do shell script ""id""');
+});
+
+test("isSafeAppIdentity allowlists bundle ids and simple app names", () => {
+  assert.equal(isSafeAppIdentity({ bundle_id: "com.apple.Safari" }), true);
+  assert.equal(isSafeAppIdentity({ name: "Visual Studio Code" }), true);
+  assert.equal(isSafeAppIdentity({ name: 'x"\ndo shell script' }), false);
+  assert.equal(isSafeAppIdentity({ bundle_id: "a; do shell script" }), false);
+  assert.equal(isSafeAppIdentity({}), false);
 });
 
 test("resolveAppIdentity maps aliases and falls back to name", () => {
