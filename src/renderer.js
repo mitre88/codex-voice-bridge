@@ -258,6 +258,12 @@ async function executeAction(action) {
     result = { ok: false, code: -99, stdout: "", stderr: error?.message || String(error) };
     log("Local action error.", error);
   }
+  // Streamed output is batched to avoid DOM spam and only flushed at 4000
+  // chars or on disconnect; without this the tail of a finished run (final
+  // lines, error summaries) would stay invisible in the debug log until the
+  // user disconnects. All "codex-output" chunks are posted before the IPC
+  // call resolves, so flushing here captures the complete run.
+  flushCodexOutput();
   sendFunctionOutput(action.callId, result);
   setStatus("Listening");
   log("Local action finished.", result);
