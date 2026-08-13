@@ -158,6 +158,13 @@ test("humanizeError maps rate limit failures to an actionable message", () => {
   assert.match(humanizeError(new Error("Rate limit reached for model on requests per min (RPM)")), /rate limit reached \(429\)/i);
 });
 
+test("humanizeError maps missing model failures to an actionable message", () => {
+  assert.match(humanizeError(new Error("Error code: 404 - The model 'gpt-realtime-2' does not exist or you do not have access to it.")), /could not find the requested realtime model \(404\)/i);
+  assert.match(humanizeError(new Error("model_not_found")), /could not find the requested realtime model \(404\)/i);
+  // A generic "does not exist" that is not about a model still passes through.
+  assert.equal(humanizeError(new Error("the file does not exist")), "the file does not exist");
+});
+
 test("humanizeError passes through unknown messages", () => {
   assert.equal(humanizeError(new Error("boom")), "boom");
   assert.equal(humanizeError("plain string"), "plain string");
