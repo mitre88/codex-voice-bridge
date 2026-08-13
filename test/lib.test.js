@@ -21,6 +21,7 @@ import {
   requireMaxLength,
   requireNonEmptyString,
   resolveAppIdentity,
+  resolveOpenAppTarget,
   resolveWorkdir,
   rotateLogIfNeeded,
   toPositiveInt,
@@ -69,6 +70,35 @@ test("normalizeCuaArgs fills bundle_id for launch_app from context", () => {
   );
   assert.deepEqual(normalizeCuaArgs("launch_app", { name: "X" }), { name: "X" });
   assert.deepEqual(normalizeCuaArgs("other_tool", { a: 1 }), { a: 1 });
+});
+
+test("resolveOpenAppTarget prefers an app identity over a url", () => {
+  assert.deepEqual(resolveOpenAppTarget({ app_name: "Safari", url: "https://example.com" }), {
+    kind: "app",
+    identity: { bundle_id: "com.apple.Safari" },
+  });
+  assert.deepEqual(resolveOpenAppTarget({ bundle_id: "x.y.z" }), { kind: "app", identity: { bundle_id: "x.y.z" } });
+  assert.deepEqual(resolveOpenAppTarget({ app_name: "MyApp" }), { kind: "app", identity: { name: "MyApp" } });
+});
+
+test("resolveOpenAppTarget allows a url-only open in the default browser", () => {
+  assert.deepEqual(resolveOpenAppTarget({ url: "https://meet.google.com/abc" }), {
+    kind: "url",
+    url: "https://meet.google.com/abc",
+  });
+  assert.deepEqual(resolveOpenAppTarget({ url: "http://localhost:3000/page" }), {
+    kind: "url",
+    url: "http://localhost:3000/page",
+  });
+});
+
+test("resolveOpenAppTarget rejects unsafe or missing targets", () => {
+  assert.deepEqual(resolveOpenAppTarget({}), { kind: "error", code: -1, message: "Missing app_name, bundle_id, or url." });
+  assert.deepEqual(resolveOpenAppTarget({ url: "" }), { kind: "error", code: -1, message: "Missing app_name, bundle_id, or url." });
+  assert.equal(resolveOpenAppTarget({ url: "file:///etc/passwd" }).kind, "error");
+  assert.equal(resolveOpenAppTarget({ url: "ssh://evil-host" }).kind, "error");
+  assert.equal(resolveOpenAppTarget({ url: 42 }).kind, "error");
+  assert.equal(resolveOpenAppTarget({ url: "javascript:alert(1)" }).code, -9);
 });
 
 test("isSafeCuaToolName accepts snake_case identifiers and rejects option-like names", () => {

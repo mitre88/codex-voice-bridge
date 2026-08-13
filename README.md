@@ -36,7 +36,7 @@ Talk to your Mac. It listens, speaks, inspects your code with Codex CLI, operate
 
 - `run_codex` — ask **Codex CLI** to inspect, summarize, or plan from a local project (read-only by default)
 - `run_cua_driver` — inspect and operate macOS apps through **CUA Driver**
-- `open_app` — visibly open or focus Safari, Chrome, Finder, Xcode, Obsidian, Terminal and more
+- `open_app` — visibly open or focus Safari, Chrome, Finder, Xcode, Obsidian, Terminal and more; a bare http/https URL opens in the default browser
 - `type_text_in_front_app` — type into the focused macOS app
 - `press_key_in_front_app` — press keys in the focused macOS app
 

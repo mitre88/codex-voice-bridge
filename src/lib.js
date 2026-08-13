@@ -71,6 +71,21 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
   return args;
 }
 
+// Decide what open_app should launch. An app identity (bundle_id/name) wins;
+// with none, a plain http/https URL opens in the default browser. Returns:
+//   { kind: "app", identity }        -> launch the app (cua-driver + activate)
+//   { kind: "url", url }             -> open the URL in the default browser
+//   { kind: "error", code, message } -> refuse; caller returns this verbatim
+export function resolveOpenAppTarget(input = {}, aliases = APP_BUNDLE_ALIASES) {
+  const identity = resolveAppIdentity(input, aliases);
+  if (identity.bundle_id || identity.name) return { kind: "app", identity };
+  if (input.url != null && input.url !== "") {
+    if (isSafeLaunchUrl(input.url)) return { kind: "url", url: input.url };
+    return { kind: "error", code: -9, message: "Rejected unsafe url (only http/https URLs may be opened)." };
+  }
+  return { kind: "error", code: -1, message: "Missing app_name, bundle_id, or url." };
+}
+
 // cua-driver tool names must be plain snake_case identifiers: anything else
 // (e.g. "--version" or "call --help") would be parsed as CLI options.
 export function isSafeCuaToolName(toolName) {

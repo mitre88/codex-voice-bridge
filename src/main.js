@@ -21,7 +21,7 @@ import {
   redactSecrets,
   requireMaxLength,
   requireNonEmptyString,
-  resolveAppIdentity,
+  resolveOpenAppTarget,
   resolveWorkdir,
   rotateLogIfNeeded,
   toPositiveInt,
@@ -465,7 +465,8 @@ function assistantTools() {
     {
       type: "function",
       name: "open_app",
-      description: "Open or focus a macOS app visibly.",
+      description:
+        "Open or focus a macOS app visibly, or open an http/https URL in the default browser (url alone is enough).",
       parameters: {
         type: "object",
         properties: {
@@ -565,8 +566,17 @@ async function runMacAction(input = {}) {
 }
 
 async function openAppVisible(input = {}) {
-  const resolved = resolveAppIdentity(input);
-  if (!resolved.bundle_id && !resolved.name) return { ok: false, code: -1, stdout: "", stderr: "Missing app_name or bundle_id." };
+  const target = resolveOpenAppTarget(input);
+  if (target.kind === "error") {
+    return { ok: false, code: target.code, stdout: "", stderr: target.message };
+  }
+  if (target.kind === "url") {
+    // URL-only opens go to the default browser. The URL is validated to be
+    // http/https with a real hostname and passed as a single argv entry via
+    // spawn (no shell), so it cannot smuggle options or extra commands.
+    return runProcess("open", [target.url], { timeoutMs: 15000 });
+  }
+  const resolved = target.identity;
   if (!isSafeAppIdentity(resolved)) {
     return { ok: false, code: -8, stdout: "", stderr: "Rejected unsafe app_name or bundle_id." };
   }
