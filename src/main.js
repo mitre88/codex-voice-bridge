@@ -166,10 +166,22 @@ function runProcess(command, args, options = {}) {
       }
     }
 
+    // Armed when the timeout fires: force-kills the group 3s after SIGTERM if
+    // it is still alive. Cancelled once the child actually exits so a dead
+    // group is never SIGKILLed later — a recycled pid could otherwise hit an
+    // unrelated process group.
+    let hardKill = null;
+    function cancelHardKill() {
+      if (hardKill) {
+        clearTimeout(hardKill);
+        hardKill = null;
+      }
+    }
+
     const timeout = setTimeout(() => {
       killProcessGroup("SIGTERM");
       // Give children a moment to exit, then force-kill the whole group.
-      const hardKill = setTimeout(() => killProcessGroup("SIGKILL"), 3000);
+      hardKill = setTimeout(() => killProcessGroup("SIGKILL"), 3000);
       hardKill.unref();
       // Flush any partial UTF-8 sequence still held by the decoders, same as
       // the close handler does, so timed-out output is not missing its tail.
@@ -212,6 +224,7 @@ function runProcess(command, args, options = {}) {
     });
     child.on("close", (code) => {
       runningChildren.delete(child);
+      cancelHardKill();
       // Flush any trailing partial UTF-8 sequence held by the decoders so the
       // final captured output is never missing its last character.
       const tailOut = stdoutDecoder.end();
@@ -223,6 +236,7 @@ function runProcess(command, args, options = {}) {
     child.on("error", (error) => {
       // A failed spawn never emits "close", so drop the tracking entry here.
       runningChildren.delete(child);
+      cancelHardKill();
       finish({ ok: false, code: -1, stdout, stderr: error.message });
     });
   });
