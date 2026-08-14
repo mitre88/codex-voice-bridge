@@ -240,7 +240,8 @@ textarea {
   color: rgba(247, 247, 242, 0.78);
 }
 
-button:disabled {
+button:disabled,
+select:disabled {
   cursor: not-allowed;
   opacity: 0.38;
 }
