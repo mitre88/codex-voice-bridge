@@ -70,6 +70,29 @@ let baseConfigText = "";
 let lastMediaDevices = [];
 let warnedMissingVirtualAudio = false;
 
+// Every control captured by getVoiceOptions() at connect time. Changing any
+// of them mid-session has no effect on the running Realtime session and
+// would mislead the user into thinking it did, so all of them are locked
+// while connected (not just the mode select).
+const connectTimeControls = [
+  voiceModeInput,
+  toneInput,
+  reasoningInput,
+  targetLanguageInput,
+  sourceLanguageInput,
+  myMicDeviceInput,
+  interviewerInputMode,
+  interviewerAudioDeviceInput,
+  spanishOutputDeviceInput,
+  englishOutputDeviceInput,
+];
+
+function setConnectControlsLocked(locked) {
+  connectTimeControls.forEach((control) => {
+    control.disabled = locked;
+  });
+}
+
 function getBridge() {
   if (!window.voiceBridge) throw new Error("Electron preload bridge is unavailable.");
   return window.voiceBridge;
@@ -534,10 +557,10 @@ async function connectRealtime() {
     const options = getVoiceOptions();
     if (options.mode === "interview") await connectInterviewRealtime(options);
     else await connectSingleRealtime(options);
-    // Mode/tone/language are captured at connect time; changing them mid-session
-    // would not affect the running session and would mislead the user into
-    // thinking it did, so lock the mode select until disconnect.
-    voiceModeInput.disabled = true;
+    // Mode/tone/language/audio devices are captured at connect time; changing
+    // them mid-session would not affect the running session and would mislead
+    // the user into thinking it did, so lock them all until disconnect.
+    setConnectControlsLocked(true);
     setStatus("Listening");
     disconnectButton.disabled = false;
   } catch (error) {
@@ -562,7 +585,7 @@ function disconnectRealtime(options = {}) {
   setPendingAction(null);
   connectButton.disabled = false;
   disconnectButton.disabled = true;
-  voiceModeInput.disabled = false;
+  setConnectControlsLocked(false);
   if (!options.silent) {
     setStatus("Idle");
     log("Disconnected.");
