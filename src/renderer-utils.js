@@ -131,6 +131,14 @@ export function humanizeError(error) {
   ) {
     return "OpenAI rejected the Realtime call: insufficient_quota (402). Check billing, project limits, and that the key belongs to the funded organization, then retry.";
   }
+  // A billing hard limit ("billing_hard_limit_reached") is a billing problem,
+  // not a transient rate limit — OpenAI returns it with a 429 status, so
+  // without this branch it would be mislabeled as a rate limit (or pass
+  // through raw when no status is present) and the user would blame the wrong
+  // thing. Placed before the 429 branch so the billing diagnosis wins.
+  if (lower.includes("billing_hard_limit_reached") || lower.includes("billing hard limit")) {
+    return "OpenAI rejected the Realtime call: billing_hard_limit_reached. You reached your project's billing hard limit — raise or remove the limit in your OpenAI billing settings, then retry.";
+  }
   // A bare "429" (opaque body, proxy, or a response whose text is not the
   // usual JSON error) would otherwise pass through raw even though the
   // status alone is a definitive rate-limit problem, mirroring the bare

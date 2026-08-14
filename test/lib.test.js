@@ -364,6 +364,16 @@ test("humanizeError maps 402 billing failures to an actionable message", () => {
   assert.equal(humanizeError(new Error("Error code: 4021")), "Error code: 4021");
 });
 
+test("humanizeError maps billing hard limit failures to a billing message", () => {
+  // OpenAI returns billing_hard_limit_reached with a 429 status; the billing
+  // diagnosis must win over the generic rate-limit message.
+  assert.match(humanizeError(new Error("Error code: 429 - billing_hard_limit_reached")), /billing hard limit/i);
+  assert.match(humanizeError(new Error("You have reached the billing hard limit for this project")), /billing hard limit/i);
+  assert.doesNotMatch(humanizeError(new Error("Error code: 429 - billing_hard_limit_reached")), /rate limit reached/i);
+  // A real rate limit still maps to the rate-limit message.
+  assert.match(humanizeError(new Error("Error code: 429 - rate_limit_exceeded")), /rate limit reached \(429\)/i);
+});
+
 test("humanizeError maps rate limit failures to an actionable message", () => {
   assert.match(humanizeError(new Error("Error code: 429 - rate_limit_exceeded for gpt-realtime-2")), /rate limit reached \(429\)/i);
   assert.match(humanizeError(new Error("Rate limit reached for model on requests per min (RPM)")), /rate limit reached \(429\)/i);
