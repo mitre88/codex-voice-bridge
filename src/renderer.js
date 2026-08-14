@@ -534,6 +534,10 @@ async function connectRealtime() {
     const options = getVoiceOptions();
     if (options.mode === "interview") await connectInterviewRealtime(options);
     else await connectSingleRealtime(options);
+    // Mode/tone/language are captured at connect time; changing them mid-session
+    // would not affect the running session and would mislead the user into
+    // thinking it did, so lock the mode select until disconnect.
+    voiceModeInput.disabled = true;
     setStatus("Listening");
     disconnectButton.disabled = false;
   } catch (error) {
@@ -558,6 +562,7 @@ function disconnectRealtime(options = {}) {
   setPendingAction(null);
   connectButton.disabled = false;
   disconnectButton.disabled = true;
+  voiceModeInput.disabled = false;
   if (!options.silent) {
     setStatus("Idle");
     log("Disconnected.");
