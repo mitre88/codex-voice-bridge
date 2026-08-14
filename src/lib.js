@@ -256,6 +256,21 @@ export function typeDelayMs(textLength, maxDelayMs = 20, budgetMs = 48000) {
   return Math.max(1, Math.min(maxDelayMs, Math.floor(budgetMs / textLength)));
 }
 
+// Reject a text that could never be typed inside the driver timeout: typeDelayMs
+// floors the per-character delay at 1ms, so a text longer than the typing budget
+// (budgetMs) takes more than budgetMs milliseconds no matter what, and one long
+// enough (e.g. 100k chars at 1ms/char = 100s) is guaranteed to blow past the 60s
+// CUA timeout. The byte cap alone does not catch this — 100k ASCII chars fit well
+// under 200KB — so callers check this up front and return a clean error instead of
+// launching a run that is doomed to time out. Returns null when the text can fit,
+// or a short human-readable error message.
+export function requireTypeableLength(textLength, budgetMs = 48000) {
+  if (Number.isFinite(textLength) && textLength > budgetMs) {
+    return `text is too long to type within the driver timeout (max ${budgetMs} characters). Split it into smaller chunks and retry.`;
+  }
+  return null;
+}
+
 // Find the first top-level JSON object in a string. cua-driver may emit log
 // lines before its JSON payload, and a strict JSON.parse of the whole stdout
 // would then fail and make callers report "no result" for a perfectly valid

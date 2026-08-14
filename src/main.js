@@ -24,6 +24,7 @@ import {
   redactSecrets,
   requireMaxLength,
   requireNonEmptyString,
+  requireTypeableLength,
   resolveOpenAppTarget,
   resolveWorkdir,
   rotateLogIfNeeded,
@@ -647,6 +648,13 @@ async function typeTextInFrontApp(input = {}) {
   if (textError) return { ok: false, code: -5, stdout: "", stderr: textError };
   const textLengthError = requireMaxLength(input.text, "text");
   if (textLengthError) return { ok: false, code: -6, stdout: "", stderr: textLengthError };
+  // At 1ms/char (the typeDelayMs floor) a text longer than the 48s typing
+  // budget can never finish inside the 60s driver timeout — the byte cap above
+  // does not catch it (100k ASCII chars fit well under 200KB), so reject it
+  // cleanly up front and let the model split the text instead of waiting out a
+  // doomed run that fails with a timeout.
+  const typeableError = requireTypeableLength(input.text.length);
+  if (typeableError) return { ok: false, code: -10, stdout: "", stderr: typeableError };
   const active = await getActiveAppFromCua();
   if (!active?.pid) return { ok: false, code: -1, stdout: "", stderr: "No active app pid found." };
   // Scale the per-character delay to the text length so long texts fit inside

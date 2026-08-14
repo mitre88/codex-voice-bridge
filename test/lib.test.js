@@ -24,6 +24,7 @@ import {
   redactSecrets,
   requireMaxLength,
   requireNonEmptyString,
+  requireTypeableLength,
   resolveAppIdentity,
   resolveOpenAppTarget,
   resolveWorkdir,
@@ -670,4 +671,19 @@ test("typeDelayMs scales the per-character delay so long texts fit the timeout",
   // Custom budget/max.
   assert.equal(typeDelayMs(100, 10, 1000), 10);
   assert.equal(typeDelayMs(500, 10, 1000), 2);
+});
+
+test("requireTypeableLength rejects texts that cannot fit the typing budget", () => {
+  // At the 1ms/char floor, anything at or under the budget fits.
+  assert.equal(requireTypeableLength(0), null);
+  assert.equal(requireTypeableLength(48000), null);
+  // Longer than the budget is a guaranteed timeout at 1ms/char.
+  assert.match(requireTypeableLength(48001), /too long to type within the driver timeout/);
+  assert.match(requireTypeableLength(1e9), /max 48000 characters/);
+  // Non-finite lengths are not the caller's problem (type checks elsewhere).
+  assert.equal(requireTypeableLength(undefined), null);
+  assert.equal(requireTypeableLength(NaN), null);
+  // Custom budget.
+  assert.equal(requireTypeableLength(1000, 1000), null);
+  assert.match(requireTypeableLength(1001, 1000), /max 1000 characters/);
 });
