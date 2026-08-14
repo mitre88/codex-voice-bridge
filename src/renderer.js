@@ -46,6 +46,19 @@ const configEl = document.querySelector("#config");
 
 const activeSessions = [];
 const handledToolCalls = new Set();
+// Two parallel run_codex calls (parallel tool use) would spawn two read-only
+// Codex processes fighting over the same repo (git index locks, CPU). Queue
+// them so one runs at a time; cua/mac actions stay parallel — they are quick
+// and independent. A rejected run never blocks the queue.
+let codexRunQueue = Promise.resolve();
+function enqueueCodexRun(args) {
+  const run = codexRunQueue.then(() => getBridge().runCodex(args));
+  codexRunQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
 let pendingAction;
 let pendingActionTimer;
 let actionTimeoutMs = 120000;
@@ -263,7 +276,7 @@ async function executeAction(action) {
   try {
     result =
       action.kind === "codex"
-        ? await getBridge().runCodex({ prompt: action.args.prompt, cwd: action.args.cwd })
+        ? await enqueueCodexRun({ prompt: action.args.prompt, cwd: action.args.cwd })
         : action.kind === "cua"
           ? await getBridge().runCua(action.args)
           : await getBridge().runMac(action.args);
