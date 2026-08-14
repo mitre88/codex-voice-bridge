@@ -151,6 +151,15 @@ test("isSafeCuaLaunchArgs rejects unsafe identities and non-http urls", () => {
   assert.equal(isSafeCuaLaunchArgs({ name: "Safari", urls: "https://example.com" }), false);
   // One bad url poisons the whole array.
   assert.equal(isSafeCuaLaunchArgs({ name: "Safari", urls: ["https://ok.example", "file:///etc/hosts"] }), false);
+  // Both url forms are validated when present: a safe urls array must not mask
+  // an unsafe singular url (cua-driver may consult either field), and an empty
+  // urls array must not make .every() vacuously true while url carries a payload.
+  assert.equal(isSafeCuaLaunchArgs({ name: "Safari", urls: ["https://ok.example"], url: "file:///etc/hosts" }), false);
+  assert.equal(isSafeCuaLaunchArgs({ name: "Safari", urls: [], url: "javascript:alert(1)" }), false);
+  // A safe singular url alongside a safe array stays accepted, and an empty
+  // urls array alone is an identity-only launch (nothing to validate).
+  assert.equal(isSafeCuaLaunchArgs({ name: "Safari", urls: ["https://ok.example"], url: "https://also-ok.example" }), true);
+  assert.equal(isSafeCuaLaunchArgs({ name: "Safari", urls: [] }), true);
 });
 
 test("resolveOpenAppTarget prefers an app identity over a url", () => {

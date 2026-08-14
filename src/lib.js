@@ -112,15 +112,25 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
 // unvalidated file:// or custom-scheme URL (or an unsafe app identity) would
 // otherwise bypass the http/https gate that the open_app path enforces. Returns
 // true only when the args carry a safe app identity and only http/https URLs
-// (a urls array, or the singular url form some callers use). Nothing unsafe is
-// rejected beyond that: missing identities/URLs are cua-driver's problem.
+// (a urls array, or the singular url form some callers use). When BOTH forms
+// are present, every URL the model supplied is validated — a safe urls array
+// must not mask an unsafe singular url (and vice versa), and an empty urls
+// array must not make .every() vacuously true while url carries a payload.
+// Nothing unsafe is rejected beyond that: missing identities/URLs are
+// cua-driver's problem.
 export function isSafeCuaLaunchArgs(args = {}) {
   const identity = args.bundle_id ? { bundle_id: args.bundle_id } : args.name ? { name: args.name } : null;
   if (identity && !isSafeAppIdentity(identity)) return false;
   const hasUrls = args.urls !== undefined || args.url !== undefined;
   if (!hasUrls) return true;
-  const urls = args.urls !== undefined ? args.urls : [args.url];
-  return Array.isArray(urls) && urls.every((url) => isSafeLaunchUrl(url));
+  const urls = [];
+  if (Array.isArray(args.urls)) urls.push(...args.urls);
+  else if (args.urls !== undefined) return false; // non-array urls is not a shape cua-driver accepts
+  if (args.url !== undefined) urls.push(args.url);
+  // No URLs at all (e.g. an empty urls array) is an identity-only launch,
+  // same as omitting them: nothing to validate.
+  if (urls.length === 0) return true;
+  return urls.every((url) => isSafeLaunchUrl(url));
 }
 
 // Decide what open_app should launch. An app identity (bundle_id/name) wins;
