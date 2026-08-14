@@ -242,6 +242,16 @@ export function accumulateOutput(buffer, chunk, maxChars = 1024 * 1024) {
   return { text: next, capped: false };
 }
 
+// Pick a per-character delay so a whole text fits inside the CUA timeout:
+// 20ms/char is comfortable for short inputs, but a long text (e.g. 10k chars
+// at 20ms = 200s) would blow past the 60s driver timeout and fail. Scale the
+// delay down for long texts, never below 1ms, keeping ~80% of the budget as
+// headroom for driver startup and the app lookup.
+export function typeDelayMs(textLength, maxDelayMs = 20, budgetMs = 48000) {
+  if (!Number.isFinite(textLength) || textLength <= 0) return maxDelayMs;
+  return Math.max(1, Math.min(maxDelayMs, Math.floor(budgetMs / textLength)));
+}
+
 // Find the first top-level JSON object in a string. cua-driver may emit log
 // lines before its JSON payload, and a strict JSON.parse of the whole stdout
 // would then fail and make callers report "no result" for a perfectly valid

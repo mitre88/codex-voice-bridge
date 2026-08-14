@@ -8,6 +8,7 @@ import {
   applyEnvOverrides,
   escapeAppleScript,
   extractFirstJsonObject,
+  typeDelayMs,
   hasVirtualAudioDevice,
   humanizeError,
   humanizeSpawnError,
@@ -644,4 +645,20 @@ test("extractFirstJsonObject returns null for non-JSON or non-string input", () 
   assert.equal(extractFirstJsonObject(null), null);
   assert.equal(extractFirstJsonObject(undefined), null);
   assert.equal(extractFirstJsonObject(42), null);
+});
+
+test("typeDelayMs scales the per-character delay so long texts fit the timeout", () => {
+  assert.equal(typeDelayMs(0), 20);
+  assert.equal(typeDelayMs(10), 20);
+  assert.equal(typeDelayMs(100), 20);
+  // 48s budget / 2400 chars = 20ms exactly.
+  assert.equal(typeDelayMs(2400), 20);
+  // Longer texts scale down proportionally.
+  assert.equal(typeDelayMs(4800), 10);
+  assert.equal(typeDelayMs(9600), 5);
+  // Never below 1ms, whatever the length.
+  assert.equal(typeDelayMs(1e9), 1);
+  // Custom budget/max.
+  assert.equal(typeDelayMs(100, 10, 1000), 10);
+  assert.equal(typeDelayMs(500, 10, 1000), 2);
 });

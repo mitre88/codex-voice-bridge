@@ -28,6 +28,7 @@ import {
   resolveWorkdir,
   rotateLogIfNeeded,
   toPositiveInt,
+  typeDelayMs,
 } from "./lib.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -648,7 +649,12 @@ async function typeTextInFrontApp(input = {}) {
   if (textLengthError) return { ok: false, code: -6, stdout: "", stderr: textLengthError };
   const active = await getActiveAppFromCua();
   if (!active?.pid) return { ok: false, code: -1, stdout: "", stderr: "No active app pid found." };
-  return runCuaDriver({ tool_name: "type_text_chars", json_args: { pid: active.pid, text: input.text, delay_ms: 20 } });
+  // Scale the per-character delay to the text length so long texts fit inside
+  // the driver timeout instead of failing mid-way (see typeDelayMs).
+  return runCuaDriver({
+    tool_name: "type_text_chars",
+    json_args: { pid: active.pid, text: input.text, delay_ms: typeDelayMs(input.text.length) },
+  });
 }
 
 async function pressKeyInFrontApp(input = {}) {
