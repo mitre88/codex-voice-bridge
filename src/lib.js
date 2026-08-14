@@ -169,12 +169,16 @@ export function requireNonEmptyString(value, label) {
 // Cap a value that will be passed to a child process as a single argv entry.
 // macOS limits one argument to MAX_ARG_STRLEN (~256 KiB) and the whole
 // argv+env block to ARG_MAX (1 MiB), so an unbounded prompt or args blob
-// would otherwise make spawn() fail with E2BIG. Returns null when valid, or a
-// short human-readable error message. Non-strings pass through: type checks
-// are the caller's job (see requireNonEmptyString).
-export function requireMaxLength(value, label, maxChars = 200000) {
-  if (typeof value === "string" && value.length > maxChars) {
-    return `${label} exceeds the maximum length of ${maxChars} characters.`;
+// would otherwise make spawn() fail with E2BIG. The limit is measured in
+// UTF-8 BYTES, not characters: a voice-transcribed Spanish prompt (or any
+// other multibyte text) is up to 4 bytes per character, so a character-based
+// count could let a value through that still blows the OS limit and fails
+// with E2BIG — the exact failure this guard exists to prevent. Returns null
+// when valid, or a short human-readable error message. Non-strings pass
+// through: type checks are the caller's job (see requireNonEmptyString).
+export function requireMaxLength(value, label, maxBytes = 200000) {
+  if (typeof value === "string" && Buffer.byteLength(value, "utf8") > maxBytes) {
+    return `${label} exceeds the maximum length of ${maxBytes} bytes.`;
   }
   return null;
 }

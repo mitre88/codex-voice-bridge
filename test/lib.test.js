@@ -220,9 +220,14 @@ test("requireNonEmptyString accepts non-empty strings and rejects the rest", () 
 
 test("requireMaxLength caps oversized argv-bound values", () => {
   assert.equal(requireMaxLength("short", "prompt"), null);
-  assert.equal(requireMaxLength("x".repeat(200001), "prompt"), "prompt exceeds the maximum length of 200000 characters.");
+  assert.equal(requireMaxLength("x".repeat(200001), "prompt"), "prompt exceeds the maximum length of 200000 bytes.");
   assert.equal(requireMaxLength("y".repeat(50), "key", 100), null);
-  assert.equal(requireMaxLength("y".repeat(101), "key", 100), "key exceeds the maximum length of 100 characters.");
+  assert.equal(requireMaxLength("y".repeat(101), "key", 100), "key exceeds the maximum length of 100 bytes.");
+  // Multibyte UTF-8 is counted in bytes, not characters: 100001 two-byte
+  // accents are ~200KB in argv and would blow MAX_ARG_STRLEN despite a
+  // character count under the limit, so they must be rejected too.
+  assert.equal(requireMaxLength("á".repeat(100001), "prompt"), "prompt exceeds the maximum length of 200000 bytes.");
+  assert.equal(requireMaxLength("á".repeat(99999), "prompt"), null);
   // Non-strings pass through: type checks are the caller's job.
   assert.equal(requireMaxLength(undefined, "prompt"), null);
   assert.equal(requireMaxLength({ a: 1 }, "prompt"), null);

@@ -18,6 +18,7 @@ export default [
         clearTimeout: "readonly",
         fetch: "readonly",
         AbortSignal: "readonly",
+        Buffer: "readonly",
       },
     },
   },
