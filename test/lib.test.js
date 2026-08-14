@@ -62,6 +62,17 @@ test("escapeAppleScript still strips control characters", () => {
   assert.equal(escapeAppleScript("a\u007Fb"), "ab"); // DEL
 });
 
+test("escapeAppleScript strips Unicode line/paragraph separators", () => {
+  // AppleScript treats U+2028/U+2029 as line breaks in script text, so they
+  // must not survive into the string literal any more than \n does.
+  assert.equal(escapeAppleScript("a\u2028b"), "ab");
+  assert.equal(escapeAppleScript("a\u2029b"), "ab");
+  assert.equal(escapeAppleScript('x"\u2028do shell script "id"'), 'x""do shell script ""id""');
+  assert.equal(escapeAppleScript('x"\u2029do shell script "id"'), 'x""do shell script ""id""');
+  // Printable non-ASCII must still pass through untouched.
+  assert.equal(escapeAppleScript("Música"), "Música");
+});
+
 test("isSafeAppIdentity allowlists bundle ids and simple app names", () => {
   assert.equal(isSafeAppIdentity({ bundle_id: "com.apple.Safari" }), true);
   assert.equal(isSafeAppIdentity({ name: "Visual Studio Code" }), true);

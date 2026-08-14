@@ -39,9 +39,13 @@ export function normalizeTone(value) {
 
 // AppleScript string literals escape a quote by doubling it. A backslash is
 // a literal, not an escape — JS-style \" closes the string and lets a
-// model-controlled app_name inject `do shell script`. Only control characters
-// (C0, DEL, C1) are stripped so a model-controlled name cannot smuggle a
-// newline or other terminator; printable non-ASCII characters (e.g. accented
+// model-controlled app_name inject `do shell script`. Control characters
+// (C0, DEL, C1) and the Unicode line terminators U+2028/U+2029 are stripped
+// so a model-controlled name cannot smuggle a newline or other terminator:
+// AppleScript treats U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH
+// SEPARATOR) as line breaks in script text exactly like \n and \r, so a name
+// containing one would terminate the string literal and break out of the
+// `tell application` statement. Printable non-ASCII characters (e.g. accented
 // Spanish app names like "Música" or "Números") are kept — inside a quoted
 // AppleScript string they are plain data, and stripping them would make
 // osascript fail to find the app.
@@ -49,9 +53,10 @@ export function escapeAppleScript(value = "") {
   let out = "";
   for (const char of String(value)) {
     const code = char.codePointAt(0);
-    // Strip control characters (C0 0x00-0x1F, DEL 0x7F, C1 0x80-0x9F) so a
-    // model-controlled name cannot smuggle a newline or other terminator.
-    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
+    // Strip control characters (C0 0x00-0x1F, DEL 0x7F, C1 0x80-0x9F) and the
+    // Unicode line/paragraph separators (U+2028/U+2029) so a model-controlled
+    // name cannot smuggle a newline or other AppleScript line terminator.
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029) continue;
     out += char === '"' ? '""' : char;
   }
   return out;
