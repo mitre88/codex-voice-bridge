@@ -447,9 +447,19 @@ test("humanizeSpawnError maps a non-executable binary to a permissions message",
   assert.match(humanizeSpawnError("cua-driver", { code: "EACCES", message: "spawn cua-driver EACCES" }), /not executable/i);
 });
 
+test("humanizeSpawnError maps an oversized command line to an actionable message", () => {
+  // The prompt/args guards cap individual argv entries, but macOS caps the
+  // whole argv+env block (ARG_MAX), so a large environment can still trigger
+  // E2BIG; the message must point at the environment, not just the request.
+  assert.match(
+    humanizeSpawnError("codex", { code: "E2BIG", message: "spawn codex E2BIG" }),
+    /too large for macOS \(E2BIG\)/i,
+  );
+  assert.match(humanizeSpawnError("codex", { code: "E2BIG", message: "spawn codex E2BIG" }), /environment/i);
+});
+
 test("humanizeSpawnError passes through other spawn errors", () => {
   assert.equal(humanizeSpawnError("codex", new Error("spawn codex EMFILE")), "spawn codex EMFILE");
-  assert.equal(humanizeSpawnError("codex", { code: "E2BIG", message: "spawn codex E2BIG" }), "spawn codex E2BIG");
 });
 
 test("accumulateOutput caps the buffer at maxChars and reports truncation", () => {

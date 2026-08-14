@@ -207,10 +207,11 @@ export function redactSecrets(value) {
 
 // Turn a failed child-process spawn into a short, actionable message. A
 // missing binary surfaces as "spawn <command> ENOENT" (e.g. the user never
-// installed codex or cua-driver, or the binary is not on the app's PATH), and
-// an installed-but-not-executable binary as EACCES; a raw pass-through leaves
-// the user (and the model relaying the error) guessing whether the app, the
-// PATH, or the install is at fault. Anything else passes through as-is.
+// installed codex or cua-driver, or the binary is not on the app's PATH), an
+// installed-but-not-executable binary as EACCES, and an over-limit command
+// line as E2BIG; a raw pass-through leaves the user (and the model relaying
+// it) guessing whether the app, the PATH, the environment, or the install is
+// at fault. Anything else passes through as-is.
 export function humanizeSpawnError(command, error) {
   const code = error?.code;
   const message = error?.message || String(error);
@@ -219,6 +220,13 @@ export function humanizeSpawnError(command, error) {
   }
   if (code === "EACCES") {
     return `"${command}" is not executable. Check its permissions and retry.`;
+  }
+  if (code === "E2BIG") {
+    // The prompt/args length guards cap individual argv entries, but macOS
+    // limits the whole argv+env block (ARG_MAX, ~1 MiB), so a large
+    // environment can still overflow it with a much smaller request. The raw
+    // "spawn codex E2BIG" leaves the user blaming the request size alone.
+    return `"${command}" could not start: the command line or environment is too large for macOS (E2BIG). Trim oversized environment variables or reduce the request size, then retry.`;
   }
   return message;
 }
