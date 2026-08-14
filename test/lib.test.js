@@ -238,6 +238,16 @@ test("redactSecrets masks modern project keys containing dots", () => {
   assert.equal(redactSecrets("sk-proj-a.b.c"), "[REDACTED_OPENAI_KEY]");
 });
 
+test("redactSecrets does not corrupt words containing sk-", () => {
+  assert.equal(redactSecrets("risk-2024 went up; task-proj done; ask-1 first"), "risk-2024 went up; task-proj done; ask-1 first");
+  assert.equal(redactSecrets("disk-usage high"), "disk-usage high");
+});
+
+test("redactSecrets redacts keys at token boundaries only", () => {
+  assert.equal(redactSecrets("key:sk-proj-abc123, ok"), "key:[REDACTED_OPENAI_KEY], ok");
+  assert.equal(redactSecrets("\"sk-abc123\" and (sk-proj-x.y)"), "\"[REDACTED_OPENAI_KEY]\" and ([REDACTED_OPENAI_KEY])");
+});
+
 test("humanizeError maps common failure modes to actionable messages", () => {
   assert.match(humanizeError({ name: "NotAllowedError", message: "denied" }), /microphone or screen access was denied/i);
   assert.match(humanizeError({ name: "NotFoundError", message: "no device" }), /no audio input device/i);

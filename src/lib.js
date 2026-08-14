@@ -189,7 +189,11 @@ export function isPlausibleApiKey(value) {
 export function redactSecrets(value) {
   // Include "." in the charset: modern project keys (sk-proj-...) contain
   // dots, and a key split in two by the old regex would leak its tail.
-  return String(value).replace(/sk-[A-Za-z0-9_.-]+/g, "[REDACTED_OPENAI_KEY]");
+  // The \b requires a token boundary before "sk": a bare /sk-.../ match also
+  // hits the "sk-" inside ordinary words ("risk-2024", "task-proj", "ask-1")
+  // and would corrupt log text with false redactions. Real keys never start
+  // mid-word (they follow whitespace, a quote, or a colon), so none are missed.
+  return String(value).replace(/\bsk-[A-Za-z0-9_.-]+/g, "[REDACTED_OPENAI_KEY]");
 }
 
 // Append a chunk to a growing process-output buffer, capping the total length
