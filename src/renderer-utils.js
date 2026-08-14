@@ -132,6 +132,21 @@ export function humanizeError(error) {
   ) {
     return "OpenAI rate limit reached (429). Wait a moment and retry, or check your plan's requests-per-minute (RPM) and tokens-per-minute (TPM) limits.";
   }
+  // 400 invalid_request_error responses (an invalid voice or language value in
+  // .env, an unsupported session parameter, a malformed request body) are
+  // configuration problems, not transient failures; a raw pass-through leaves
+  // the user guessing whether the key, the network, or the .env is at fault.
+  // The reasoning-400 is already auto-retried in the main process, so what
+  // reaches the UI is the remaining config class. The status must be exactly
+  // three digits (400\b) so a stray 4+ digit number in an unrelated message
+  // cannot false-positive, mirroring the 429 branch above.
+  if (
+    lower.includes("invalid_request_error") ||
+    /(?:token|call) failed: 400\b/.test(lower) ||
+    /error code: 400\b/.test(lower)
+  ) {
+    return "OpenAI rejected the Realtime request (400). Check the model, voice, and language values in .env for ones the Realtime API supports, then retry.";
+  }
   // A bare "401 Unauthorized" (proxy, opaque body, or a response whose text is
   // not the usual JSON error) would otherwise pass through raw even though the
   // status alone is a definitive key problem. The status must be exactly three

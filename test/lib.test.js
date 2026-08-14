@@ -356,6 +356,16 @@ test("humanizeError maps bare 429 statuses to the rate limit message", () => {
   assert.equal(humanizeError(new Error("Error code: 4291")), "Error code: 4291");
 });
 
+test("humanizeError maps invalid request errors (400) to a config message", () => {
+  assert.match(humanizeError(new Error("OpenAI Realtime token failed: 400 invalid_request_error")), /rejected the realtime request \(400\)/i);
+  assert.match(humanizeError(new Error("Error code: 400 - Invalid value for 'voice': 'marin'")), /rejected the realtime request \(400\)/i);
+  // A bare 400 status must still map to the config message (also when the
+  // error comes from the translation or transcription token endpoints).
+  assert.match(humanizeError(new Error("OpenAI Realtime translation token failed: 400 Bad Request")), /rejected the realtime request \(400\)/i);
+  // A 4-digit number must not false-positive on the 400 branch.
+  assert.equal(humanizeError(new Error("Error code: 4000")), "Error code: 4000");
+});
+
 test("humanizeError maps missing model failures to an actionable message", () => {
   assert.match(humanizeError(new Error("Error code: 404 - The model 'gpt-realtime-2' does not exist or you do not have access to it.")), /could not find the requested realtime model \(404\)/i);
   assert.match(humanizeError(new Error("model_not_found")), /could not find the requested realtime model \(404\)/i);
