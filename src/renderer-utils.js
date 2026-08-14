@@ -65,7 +65,12 @@ export function humanizeError(error) {
     haystack.includes("cert_has_expired") ||
     haystack.includes("cert_not_yet_valid") ||
     haystack.includes("depth_zero_self_signed") ||
-    haystack.includes("err_cert_")
+    haystack.includes("err_cert_") ||
+    // Non-certificate TLS handshake failures (net::ERR_SSL_PROTOCOL_ERROR,
+    // ERR_SSL_VERSION_OR_CIPHER_MISMATCH, ERR_NO_SSL_VERSIONS_ENABLED, ...)
+    // share the interception/clock root causes with certificate errors, and a
+    // raw pass-through would leave the user blaming the key or the network.
+    haystack.includes("err_ssl_")
   ) {
     return "Could not verify the OpenAI API server's TLS certificate. This usually means a corporate proxy or VPN is intercepting traffic, the system clock is wrong, or the certificate expired — check those and retry.";
   }
@@ -88,12 +93,23 @@ export function humanizeError(error) {
     haystack.includes("getaddrinfo") ||
     haystack.includes("socket hang up") ||
     haystack.includes("network is unreachable") ||
+    // undici syscall codes that surface on error.code / error.cause.code when
+    // the message itself is only the generic "fetch failed" (a firewalled
+    // host timing out, a network unreachable, an aborted connection).
+    haystack.includes("etimedout") ||
+    haystack.includes("enetunreach") ||
+    haystack.includes("ehostunreach") ||
+    haystack.includes("econnaborted") ||
     haystack.includes("err_internet_disconnected") ||
     haystack.includes("err_name_not_resolved") ||
     haystack.includes("err_name_resolution_failed") ||
     haystack.includes("err_connection_refused") ||
     haystack.includes("err_connection_reset") ||
     haystack.includes("err_connection_aborted") ||
+    haystack.includes("err_connection_closed") ||
+    haystack.includes("err_connection_failed") ||
+    haystack.includes("err_timed_out") ||
+    haystack.includes("err_tunnel_connection_failed") ||
     haystack.includes("err_address_unreachable") ||
     haystack.includes("err_network_changed")
   ) {

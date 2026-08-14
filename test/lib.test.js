@@ -282,8 +282,17 @@ test("humanizeError maps Chromium net:: network codes to a connectivity message"
   assert.match(humanizeError(new Error("Failed to load resource: net::ERR_CONNECTION_REFUSED")), /could not reach the openai api/i);
   assert.match(humanizeError(new Error("net::ERR_CONNECTION_RESET")), /could not reach the openai api/i);
   assert.match(humanizeError(new Error("net::ERR_CONNECTION_ABORTED")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("net::ERR_CONNECTION_CLOSED")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("net::ERR_CONNECTION_FAILED")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("net::ERR_TIMED_OUT")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("net::ERR_TUNNEL_CONNECTION_FAILED")), /could not reach the openai api/i);
   assert.match(humanizeError(new Error("net::ERR_ADDRESS_UNREACHABLE")), /could not reach the openai api/i);
   assert.match(humanizeError(new Error("net::ERR_NETWORK_CHANGED")), /could not reach the openai api/i);
+  // undici syscall codes (usually hidden inside error.cause of "fetch failed").
+  assert.match(humanizeError(new Error("connect ETIMEDOUT 104.18.32.8:443")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("connect ENETUNREACH 10.0.0.1:443")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("connect EHOSTUNREACH 192.168.1.1:443")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("connect ECONNABORTED 104.18.32.8:443")), /could not reach the openai api/i);
   // The shared "err_" prefix must not drag certificate codes into this branch.
   assert.match(humanizeError(new Error("net::ERR_CERT_DATE_INVALID")), /tls certificate/i);
 });
@@ -294,6 +303,10 @@ test("humanizeError maps TLS certificate failures to a certificate message", () 
   assert.match(humanizeError(new Error("certificate has expired")), /tls certificate/i);
   assert.match(humanizeError(new Error("UNABLE_TO_GET_ISSUER_CERT_LOCALLY")), /tls certificate/i);
   assert.match(humanizeError(new Error("net::ERR_CERT_DATE_INVALID")), /tls certificate/i);
+  // Non-certificate TLS handshake failures must map to the TLS message too,
+  // not pass through raw (proxy/VPN interception is the usual cause).
+  assert.match(humanizeError(new Error("net::ERR_SSL_PROTOCOL_ERROR")), /tls certificate/i);
+  assert.match(humanizeError(new Error("net::ERR_SSL_VERSION_OR_CIPHER_MISMATCH")), /tls certificate/i);
   // undici wraps the real reason in error.cause; the generic "fetch failed"
   // must not shadow the certificate diagnosis.
   const wrapped = new TypeError("fetch failed");
