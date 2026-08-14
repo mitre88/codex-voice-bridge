@@ -115,8 +115,21 @@ export function humanizeError(error) {
   ) {
     return "Could not reach the OpenAI API. Check your internet connection and firewall, then retry.";
   }
-  if (lower.includes("insufficient_quota") || lower.includes("exceeded your current quota")) {
-    return "OpenAI rejected the Realtime call: insufficient_quota. Check billing, project limits, and that the key belongs to the funded organization.";
+  // A 402 (billing/quota) failure — "insufficient_quota", "Insufficient
+  // balance", or a bare 402 status (opaque body, proxy, or a response whose
+  // text is not the usual JSON error) — is a billing problem, not a transient
+  // failure; a raw pass-through leaves the user guessing whether the key, the
+  // network, or their credit is at fault. The status must be exactly three
+  // digits (402\b) so a stray 4+ digit number in an unrelated message cannot
+  // false-positive, mirroring the 401/403/404 branches.
+  if (
+    lower.includes("insufficient_quota") ||
+    lower.includes("exceeded your current quota") ||
+    lower.includes("insufficient balance") ||
+    /(?:token|call) failed: 402\b/.test(lower) ||
+    /error code: 402\b/.test(lower)
+  ) {
+    return "OpenAI rejected the Realtime call: insufficient_quota (402). Check billing, project limits, and that the key belongs to the funded organization, then retry.";
   }
   // A bare "429" (opaque body, proxy, or a response whose text is not the
   // usual JSON error) would otherwise pass through raw even though the

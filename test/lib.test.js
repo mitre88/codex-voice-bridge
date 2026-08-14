@@ -355,6 +355,15 @@ test("humanizeError maps insufficient permissions failures to an actionable mess
   );
 });
 
+test("humanizeError maps 402 billing failures to an actionable message", () => {
+  assert.match(humanizeError(new Error("OpenAI Realtime token failed: 402")), /insufficient_quota \(402\)/i);
+  assert.match(humanizeError(new Error("Realtime call failed: 402")), /insufficient_quota \(402\)/i);
+  assert.match(humanizeError(new Error("Error code: 402 - insufficient_quota")), /insufficient_quota \(402\)/i);
+  assert.match(humanizeError(new Error("Insufficient balance for this project")), /insufficient_quota \(402\)/i);
+  // A 4-digit number must not false-positive on the 402 branch.
+  assert.equal(humanizeError(new Error("Error code: 4021")), "Error code: 4021");
+});
+
 test("humanizeError maps rate limit failures to an actionable message", () => {
   assert.match(humanizeError(new Error("Error code: 429 - rate_limit_exceeded for gpt-realtime-2")), /rate limit reached \(429\)/i);
   assert.match(humanizeError(new Error("Rate limit reached for model on requests per min (RPM)")), /rate limit reached \(429\)/i);
