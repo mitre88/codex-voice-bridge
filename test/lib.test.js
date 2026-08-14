@@ -387,6 +387,28 @@ test("humanizeError maps bare 429 statuses to the rate limit message", () => {
   assert.equal(humanizeError(new Error("Error code: 4291")), "Error code: 4291");
 });
 
+test("humanizeError maps content policy rejections to a content message, not the 400 config message", () => {
+  // OpenAI's content_policy_violation is a 400, so without a dedicated branch
+  // it would be mislabeled as a .env configuration problem.
+  assert.match(
+    humanizeError(new Error("Error code: 400 - content_policy_violation: Your request was rejected as a result of our safety system")),
+    /content safety system/i,
+  );
+  assert.match(humanizeError(new Error("content_policy_violation")), /content safety system/i);
+  assert.match(humanizeError(new Error("Your request was rejected as a result of our safety system")), /content safety system/i);
+  assert.match(
+    humanizeError(new Error("OpenAI Realtime token failed: 400 content_policy_violation")),
+    /content safety system/i,
+  );
+  // The content diagnosis must win over the generic 400 .env advice.
+  assert.doesNotMatch(
+    humanizeError(new Error("Error code: 400 - content_policy_violation")),
+    /check the model, voice, and language values/i,
+  );
+  // A real config 400 still maps to the config message (regression guard).
+  assert.match(humanizeError(new Error("Error code: 400 - Invalid value for 'voice': 'marin'")), /rejected the realtime request \(400\)/i);
+});
+
 test("humanizeError maps invalid request errors (400) to a config message", () => {
   assert.match(humanizeError(new Error("OpenAI Realtime token failed: 400 invalid_request_error")), /rejected the realtime request \(400\)/i);
   assert.match(humanizeError(new Error("Error code: 400 - Invalid value for 'voice': 'marin'")), /rejected the realtime request \(400\)/i);

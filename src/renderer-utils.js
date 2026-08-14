@@ -153,6 +153,19 @@ export function humanizeError(error) {
   ) {
     return "OpenAI rate limit reached (429). Wait a moment and retry, or check your plan's requests-per-minute (RPM) and tokens-per-minute (TPM) limits.";
   }
+  // A content-policy rejection ("content_policy_violation", "Your request was
+  // rejected as a result of our safety system") is a request-content problem,
+  // not a configuration one: the generic 400 branch below would otherwise tell
+  // the user to fix their .env model/voice values when the key and config are
+  // fine — the request itself was refused by OpenAI's safety system. Placed
+  // before the 400 branch so the content diagnosis wins.
+  if (
+    lower.includes("content_policy_violation") ||
+    lower.includes("content policy violation") ||
+    lower.includes("rejected as a result of our safety system")
+  ) {
+    return "OpenAI rejected the request because it triggered the content safety system (content_policy_violation). Rephrase the request and retry — the API key and connection are fine.";
+  }
   // 400 invalid_request_error responses (an invalid voice or language value in
   // .env, an unsupported session parameter, a malformed request body) are
   // configuration problems, not transient failures; a raw pass-through leaves
