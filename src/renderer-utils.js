@@ -72,7 +72,11 @@ export function humanizeError(error) {
   // Network-level failures (DNS lookup, connection refused/reset, offline)
   // surface as TypeError "fetch failed" in the main process or "NetworkError"
   // in the renderer; a raw pass-through leaves the user guessing whether the
-  // problem is the key, the server, or their connection.
+  // problem is the key, the server, or their connection. Chromium/Electron
+  // additionally reports these as "net::ERR_*" strings (offline, DNS failure,
+  // refused/reset connections) — the "err_" prefix is shared with the TLS
+  // branch above, so only the specific network codes are matched here and
+  // certificate codes keep mapping to the certificate message.
   if (
     haystack.includes("fetch failed") ||
     haystack.includes("failed to fetch") ||
@@ -83,7 +87,15 @@ export function humanizeError(error) {
     haystack.includes("eai_again") ||
     haystack.includes("getaddrinfo") ||
     haystack.includes("socket hang up") ||
-    haystack.includes("network is unreachable")
+    haystack.includes("network is unreachable") ||
+    haystack.includes("err_internet_disconnected") ||
+    haystack.includes("err_name_not_resolved") ||
+    haystack.includes("err_name_resolution_failed") ||
+    haystack.includes("err_connection_refused") ||
+    haystack.includes("err_connection_reset") ||
+    haystack.includes("err_connection_aborted") ||
+    haystack.includes("err_address_unreachable") ||
+    haystack.includes("err_network_changed")
   ) {
     return "Could not reach the OpenAI API. Check your internet connection and firewall, then retry.";
   }

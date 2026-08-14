@@ -276,6 +276,18 @@ test("humanizeError maps network failures to a connectivity message", () => {
   assert.match(humanizeError(new Error("Error code: 401 - invalid_api_key")), /rejected the API key/i);
 });
 
+test("humanizeError maps Chromium net:: network codes to a connectivity message", () => {
+  assert.match(humanizeError(new Error("net::ERR_INTERNET_DISCONNECTED")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("net::ERR_NAME_NOT_RESOLVED")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("Failed to load resource: net::ERR_CONNECTION_REFUSED")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("net::ERR_CONNECTION_RESET")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("net::ERR_CONNECTION_ABORTED")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("net::ERR_ADDRESS_UNREACHABLE")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("net::ERR_NETWORK_CHANGED")), /could not reach the openai api/i);
+  // The shared "err_" prefix must not drag certificate codes into this branch.
+  assert.match(humanizeError(new Error("net::ERR_CERT_DATE_INVALID")), /tls certificate/i);
+});
+
 test("humanizeError maps TLS certificate failures to a certificate message", () => {
   assert.match(humanizeError(new Error("unable to verify the first certificate")), /tls certificate/i);
   assert.match(humanizeError(new Error("self-signed certificate in certificate chain")), /tls certificate/i);
