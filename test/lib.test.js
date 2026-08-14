@@ -10,6 +10,7 @@ import {
   extractFirstJsonObject,
   hasVirtualAudioDevice,
   humanizeError,
+  humanizeSpawnError,
   isPlausibleApiKey,
   isSafeAppIdentity,
   isSafeCuaLaunchArgs,
@@ -403,6 +404,22 @@ test("truncateOutput truncates long stdout and preserves metadata", () => {
 test("truncateOutput leaves short output untouched", () => {
   const out = truncateOutput({ ok: true, stdout: "short", stderr: "" }, 50);
   assert.equal(out.stdout, "short");
+});
+
+test("humanizeSpawnError maps a missing binary to an actionable message", () => {
+  const error = new Error("spawn codex ENOENT");
+  error.code = "ENOENT";
+  assert.match(humanizeSpawnError("codex", error), /"codex" was not found on PATH/i);
+  assert.match(humanizeSpawnError("cua-driver", { code: "ENOENT", message: "spawn cua-driver ENOENT" }), /"cua-driver" was not found on PATH/i);
+});
+
+test("humanizeSpawnError maps a non-executable binary to a permissions message", () => {
+  assert.match(humanizeSpawnError("cua-driver", { code: "EACCES", message: "spawn cua-driver EACCES" }), /not executable/i);
+});
+
+test("humanizeSpawnError passes through other spawn errors", () => {
+  assert.equal(humanizeSpawnError("codex", new Error("spawn codex EMFILE")), "spawn codex EMFILE");
+  assert.equal(humanizeSpawnError("codex", { code: "E2BIG", message: "spawn codex E2BIG" }), "spawn codex E2BIG");
 });
 
 test("accumulateOutput caps the buffer at maxChars and reports truncation", () => {

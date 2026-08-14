@@ -11,6 +11,7 @@ import {
   applyEnvOverrides,
   escapeAppleScript,
   extractFirstJsonObject,
+  humanizeSpawnError,
   isPlausibleApiKey,
   isSafeAppIdentity,
   isSafeCuaLaunchArgs,
@@ -244,7 +245,11 @@ function runProcess(command, args, options = {}) {
       // A failed spawn never emits "close", so drop the tracking entry here.
       runningChildren.delete(child);
       cancelHardKill();
-      finish({ ok: false, code: -1, stdout, stderr: error.message });
+      // A missing binary (ENOENT) or a non-executable one (EACCES) is the
+      // most common first-run failure; turn it into an actionable message so
+      // the user (and the model relaying it) knows the command is not
+      // installed instead of guessing from "spawn codex ENOENT".
+      finish({ ok: false, code: -1, stdout, stderr: humanizeSpawnError(command, error) });
     });
   });
 }

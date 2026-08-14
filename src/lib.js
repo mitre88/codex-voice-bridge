@@ -200,6 +200,24 @@ export function redactSecrets(value) {
   return String(value).replace(/\bsk-[A-Za-z0-9_.-]+/g, "[REDACTED_OPENAI_KEY]");
 }
 
+// Turn a failed child-process spawn into a short, actionable message. A
+// missing binary surfaces as "spawn <command> ENOENT" (e.g. the user never
+// installed codex or cua-driver, or the binary is not on the app's PATH), and
+// an installed-but-not-executable binary as EACCES; a raw pass-through leaves
+// the user (and the model relaying the error) guessing whether the app, the
+// PATH, or the install is at fault. Anything else passes through as-is.
+export function humanizeSpawnError(command, error) {
+  const code = error?.code;
+  const message = error?.message || String(error);
+  if (code === "ENOENT") {
+    return `"${command}" was not found on PATH. Install it and make sure it is available to this app, then retry.`;
+  }
+  if (code === "EACCES") {
+    return `"${command}" is not executable. Check its permissions and retry.`;
+  }
+  return message;
+}
+
 // Append a chunk to a growing process-output buffer, capping the total length
 // so a runaway command cannot accumulate unbounded memory in the main process.
 // Returns { text, capped } where capped reports whether this chunk pushed the
