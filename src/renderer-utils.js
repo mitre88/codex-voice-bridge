@@ -90,7 +90,18 @@ export function humanizeError(error) {
   if (lower.includes("insufficient_quota") || lower.includes("exceeded your current quota")) {
     return "OpenAI rejected the Realtime call: insufficient_quota. Check billing, project limits, and that the key belongs to the funded organization.";
   }
-  if (lower.includes("rate_limit_exceeded") || lower.includes("rate limit")) {
+  // A bare "429" (opaque body, proxy, or a response whose text is not the
+  // usual JSON error) would otherwise pass through raw even though the
+  // status alone is a definitive rate-limit problem, mirroring the bare
+  // 401/403/404 branches above. The status must be exactly three digits
+  // (429\b) so a stray 4+ digit number in an unrelated message cannot
+  // false-positive.
+  if (
+    lower.includes("rate_limit_exceeded") ||
+    lower.includes("rate limit") ||
+    /(?:token|call) failed: 429\b/.test(lower) ||
+    /error code: 429\b/.test(lower)
+  ) {
     return "OpenAI rate limit reached (429). Wait a moment and retry, or check your plan's requests-per-minute (RPM) and tokens-per-minute (TPM) limits.";
   }
   // A bare "401 Unauthorized" (proxy, opaque body, or a response whose text is

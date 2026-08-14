@@ -308,6 +308,14 @@ test("humanizeError maps rate limit failures to an actionable message", () => {
   assert.match(humanizeError(new Error("Rate limit reached for model on requests per min (RPM)")), /rate limit reached \(429\)/i);
 });
 
+test("humanizeError maps bare 429 statuses to the rate limit message", () => {
+  assert.match(humanizeError(new Error("OpenAI Realtime token failed: 429")), /rate limit reached \(429\)/i);
+  assert.match(humanizeError(new Error("Realtime call failed: 429")), /rate limit reached \(429\)/i);
+  assert.match(humanizeError(new Error("Error code: 429")), /rate limit reached \(429\)/i);
+  // A 4-digit number must not false-positive on the 429 branch.
+  assert.equal(humanizeError(new Error("Error code: 4291")), "Error code: 4291");
+});
+
 test("humanizeError maps missing model failures to an actionable message", () => {
   assert.match(humanizeError(new Error("Error code: 404 - The model 'gpt-realtime-2' does not exist or you do not have access to it.")), /could not find the requested realtime model \(404\)/i);
   assert.match(humanizeError(new Error("model_not_found")), /could not find the requested realtime model \(404\)/i);
