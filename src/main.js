@@ -61,7 +61,12 @@ const DEFAULT_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2";
 const DEFAULT_TRANSLATE_MODEL = process.env.OPENAI_REALTIME_TRANSLATE_MODEL || "gpt-realtime-translate";
 const DEFAULT_TRANSCRIBE_MODEL = process.env.OPENAI_REALTIME_TRANSCRIBE_MODEL || "gpt-realtime-whisper";
 const DEFAULT_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
-const DEFAULT_REASONING_EFFORT = process.env.OPENAI_REALTIME_REASONING_EFFORT || "low";
+// Normalize the .env value at the source: a typo like "banana" would
+// otherwise surface in the UI select (no matching option) and reach the API
+// (forcing the reasoning-400 retry on every connect) instead of falling back
+// to a valid effort. normalizeReasoningEffort falls back to "low" for any
+// value outside minimal/low/medium/high/xhigh.
+const DEFAULT_REASONING_EFFORT = normalizeReasoningEffort(process.env.OPENAI_REALTIME_REASONING_EFFORT || "low");
 const DEFAULT_TARGET_LANGUAGE = process.env.OPENAI_REALTIME_TARGET_LANGUAGE || "es";
 // Fall back to the home directory when launched from Finder/Dock (cwd === "/").
 const processCwd = process.cwd();
