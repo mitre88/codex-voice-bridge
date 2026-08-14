@@ -107,6 +107,15 @@ test("normalizeCuaArgs fills bundle_id for launch_app from context", () => {
   assert.deepEqual(normalizeCuaArgs("other_tool", { a: 1 }), { a: 1 });
 });
 
+test("normalizeCuaArgs matches aliases on word boundaries, not substrings", () => {
+  // "keynotes" contains "notes" and "previewing" contains "preview": a raw
+  // substring match would launch the wrong app for these reasons.
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open the keynotes deck" }), {});
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "previewing the diff" }), {});
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "my notes are here" }), { bundle_id: "com.apple.Notes" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open google chrome" }), { bundle_id: "com.google.Chrome" });
+});
+
 test("normalizeCuaArgs does not guess an app when launch_app already carries a URL", () => {
   // An explicit URL means "open in the default browser"; a keyword in the
   // reason text must not silently redirect it to a guessed app.

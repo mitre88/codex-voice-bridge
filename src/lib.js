@@ -94,7 +94,11 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
   if (toolName === "launch_app" && !args.bundle_id && !args.name && !args.urls && !args.url) {
     const text = JSON.stringify({ args, fullInput }).toLowerCase();
     for (const [alias, bundleId] of aliases.entries()) {
-      if (text.includes(alias)) {
+      // Match the alias on word boundaries, not as a raw substring: "keynotes"
+      // contains "notes" and "previewing" contains "preview", so a substring
+      // check would launch the wrong app for "open the keynotes deck" or
+      // "previewing the diff". Only a standalone alias mention is a hint.
+      if (new RegExp(`(^|[^a-z0-9])${alias}($|[^a-z0-9])`).test(text)) {
         args.bundle_id = bundleId;
         break;
       }
