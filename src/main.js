@@ -648,12 +648,19 @@ async function typeTextInFrontApp(input = {}) {
   if (textError) return { ok: false, code: -5, stdout: "", stderr: textError };
   const textLengthError = requireMaxLength(input.text, "text");
   if (textLengthError) return { ok: false, code: -6, stdout: "", stderr: textLengthError };
-  // At 1ms/char (the typeDelayMs floor) a text longer than the 48s typing
-  // budget can never finish inside the 60s driver timeout — the byte cap above
-  // does not catch it (100k ASCII chars fit well under 200KB), so reject it
-  // cleanly up front and let the model split the text instead of waiting out a
-  // doomed run that fails with a timeout.
-  const typeableError = requireTypeableLength(input.text.length);
+  // The typing budget must track the configured driver timeout, not the 60s
+  // default: with a shorter CODEX_VOICE_CUA_TIMEOUT_MS, the hardcoded 48s
+  // budget would let a text through that cannot fit the actual timeout and
+  // fail with a driver timeout — the exact failure this guard exists to
+  // prevent. Keep ~80% of the timeout as typing budget, same headroom the
+  // previous hardcoded value reserved for driver startup and the app lookup.
+  const typingBudgetMs = Math.floor(CUA_TIMEOUT_MS * 0.8);
+  // At 1ms/char (the typeDelayMs floor) a text longer than the typing budget
+  // can never finish inside the driver timeout — the byte cap above does not
+  // catch it (100k ASCII chars fit well under 200KB), so reject it cleanly up
+  // front and let the model split the text instead of waiting out a doomed
+  // run that fails with a timeout.
+  const typeableError = requireTypeableLength(input.text.length, typingBudgetMs);
   if (typeableError) return { ok: false, code: -10, stdout: "", stderr: typeableError };
   const active = await getActiveAppFromCua();
   if (!active?.pid) return { ok: false, code: -1, stdout: "", stderr: "No active app pid found." };
@@ -661,7 +668,7 @@ async function typeTextInFrontApp(input = {}) {
   // the driver timeout instead of failing mid-way (see typeDelayMs).
   return runCuaDriver({
     tool_name: "type_text_chars",
-    json_args: { pid: active.pid, text: input.text, delay_ms: typeDelayMs(input.text.length) },
+    json_args: { pid: active.pid, text: input.text, delay_ms: typeDelayMs(input.text.length, 20, typingBudgetMs) },
   });
 }
 
