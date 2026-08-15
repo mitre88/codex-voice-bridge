@@ -6,7 +6,7 @@ import path from "node:path";
 // The sandboxed renderer (Chromium ESM loader) cannot import node: builtins,
 // so the helpers it needs live in renderer-utils.js (zero imports). Re-export
 // them here so the main process and tests keep a single import surface.
-export { hasVirtualAudioDevice, humanizeError, truncateOutput, VIRTUAL_AUDIO_LABEL } from "./renderer-utils.js";
+export { hasVirtualAudioDevice, humanizeError, isSdpAnswer, truncateOutput, VIRTUAL_AUDIO_LABEL } from "./renderer-utils.js";
 
 export const APP_BUNDLE_ALIASES = new Map([
   ["safari", "com.apple.Safari"],

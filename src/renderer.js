@@ -1,4 +1,4 @@
-import { hasVirtualAudioDevice, humanizeError, truncateOutput } from "./renderer-utils.js";
+import { hasVirtualAudioDevice, humanizeError, isSdpAnswer, truncateOutput } from "./renderer-utils.js";
 
 // How long the Realtime SDP exchange may take before we give up. The main
 // process already times out the token fetch; this bounds the second network
@@ -491,7 +491,15 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
       ].filter(Boolean)),
     });
     if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${await response.text()}`);
-    await pc.setRemoteDescription({ type: "answer", sdp: await response.text() });
+    const sdp = await response.text();
+    // A 2xx non-SDP body (a captive portal or proxy answering with an HTML or
+    // JSON page) would make setRemoteDescription fail with an opaque "not a
+    // valid SDP" error that humanizeError passes through raw; fail with an
+    // actionable message instead so the user can spot the interception.
+    if (!isSdpAnswer(sdp)) {
+      throw new Error(`${label}: the Realtime server returned an unexpected response (HTTP ${response.status}) instead of an SDP answer — a proxy or captive portal may be intercepting the connection.`);
+    }
+    await pc.setRemoteDescription({ type: "answer", sdp });
     // The user disconnected while the SDP exchange was in flight: refuse to
     // register the session — the catch below closes the peer connection and
     // stops the microphone so a "Disconnected" UI never leaves audio live.

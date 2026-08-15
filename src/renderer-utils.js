@@ -274,6 +274,17 @@ export function humanizeError(error) {
   return message;
 }
 
+// Every SDP document begins with the version line ("v=0"), so a body that
+// does not is definitively not an SDP answer. The Realtime SDP exchange
+// trusts response.ok alone; a proxy or captive portal answering the POST
+// with a 200 HTML/JSON page would otherwise flow straight into
+// pc.setRemoteDescription and fail with an opaque "not a valid SDP" error
+// that humanizeError passes through raw — leaving the user blaming the key
+// or the network instead of the interception.
+export function isSdpAnswer(value) {
+  return typeof value === "string" && value.trimStart().startsWith("v=");
+}
+
 export function truncateOutput(output, maxChars = 30000) {
   const out = { ...output };
   for (const key of ["stdout", "stderr"]) {

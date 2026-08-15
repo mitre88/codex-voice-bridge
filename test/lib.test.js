@@ -17,6 +17,7 @@ import {
   isSafeCuaLaunchArgs,
   isSafeCuaToolName,
   isSafeLaunchUrl,
+  isSdpAnswer,
   normalizeCuaArgs,
   normalizeReasoningEffort,
   normalizeTone,
@@ -533,6 +534,16 @@ test("truncateOutput truncates long stdout and preserves metadata", () => {
 test("truncateOutput leaves short output untouched", () => {
   const out = truncateOutput({ ok: true, stdout: "short", stderr: "" }, 50);
   assert.equal(out.stdout, "short");
+});
+
+test("isSdpAnswer accepts SDP answers and rejects non-SDP bodies", () => {
+  assert.equal(isSdpAnswer("v=0\r\n"), true);
+  assert.equal(isSdpAnswer("  v=0\r\no=- 1 1 IN IP4 0.0.0.0"), true);
+  assert.equal(isSdpAnswer("<!doctype html><html>captive portal</html>"), false);
+  assert.equal(isSdpAnswer('{"error":{"message":"boom"}}'), false);
+  assert.equal(isSdpAnswer(""), false);
+  assert.equal(isSdpAnswer(null), false);
+  assert.equal(isSdpAnswer(undefined), false);
 });
 
 test("humanizeSpawnError maps a missing binary to an actionable message", () => {
