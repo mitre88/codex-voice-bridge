@@ -69,3 +69,30 @@ test("runProcess stops streaming child output to the renderer once the run has s
     "settled must be declared before the stdout data handler",
   );
 });
+
+test("type/press tools surface the cua-driver failure instead of a generic no-active-app message", () => {
+  // When list_apps itself fails (cua-driver missing, driver crash), the
+  // type_text_in_front_app / press_key_in_front_app tools used to answer
+  // "No active app pid found." — hiding the real driver error (e.g. ENOENT)
+  // so the model could not self-correct. getActiveAppFromCua must carry the
+  // driver's stderr through and both callers must prefer it over the generic
+  // fallback when present.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("async function getActiveAppFromCua");
+  assert.ok(fnStart !== -1, "main.js must define getActiveAppFromCua");
+  const fnBody = main.slice(fnStart, main.indexOf("async function runCodex"));
+  assert.match(
+    fnBody,
+    /error: result\.stderr/,
+    "getActiveAppFromCua must return the driver stderr when list_apps fails",
+  );
+  const typeFn = main.slice(main.indexOf("async function typeTextInFrontApp"), main.indexOf("async function pressKeyInFrontApp"));
+  const pressFn = main.slice(main.indexOf("async function pressKeyInFrontApp"), main.indexOf("async function getActiveAppFromCua"));
+  for (const [label, fn] of [["typeTextInFrontApp", typeFn], ["pressKeyInFrontApp", pressFn]]) {
+    assert.match(
+      fn,
+      /stderr: active\?\.error \|\| "No active app pid found\."/,
+      `${label} must surface the driver error when getActiveAppFromCua provides one`,
+    );
+  }
+});

@@ -682,7 +682,9 @@ async function typeTextInFrontApp(input = {}) {
   const typeableError = requireTypeableLength(input.text.length, typingBudgetMs);
   if (typeableError) return { ok: false, code: -10, stdout: "", stderr: typeableError };
   const active = await getActiveAppFromCua();
-  if (!active?.pid) return { ok: false, code: -1, stdout: "", stderr: "No active app pid found." };
+  if (!active?.pid) {
+    return { ok: false, code: -1, stdout: "", stderr: active?.error || "No active app pid found." };
+  }
   // Scale the per-character delay to the text length so long texts fit inside
   // the driver timeout instead of failing mid-way (see typeDelayMs).
   return runCuaDriver({
@@ -697,7 +699,9 @@ async function pressKeyInFrontApp(input = {}) {
   const keyLengthError = requireMaxLength(input.key, "key", 100);
   if (keyLengthError) return { ok: false, code: -6, stdout: "", stderr: keyLengthError };
   const active = await getActiveAppFromCua();
-  if (!active?.pid) return { ok: false, code: -1, stdout: "", stderr: "No active app pid found." };
+  if (!active?.pid) {
+    return { ok: false, code: -1, stdout: "", stderr: active?.error || "No active app pid found." };
+  }
   // cua-driver expects an array of modifiers; anything else (a bare string
   // like "cmd") would be misparsed, so normalize defensively.
   const modifiers = Array.isArray(input.modifiers) ? input.modifiers : [];
@@ -706,7 +710,13 @@ async function pressKeyInFrontApp(input = {}) {
 
 async function getActiveAppFromCua() {
   const result = await runCuaDriver({ tool_name: "list_apps", json_args: {} });
-  if (!result.ok) return null;
+  if (!result.ok) {
+    // Surface the real driver failure (e.g. cua-driver not installed) instead
+    // of collapsing it into a misleading "no active app" message: the model
+    // can self-correct from "cua-driver was not found on PATH" but not from
+    // "No active app pid found."
+    return { pid: null, error: result.stderr || `cua-driver list_apps failed (code ${result.code}).` };
+  }
   // cua-driver may prefix its JSON payload with log lines; a strict parse of
   // the whole stdout would fail and make type/press tools report "No active
   // app" for a valid response.
