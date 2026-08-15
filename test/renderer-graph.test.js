@@ -41,6 +41,27 @@ test("renderer-utils.js has zero imports (loadable in a sandboxed renderer)", ()
   assert.ok(!utils.includes('from "node:'), 'renderer-utils.js must not reference "node:" specifiers');
 });
 
+test("renderer.js enables Disconnect at connect start so mid-connect cancel works", () => {
+  // A connect can take tens of seconds (token fetch + SDP exchange). The
+  // Disconnect button must be clickable while "Connecting" so the abort
+  // controller can cancel the in-flight connect; if it is only enabled after
+  // the session comes up, the user is stuck waiting out the full timeout.
+  const renderer = readSource("renderer.js");
+  const connectStart = renderer.indexOf("async function connectRealtime()");
+  assert.ok(connectStart !== -1, "renderer.js must define connectRealtime");
+  const connectBody = renderer.slice(connectStart, renderer.indexOf("async function disconnectRealtime()"));
+  assert.match(
+    connectBody,
+    /disconnectButton\.disabled = false/,
+    "connectRealtime must enable the Disconnect button before the connect begins",
+  );
+  assert.ok(
+    connectBody.indexOf("connectAbortController = new AbortController()") >
+      connectBody.indexOf("disconnectButton.disabled = false"),
+    "Disconnect must be enabled before the abort controller is created so the cancel path is reachable",
+  );
+});
+
 test("lib.js re-exports the renderer helpers for a single import surface", async () => {
   const lib = await import("../src/lib.js");
   assert.equal(typeof lib.humanizeError, "function");

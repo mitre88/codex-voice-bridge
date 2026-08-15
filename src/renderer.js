@@ -569,6 +569,12 @@ async function connectInterviewRealtime(options) {
 async function connectRealtime() {
   setStatus("Connecting");
   connectButton.disabled = true;
+  // Disconnect doubles as Cancel while a connect is in flight, so enable it
+  // before the (potentially slow) token + SDP exchange instead of only after
+  // the session is up: a Disconnect press mid-"Connecting" must be possible
+  // or the abort controller below is dead UI and the user is stuck waiting
+  // out the full timeout.
+  disconnectButton.disabled = false;
   // A fresh controller per connect: disconnectRealtime() aborts it so a
   // Disconnect press mid-"Connecting" cancels the in-flight SDP exchange
   // instead of letting the session come up afterwards.
