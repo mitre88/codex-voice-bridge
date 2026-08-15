@@ -323,7 +323,12 @@ async function executeAction(action) {
   // call resolves, so flushing here captures the complete run.
   flushCodexOutput();
   sendFunctionOutput(action.callId, result);
-  setStatus("Listening");
+  // The user may have disconnected while the local action ran (the child
+  // process keeps running in the main process, so the IPC call still
+  // resolves). Without this guard the status would flip back to "Listening"
+  // over a session that is already gone — the UI already shows "Idle" and
+  // the Disconnect button is disabled.
+  if (activeSessions.length > 0) setStatus("Listening");
   log("Local action finished.", result);
 }
 

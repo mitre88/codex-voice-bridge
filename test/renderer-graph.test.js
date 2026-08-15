@@ -120,6 +120,24 @@ test("connect passes the abort signal to getUserMedia so Disconnect cancels a pe
   );
 });
 
+test("executeAction does not flip the status to Listening after a disconnect", () => {
+  // A local action (e.g. a long Codex run) keeps running in the main process
+  // after the user presses Disconnect; when it finishes, executeAction used to
+  // setStatus("Listening") unconditionally, flipping the pill to "Listening"
+  // over a session that is already gone (mic stopped, sessions closed) while
+  // the Disconnect button stays disabled — the UI lied about the state. The
+  // status must only be restored while a session is still active.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("async function executeAction");
+  assert.ok(fnStart !== -1, "renderer.js must define executeAction");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("const KNOWN_TOOLS"));
+  assert.match(
+    fnBody,
+    /if \(activeSessions\.length > 0\) setStatus\("Listening"\)/,
+    "executeAction must only restore the Listening status while a session is still active",
+  );
+});
+
 test("lib.js re-exports the renderer helpers for a single import surface", async () => {
   const lib = await import("../src/lib.js");
   assert.equal(typeof lib.humanizeError, "function");
