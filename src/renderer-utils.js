@@ -143,7 +143,15 @@ export function humanizeError(error) {
     haystack.includes("err_timed_out") ||
     haystack.includes("err_tunnel_connection_failed") ||
     haystack.includes("err_address_unreachable") ||
-    haystack.includes("err_network_changed")
+    haystack.includes("err_network_changed") ||
+    // A configured-but-unreachable proxy (ERR_PROXY_CONNECTION_FAILED, e.g.
+    // the corporate proxy is down) and a server that closes the connection
+    // without sending data (ERR_EMPTY_RESPONSE, usually a firewall/proxy
+    // dropping the request) share the connectivity root cause; without these
+    // the raw net:: text passes through with no hint that the network is at
+    // fault — the exact failure the branch exists to explain.
+    haystack.includes("err_proxy_connection_failed") ||
+    haystack.includes("err_empty_response")
   ) {
     return "Could not reach the OpenAI API. Check your internet connection and firewall, then retry.";
   }

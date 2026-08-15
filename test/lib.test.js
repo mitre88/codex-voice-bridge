@@ -391,6 +391,16 @@ test("humanizeError maps Chromium net:: network codes to a connectivity message"
   assert.match(humanizeError(new Error("net::ERR_CERT_DATE_INVALID")), /tls certificate/i);
 });
 
+test("humanizeError maps proxy and empty-response net:: codes to a connectivity message", () => {
+  // A configured-but-unreachable proxy (corporate proxy down) and a server
+  // closing the connection without data (firewall/proxy dropping the request)
+  // are connectivity problems; the raw net:: text must not pass through.
+  assert.match(humanizeError(new Error("net::ERR_PROXY_CONNECTION_FAILED")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("Failed to load resource: net::ERR_EMPTY_RESPONSE")), /could not reach the openai api/i);
+  // Certificate codes still keep their own diagnosis, not the network one.
+  assert.match(humanizeError(new Error("net::ERR_CERT_AUTHORITY_INVALID")), /tls certificate/i);
+});
+
 test("humanizeError maps TLS certificate failures to a certificate message", () => {
   assert.match(humanizeError(new Error("unable to verify the first certificate")), /tls certificate/i);
   assert.match(humanizeError(new Error("self-signed certificate in certificate chain")), /tls certificate/i);
