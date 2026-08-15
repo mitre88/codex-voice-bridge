@@ -107,6 +107,18 @@ test("resolveAppIdentity maps common-app aliases to exact bundle ids", () => {
   assert.deepEqual(resolveAppIdentity({ app_name: "System Settings" }), { bundle_id: "com.apple.systempreferences" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Slack" }), { bundle_id: "com.tinyspeck.slackmacgap" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Spotify" }), { bundle_id: "com.spotify.client" });
+  // Browsers and office apps a voice user is likely to name, whose bundle ids
+  // differ from the display name or need a stable alias to resolve reliably.
+  assert.deepEqual(resolveAppIdentity({ app_name: "Arc" }), { bundle_id: "company.thebrowser.Browser" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Brave" }), { bundle_id: "com.brave.Browser" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Firefox" }), { bundle_id: "org.mozilla.firefox" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "VS Code" }), { bundle_id: "com.microsoft.VSCode" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "visual studio code" }), { bundle_id: "com.microsoft.VSCode" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Numbers" }), { bundle_id: "com.apple.iWork.Numbers" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Excel" }), { bundle_id: "com.microsoft.Excel" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "PowerPoint" }), { bundle_id: "com.microsoft.Powerpoint" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Word" }), { bundle_id: "com.microsoft.Word" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Zoom" }), { bundle_id: "us.zoom.xos" });
 });
 
 test("normalizeCuaArgs fills bundle_id for launch_app from context", () => {

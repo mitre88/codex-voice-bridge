@@ -25,11 +25,15 @@ export const APP_BUNDLE_ALIASES = new Map([
   // ...) whose display name differs from the process name or whose lookup by
   // name alone is unreliable. Resolving them to the exact bundle id makes
   // launch_app/open_app succeed where a name-based lookup could miss.
+  ["arc", "company.thebrowser.Browser"],
+  ["brave", "com.brave.Browser"],
   ["calculator", "com.apple.calculator"],
   ["calendar", "com.apple.iCal"],
   ["discord", "com.hnc.discord"],
+  ["excel", "com.microsoft.Excel"],
   ["facetime", "com.apple.facetime"],
   ["figma", "com.figma.Desktop"],
+  ["firefox", "org.mozilla.firefox"],
   ["iterm", "com.googlecode.iterm2"],
   ["iterm2", "com.googlecode.iterm2"],
   ["keynote", "com.apple.Keynote"],
@@ -37,14 +41,22 @@ export const APP_BUNDLE_ALIASES = new Map([
   ["messages", "com.apple.MobileSMS"],
   ["music", "com.apple.Music"],
   ["notion", "notion.id"],
+  ["numbers", "com.apple.iWork.Numbers"],
+  ["outlook", "com.microsoft.Outlook"],
   ["pages", "com.apple.Pages"],
   ["photos", "com.apple.Photos"],
+  ["powerpoint", "com.microsoft.Powerpoint"],
   ["reminders", "com.apple.reminders"],
   ["slack", "com.tinyspeck.slackmacgap"],
   ["spotify", "com.spotify.client"],
   ["system preferences", "com.apple.systempreferences"],
   ["system settings", "com.apple.systempreferences"],
   ["teams", "com.microsoft.teams"],
+  ["visual studio code", "com.microsoft.VSCode"],
+  ["vs code", "com.microsoft.VSCode"],
+  ["vscode", "com.microsoft.VSCode"],
+  ["word", "com.microsoft.Word"],
+  ["zoom", "us.zoom.xos"],
 ]);
 
 export function normalizeReasoningEffort(value, fallback = "low") {
