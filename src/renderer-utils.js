@@ -19,16 +19,25 @@ export function hasVirtualAudioDevice(devices = []) {
 export function humanizeError(error) {
   const name = error?.name;
   const message = error?.message || String(error);
+  const lower = message.toLowerCase();
   if (name === "NotAllowedError") {
     return "Microphone or screen access was denied. Allow microphone permission for Codex Voice Bridge in System Settings > Privacy & Security, then retry.";
   }
   if (name === "NotFoundError") {
     return "No audio input device was found. Check that a microphone is connected and enabled.";
   }
-  if (name === "TimeoutError" || name === "AbortError") {
+  if (
+    name === "TimeoutError" ||
+    name === "AbortError" ||
+    // The main process rethrows its fetch TimeoutError as a plain Error
+    // ("OpenAI request timed out after Ns: <url>"), so the DOMException name
+    // is lost by the time the error reaches the UI — without this the most
+    // common network-failure path (a hung token fetch) passes through as raw
+    // text instead of the friendly timeout message.
+    lower.includes("openai request timed out after")
+  ) {
     return "The request timed out. Check your network connection and try again.";
   }
-  const lower = message.toLowerCase();
   // undici (Node's fetch) buries the real reason in error.cause — e.g.
   // TypeError "fetch failed" with cause "unable to verify the first
   // certificate" — and syscall codes (ENOTFOUND, ECONNREFUSED, ...) may live
@@ -110,6 +119,16 @@ export function humanizeError(error) {
     // the message itself is only the generic "fetch failed" (a firewalled
     // host timing out, a network unreachable, an aborted connection).
     haystack.includes("etimedout") ||
+    // undici's own failure codes (UND_ERR_CONNECT_TIMEOUT,
+    // UND_ERR_HEADERS_TIMEOUT, UND_ERR_BODY_TIMEOUT, UND_ERR_SOCKET) surface
+    // on error.code / error.cause.code when a connection stalls before the
+    // AbortSignal.timeout fires (or the abort is not the first to trigger);
+    // the raw "Connect Timeout Error" / "Socket Error" text would otherwise
+    // pass through with no hint that the network is at fault.
+    haystack.includes("und_err_connect_timeout") ||
+    haystack.includes("und_err_headers_timeout") ||
+    haystack.includes("und_err_body_timeout") ||
+    haystack.includes("und_err_socket") ||
     haystack.includes("enetunreach") ||
     haystack.includes("ehostunreach") ||
     haystack.includes("econnaborted") ||

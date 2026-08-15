@@ -294,6 +294,17 @@ test("humanizeError maps common failure modes to actionable messages", () => {
   assert.match(humanizeError(new Error("exceeded your current quota")), /insufficient_quota/i);
 });
 
+test("humanizeError maps the main-process request timeout to the timeout message", () => {
+  // postOpenAIJson rethrows its AbortSignal.timeout TimeoutError as a plain
+  // Error ("OpenAI request timed out after 60s: <url>"), so the DOMException
+  // name is gone by the time the error reaches the UI; the message pattern is
+  // the only remaining signal and must still map to the friendly timeout text.
+  assert.match(
+    humanizeError(new Error("OpenAI request timed out after 60s: https://api.openai.com/v1/realtime/client_secrets")),
+    /request timed out/i,
+  );
+});
+
 test("humanizeError maps stale media device selections to an actionable message", () => {
   assert.match(
     humanizeError({ name: "OverconstrainedError", message: "Constraints could not be satisfied" }),
@@ -353,6 +364,29 @@ test("humanizeError maps Chromium net:: network codes to a connectivity message"
   assert.match(humanizeError(new Error("connect ENETUNREACH 10.0.0.1:443")), /could not reach the openai api/i);
   assert.match(humanizeError(new Error("connect EHOSTUNREACH 192.168.1.1:443")), /could not reach the openai api/i);
   assert.match(humanizeError(new Error("connect ECONNABORTED 104.18.32.8:443")), /could not reach the openai api/i);
+  // undici's own failure codes (UND_ERR_*), direct and hidden in error.cause
+  // of "fetch failed", must map to the connectivity message like the syscall
+  // codes do instead of passing through "Connect Timeout Error" / "Socket Error".
+  assert.match(
+    humanizeError(Object.assign(new Error("Connect Timeout Error"), { code: "UND_ERR_CONNECT_TIMEOUT" })),
+    /could not reach the openai api/i,
+  );
+  assert.match(
+    humanizeError(Object.assign(new Error("Headers Timeout Error"), { code: "UND_ERR_HEADERS_TIMEOUT" })),
+    /could not reach the openai api/i,
+  );
+  assert.match(
+    humanizeError(
+      Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("Body Timeout Error"), { code: "UND_ERR_BODY_TIMEOUT" }),
+      }),
+    ),
+    /could not reach the openai api/i,
+  );
+  assert.match(
+    humanizeError(Object.assign(new Error("Socket Error"), { code: "UND_ERR_SOCKET" })),
+    /could not reach the openai api/i,
+  );
   // The shared "err_" prefix must not drag certificate codes into this branch.
   assert.match(humanizeError(new Error("net::ERR_CERT_DATE_INVALID")), /tls certificate/i);
 });
