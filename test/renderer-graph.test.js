@@ -161,6 +161,18 @@ test("mac actions dispatch on the declared tool name, never on a model-supplied 
   );
 });
 
+test("the config line displays the Codex workdir", () => {
+  // app:config returns workdir (CODEX_VOICE_WORKDIR or the launch cwd — the
+  // directory Codex operates on), but the config line used to render only
+  // version/models/shortcut, silently dropping it: the user could not verify
+  // which directory a voice coding-agent request would touch without opening
+  // the debug log. The config line template must include config.workdir.
+  const renderer = readSource("renderer.js");
+  const assign = renderer.match(/baseConfigText = `([^`]*)`/);
+  assert.ok(assign, "renderer.js must build baseConfigText from a template literal");
+  assert.match(assign[1], /config\.workdir/, "the config line template must include config.workdir");
+});
+
 test("lib.js re-exports the renderer helpers for a single import surface", async () => {
   const lib = await import("../src/lib.js");
   assert.equal(typeof lib.humanizeError, "function");

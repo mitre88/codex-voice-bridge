@@ -775,7 +775,12 @@ try {
     if (config.targetLanguage) targetLanguageInput.value = config.targetLanguage;
     if (config.actionTimeoutMs) actionTimeoutMs = config.actionTimeoutMs;
     if (config.openaiTimeoutMs) openaiCallTimeoutMs = config.openaiTimeoutMs;
-    baseConfigText = `v${config.version || "?"} / ${config.model} / ${config.translateModel} / ${config.transcribeModel} / ${(config.shortcut || "CommandOrControl+Shift+Space").replace(/CommandOrControl/g, "Cmd")}`;
+    // The config line also shows the workdir: app:config already sends it
+    // (CODEX_VOICE_WORKDIR or the launch cwd) but it used to be dropped on
+    // the floor, leaving the user unable to verify which directory Codex
+    // operates on without opening the debug log. The main process always
+    // resolves a workdir (path.resolve), so the value is never empty.
+    baseConfigText = `v${config.version || "?"} / ${config.model} / ${config.translateModel} / ${config.transcribeModel} / ${(config.shortcut || "CommandOrControl+Shift+Space").replace(/CommandOrControl/g, "Cmd")} / ${config.workdir}`;
     configEl.textContent = baseConfigText;
     updateModeControls();
   });
