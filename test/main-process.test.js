@@ -20,6 +20,35 @@ function readSource(name) {
   return readFileSync(new URL(name, SRC), "utf8");
 }
 
+test("openAppVisible reports the cua-driver launch result to the model, not just activation", () => {
+  // openAppVisible combines two independent steps (cua-driver launch_app +
+  // osascript activate) into one ok flag, but its stdout used to report only
+  // the activation: a launch that failed (app not installed, cua-driver
+  // missing) while activation still succeeded — or vice versa — left the model
+  // with no hint which step failed, and hid the driver's own launch output
+  // (e.g. the resolved pid). The stdout must carry both outcomes plus the
+  // launch output so the model can self-correct from the specific failure.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("async function openAppVisible");
+  assert.ok(fnStart !== -1, "main.js must define openAppVisible");
+  const fnBody = main.slice(fnStart, main.indexOf("async function typeTextInFrontApp"));
+  assert.match(
+    fnBody,
+    /launched: cuaResult\.ok/,
+    "openAppVisible stdout must report whether the cua-driver launch succeeded",
+  );
+  assert.match(
+    fnBody,
+    /activated: activateResult\.ok/,
+    "openAppVisible stdout must keep reporting the activation result",
+  );
+  assert.match(
+    fnBody,
+    /launchOutput: cuaResult\.stdout/,
+    "openAppVisible stdout must include the driver's own launch output",
+  );
+});
+
 test("runProcess stops streaming child output to the renderer once the run has settled", () => {
   const main = readSource("main.js");
   const fnStart = main.indexOf("function runProcess");

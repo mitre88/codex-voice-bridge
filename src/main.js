@@ -647,7 +647,17 @@ async function openAppVisible(input = {}) {
   return {
     ok: cuaResult.ok && activateResult.ok,
     code: cuaResult.ok && activateResult.ok ? 0 : 1,
-    stdout: JSON.stringify({ app: resolved, activated: activateResult.ok }),
+    // The launch (cua-driver) and the activation (osascript) are independent
+    // steps, and the aggregate ok flag does not say which one failed — or
+    // whether the launch even happened. Report both outcomes (plus the
+    // driver's own launch output, e.g. the resolved pid) so the model can
+    // self-correct from the specific failure instead of guessing.
+    stdout: JSON.stringify({
+      app: resolved,
+      launched: cuaResult.ok,
+      activated: activateResult.ok,
+      launchOutput: cuaResult.stdout,
+    }),
     stderr: [cuaResult.stderr, activateResult.stderr].filter(Boolean).join("\n"),
   };
 }
