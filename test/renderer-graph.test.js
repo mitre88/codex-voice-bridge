@@ -138,6 +138,29 @@ test("executeAction does not flip the status to Listening after a disconnect", (
   );
 });
 
+test("mac actions dispatch on the declared tool name, never on a model-supplied args.action", () => {
+  // runMacAction switches on input.action, so the action field must be pinned
+  // to the declared tool name. A model-supplied "action" key inside the args
+  // would otherwise override it (spread-after-shadowing): a call declared as
+  // open_app with a hallucinated args.action could silently execute a
+  // different mac action than the one the model declared — and the one the
+  // human approves in the pending panel. The declared name must always win.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("async function handleToolEvent");
+  assert.ok(fnStart !== -1, "renderer.js must define handleToolEvent");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("function deviceConstraint"));
+  assert.match(
+    fnBody,
+    /\{ \.\.\.args, action: functionCall\.name \}/,
+    "the mac-action args must spread the model args BEFORE pinning action to the declared tool name",
+  );
+  assert.doesNotMatch(
+    fnBody,
+    /\{ action: functionCall\.name, \.\.\.args \}/,
+    "action must not be set before the spread: a model-supplied args.action would override the declared tool name",
+  );
+});
+
 test("lib.js re-exports the renderer helpers for a single import surface", async () => {
   const lib = await import("../src/lib.js");
   assert.equal(typeof lib.humanizeError, "function");

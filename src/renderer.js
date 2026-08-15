@@ -369,10 +369,16 @@ async function handleToolEvent(event) {
     return;
   }
   const isMacAction = ["open_app", "type_text_in_front_app", "press_key_in_front_app"].includes(functionCall.name);
+  // The declared tool name is the source of truth for dispatch: runMacAction
+  // switches on input.action, so a model-supplied "action" key inside the
+  // args must never override it. The spread comes FIRST so the declared name
+  // always wins — otherwise a call declared as open_app with a hallucinated
+  // args.action could silently execute a different mac action than the one
+  // the model declared (and the human approved in the pending panel).
   const action = {
     kind: functionCall.name === "run_codex" ? "codex" : functionCall.name === "run_cua_driver" ? "cua" : "mac",
     callId: functionCall.callId,
-    args: isMacAction ? { action: functionCall.name, ...args } : args,
+    args: isMacAction ? { ...args, action: functionCall.name } : args,
   };
   setPendingAction(action);
   if (autoRunInput.checked) executeAction(action);
