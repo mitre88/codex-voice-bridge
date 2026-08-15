@@ -228,14 +228,18 @@ function runProcess(command, args, options = {}) {
       const result = accumulateOutput(stdout, text, MAX_PROCESS_OUTPUT_CHARS);
       stdout = result.text;
       stdoutCapped = stdoutCapped || result.capped;
-      options.onOutput?.(text);
+      // Only stream while the run is still live: once the timeout has settled
+      // the promise, the child may keep emitting until the group is killed
+      // (up to 3s later), and forwarding those late chunks would make the
+      // renderer flush a dead run's tail into the next run's debug log.
+      if (!settled) options.onOutput?.(text);
     });
     child.stderr.on("data", (chunk) => {
       const text = stderrDecoder.write(chunk);
       const result = accumulateOutput(stderr, text, MAX_PROCESS_OUTPUT_CHARS);
       stderr = result.text;
       stderrCapped = stderrCapped || result.capped;
-      options.onOutput?.(text);
+      if (!settled) options.onOutput?.(text);
     });
     child.on("close", (code) => {
       runningChildren.delete(child);
