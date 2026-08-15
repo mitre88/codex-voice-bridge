@@ -62,6 +62,29 @@ test("renderer.js enables Disconnect at connect start so mid-connect cancel work
   );
 });
 
+test("connect failures surface the humanized error in the status, not just the debug log", () => {
+  // A failed connect (bad key, no network, quota, ...) used to leave the
+  // status pill at a bare "Error" while the actionable humanized message went
+  // only to the collapsible debug log — the user had to know to expand it to
+  // learn why the connect failed. The status must carry the message itself,
+  // with an explicit "error" state so the error styling (dimmed orb) still
+  // applies to the longer text.
+  const renderer = readSource("renderer.js");
+  const connectStart = renderer.indexOf("async function connectRealtime()");
+  assert.ok(connectStart !== -1, "renderer.js must define connectRealtime");
+  const connectBody = renderer.slice(connectStart, renderer.indexOf("async function disconnectRealtime()"));
+  assert.match(
+    connectBody,
+    /setStatus\(`Error: \$\{message\}`, "error"\)/,
+    "connectRealtime must show the humanized error in the status pill with the error state",
+  );
+  assert.ok(
+    connectBody.indexOf("const message = humanizeError(error)") <
+      connectBody.indexOf("setStatus(`Error: ${message}`"),
+    "the status must use the humanized error message, not the raw error",
+  );
+});
+
 test("lib.js re-exports the renderer helpers for a single import surface", async () => {
   const lib = await import("../src/lib.js");
   assert.equal(typeof lib.humanizeError, "function");

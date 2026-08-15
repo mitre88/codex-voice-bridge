@@ -118,9 +118,9 @@ window.addEventListener("unhandledrejection", (event) => {
   tryBridge()?.log("window.unhandledrejection", { reason: String(event.reason), stack: event.reason?.stack });
 });
 
-function setStatus(text) {
+function setStatus(text, state) {
   statusEl.textContent = text;
-  document.body.dataset.state = text.toLowerCase().replace(/\s+/g, "-");
+  document.body.dataset.state = state || text.toLowerCase().replace(/\s+/g, "-");
 }
 
 function log(message, data) {
@@ -603,8 +603,13 @@ async function connectRealtime() {
       return;
     }
     disconnectRealtime({ silent: true });
-    log(humanizeError(error));
-    setStatus("Error");
+    // The humanized message is the actionable one ("check your key", "check
+    // your network", ...); burying it only in the collapsible debug log left
+    // the user staring at a bare "Error" pill. Surface it in the status
+    // itself, keeping the "error" state so the orb styling still applies.
+    const message = humanizeError(error);
+    log(message);
+    setStatus(`Error: ${message}`, "error");
     connectButton.disabled = false;
   }
 }
