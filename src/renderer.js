@@ -413,6 +413,10 @@ async function getInterviewAudioStream(options) {
         noiseSuppression: false,
         autoGainControl: false,
       }),
+      // Same cancel semantics as the assistant path: a Disconnect pressed
+      // while this prompt is pending aborts it instead of leaving the OS
+      // dialog up after the UI already went Idle.
+      signal: connectAbortController?.signal,
     });
   }
   const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
@@ -527,7 +531,23 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
 async function connectSingleRealtime(options) {
   // Respect the microphone selected in the UI (it was previously ignored
   // outside interview mode, silently falling back to the system default).
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: deviceConstraint(options.myMicDeviceId) });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: deviceConstraint(options.myMicDeviceId),
+    // A Disconnect press mid-connect must also cancel a still-pending
+    // microphone permission prompt, not just the SDP fetch: without the
+    // signal, getUserMedia keeps waiting on the OS prompt after the UI
+    // already went Idle, and the grant then starts a pointless token fetch
+    // and peer connection for a session the user cancelled.
+    signal: connectAbortController?.signal,
+  });
+  // The abort can also win the race between getUserMedia resolving and this
+  // check (the prompt was answered just as Disconnect was pressed); refuse
+  // to start the SDP exchange so the mic is stopped here instead of staying
+  // hot through a wasted token fetch and offer.
+  if (connectAbortController?.signal.aborted) {
+    stopMediaStream(stream);
+    throw new Error("Connection cancelled by disconnect.");
+  }
   await connectPeerSession({
     label: "Assistant",
     tokenOptions: options,
@@ -547,9 +567,24 @@ function stopMediaStream(stream) {
 
 async function connectInterviewRealtime(options) {
   const interviewerStream = await getInterviewAudioStream(options);
+  // A Disconnect pressed while the meeting-audio picker was open (or while
+  // the device-mode mic prompt was pending) must not start the SDP exchange:
+  // stop the captured stream and bail so the UI stays Idle. (The abort
+  // signal above already cancels the device-mode prompt itself; this check
+  // covers the system screen-picker path, which cannot be aborted.)
+  if (connectAbortController?.signal.aborted) {
+    stopMediaStream(interviewerStream);
+    throw new Error("Connection cancelled by disconnect.");
+  }
   let myMicStream;
   try {
-    myMicStream = await navigator.mediaDevices.getUserMedia({ audio: deviceConstraint(options.myMicDeviceId) });
+    myMicStream = await navigator.mediaDevices.getUserMedia({
+      audio: deviceConstraint(options.myMicDeviceId),
+      signal: connectAbortController?.signal,
+    });
+    // Same race as connectSingleRealtime: the prompt was answered just as
+    // Disconnect was pressed. The catch below stops both streams.
+    if (connectAbortController?.signal.aborted) throw new Error("Connection cancelled by disconnect.");
     await connectPeerSession({
       label: "Interview to Spanish",
       tokenOptions: { mode: "translate", targetLanguage: "es" },

@@ -85,6 +85,41 @@ test("connect failures surface the humanized error in the status, not just the d
   );
 });
 
+test("connect passes the abort signal to getUserMedia so Disconnect cancels a pending permission prompt", () => {
+  // Disconnect mid-"Connecting" aborts the SDP fetch, but a connect stuck on
+  // the microphone permission prompt would otherwise keep waiting on the OS
+  // dialog after the UI went Idle; granting it would then start a pointless
+  // token fetch + peer connection for a session the user cancelled. getUserMedia
+  // must receive the connect abort signal, and each stream acquisition must
+  // re-check the signal so a cancelled connect stops the mic immediately.
+  const renderer = readSource("renderer.js");
+  const singleStart = renderer.indexOf("async function connectSingleRealtime");
+  assert.ok(singleStart !== -1, "renderer.js must define connectSingleRealtime");
+  const singleBody = renderer.slice(singleStart, renderer.indexOf("async function connectInterviewRealtime"));
+  assert.match(
+    singleBody,
+    /signal: connectAbortController\?\.signal/,
+    "connectSingleRealtime must pass the connect abort signal to getUserMedia",
+  );
+  assert.match(
+    singleBody,
+    /connectAbortController\?\.signal\.aborted/,
+    "connectSingleRealtime must re-check the abort signal after acquiring the mic stream",
+  );
+  const interviewStart = renderer.indexOf("async function connectInterviewRealtime");
+  assert.ok(interviewStart !== -1, "renderer.js must define connectInterviewRealtime");
+  const interviewBody = renderer.slice(interviewStart, renderer.indexOf("async function connectRealtime"));
+  assert.match(
+    interviewBody,
+    /signal: connectAbortController\?\.signal/,
+    "connectInterviewRealtime must pass the connect abort signal to getUserMedia",
+  );
+  assert.ok(
+    (interviewBody.match(/connectAbortController\?\.signal\.aborted/g) || []).length >= 2,
+    "connectInterviewRealtime must re-check the abort signal after each stream acquisition",
+  );
+});
+
 test("lib.js re-exports the renderer helpers for a single import surface", async () => {
   const lib = await import("../src/lib.js");
   assert.equal(typeof lib.humanizeError, "function");
