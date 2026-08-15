@@ -66,6 +66,11 @@ let pendingAction;
 let pendingActionTimer;
 let actionTimeoutMs = 120000;
 let actionDataChannel;
+// Aborted by disconnectRealtime() while a connect is still in flight so a
+// Disconnect press mid-"Connecting" tears down the pending session instead of
+// letting it come up afterwards with a live microphone. Recreated on each
+// connect; aborting a finished connect's controller is a harmless no-op.
+let connectAbortController;
 let hasStoredKey = false;
 let sourceCaption = "";
 let outputCaption = "";
@@ -477,10 +482,22 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
       },
       // Never let a hung network call leave the Connect flow pending forever;
       // humanizeError turns the resulting TimeoutError into a clear message.
-      signal: AbortSignal.timeout(openaiCallTimeoutMs),
+      // The connect controller aborts this fetch when the user presses
+      // Disconnect while "Connecting" is still in flight, so the session below
+      // is never pushed with a live microphone after the UI already went Idle.
+      signal: AbortSignal.any([
+        AbortSignal.timeout(openaiCallTimeoutMs),
+        connectAbortController?.signal,
+      ].filter(Boolean)),
     });
     if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${await response.text()}`);
     await pc.setRemoteDescription({ type: "answer", sdp: await response.text() });
+    // The user disconnected while the SDP exchange was in flight: refuse to
+    // register the session — the catch below closes the peer connection and
+    // stops the microphone so a "Disconnected" UI never leaves audio live.
+    if (connectAbortController?.signal.aborted) {
+      throw new Error(`${label}: connection cancelled by disconnect.`);
+    }
     activeSessions.push({ label, pc, dc, stream: inputStream, audio });
   } catch (error) {
     // Never leak the peer connection or leave the microphone hot after a failed connect.
@@ -552,6 +569,10 @@ async function connectInterviewRealtime(options) {
 async function connectRealtime() {
   setStatus("Connecting");
   connectButton.disabled = true;
+  // A fresh controller per connect: disconnectRealtime() aborts it so a
+  // Disconnect press mid-"Connecting" cancels the in-flight SDP exchange
+  // instead of letting the session come up afterwards.
+  connectAbortController = new AbortController();
   handledToolCalls.clear();
   resetCaptions();
   try {
@@ -567,6 +588,14 @@ async function connectRealtime() {
     setStatus("Listening");
     disconnectButton.disabled = false;
   } catch (error) {
+    // The user pressed Disconnect while this connect was still in flight:
+    // disconnectRealtime() already tore down the UI, so surface the quiet
+    // Idle state instead of flipping to Error over an intentional cancel.
+    if (connectAbortController?.signal.aborted) {
+      setStatus("Idle");
+      connectButton.disabled = false;
+      return;
+    }
     disconnectRealtime({ silent: true });
     log(humanizeError(error));
     setStatus("Error");
@@ -575,6 +604,10 @@ async function connectRealtime() {
 }
 
 function disconnectRealtime(options = {}) {
+  // Cancel any connect still in flight: the pending SDP fetch aborts and the
+  // aborted session is never pushed (see connectPeerSession), so a Disconnect
+  // press mid-"Connecting" cannot leave a live microphone behind.
+  connectAbortController?.abort();
   activeSessions.splice(0).forEach((session) => {
     session.stream?.getTracks().forEach((track) => track.stop());
     session.dc?.close();
