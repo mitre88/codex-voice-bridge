@@ -814,4 +814,9 @@ ipcMain.handle("app:config", guard(() => ({
   workdir: DEFAULT_WORKDIR,
   shortcut: SHORTCUT,
   actionTimeoutMs: ACTION_TIMEOUT_MS,
+  // The renderer's SDP exchange is the second OpenAI HTTP hop of a connect
+  // (token fetch here, then the offer/answer call there); expose the same
+  // configured timeout so CODEX_VOICE_OPENAI_TIMEOUT_MS governs both instead
+  // of the renderer falling back to a hardcoded 60s.
+  openaiTimeoutMs: OPENAI_REQUEST_TIMEOUT_MS,
 })));

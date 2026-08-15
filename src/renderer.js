@@ -3,7 +3,10 @@ import { hasVirtualAudioDevice, humanizeError, truncateOutput } from "./renderer
 // How long the Realtime SDP exchange may take before we give up. The main
 // process already times out the token fetch; this bounds the second network
 // hop so a hung connection cannot leave the UI stuck on "Connecting" forever.
-const OPENAI_CALL_TIMEOUT_MS = 60000;
+// Defaults to 60s, then follows the main process's configured
+// CODEX_VOICE_OPENAI_TIMEOUT_MS (delivered via app:config) so that env var
+// governs every OpenAI HTTP hop, not just the token fetch.
+let openaiCallTimeoutMs = 60000;
 
 const INTERVIEW_SETUP_TEXT =
   "Route English to BlackHole/Loopback, then select that device as the meeting microphone.";
@@ -474,7 +477,7 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
       },
       // Never let a hung network call leave the Connect flow pending forever;
       // humanizeError turns the resulting TimeoutError into a clear message.
-      signal: AbortSignal.timeout(OPENAI_CALL_TIMEOUT_MS),
+      signal: AbortSignal.timeout(openaiCallTimeoutMs),
     });
     if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${await response.text()}`);
     await pc.setRemoteDescription({ type: "answer", sdp: await response.text() });
@@ -668,6 +671,7 @@ try {
     if (config.reasoningEffort) reasoningInput.value = config.reasoningEffort;
     if (config.targetLanguage) targetLanguageInput.value = config.targetLanguage;
     if (config.actionTimeoutMs) actionTimeoutMs = config.actionTimeoutMs;
+    if (config.openaiTimeoutMs) openaiCallTimeoutMs = config.openaiTimeoutMs;
     baseConfigText = `v${config.version || "?"} / ${config.model} / ${config.translateModel} / ${config.transcribeModel} / ${(config.shortcut || "CommandOrControl+Shift+Space").replace(/CommandOrControl/g, "Cmd")}`;
     configEl.textContent = baseConfigText;
     updateModeControls();
