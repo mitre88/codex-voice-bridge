@@ -21,6 +21,30 @@ export const APP_BUNDLE_ALIASES = new Map([
   ["notes", "com.apple.Notes"],
   ["textedit", "com.apple.TextEdit"],
   ["preview", "com.apple.Preview"],
+  // Common apps a voice user is likely to name (Mail, Calendar, Messages,
+  // ...) whose display name differs from the process name or whose lookup by
+  // name alone is unreliable. Resolving them to the exact bundle id makes
+  // launch_app/open_app succeed where a name-based lookup could miss.
+  ["calculator", "com.apple.calculator"],
+  ["calendar", "com.apple.iCal"],
+  ["discord", "com.hnc.discord"],
+  ["facetime", "com.apple.facetime"],
+  ["figma", "com.figma.Desktop"],
+  ["iterm", "com.googlecode.iterm2"],
+  ["iterm2", "com.googlecode.iterm2"],
+  ["keynote", "com.apple.Keynote"],
+  ["mail", "com.apple.mail"],
+  ["messages", "com.apple.MobileSMS"],
+  ["music", "com.apple.Music"],
+  ["notion", "notion.id"],
+  ["pages", "com.apple.Pages"],
+  ["photos", "com.apple.Photos"],
+  ["reminders", "com.apple.reminders"],
+  ["slack", "com.tinyspeck.slackmacgap"],
+  ["spotify", "com.spotify.client"],
+  ["system preferences", "com.apple.systempreferences"],
+  ["system settings", "com.apple.systempreferences"],
+  ["teams", "com.microsoft.teams"],
 ]);
 
 export function normalizeReasoningEffort(value, fallback = "low") {

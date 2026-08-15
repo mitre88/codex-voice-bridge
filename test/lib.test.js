@@ -100,6 +100,15 @@ test("resolveAppIdentity maps aliases and falls back to name", () => {
   assert.deepEqual(resolveAppIdentity({}), {});
 });
 
+test("resolveAppIdentity maps common-app aliases to exact bundle ids", () => {
+  assert.deepEqual(resolveAppIdentity({ app_name: "Mail" }), { bundle_id: "com.apple.mail" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Calendar" }), { bundle_id: "com.apple.iCal" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Messages" }), { bundle_id: "com.apple.MobileSMS" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "System Settings" }), { bundle_id: "com.apple.systempreferences" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Slack" }), { bundle_id: "com.tinyspeck.slackmacgap" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Spotify" }), { bundle_id: "com.spotify.client" });
+});
+
 test("normalizeCuaArgs fills bundle_id for launch_app from context", () => {
   assert.deepEqual(
     normalizeCuaArgs("launch_app", {}, { tool_name: "launch_app", json_args: {}, reason: "open safari" }),
@@ -116,6 +125,17 @@ test("normalizeCuaArgs matches aliases on word boundaries, not substrings", () =
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "previewing the diff" }), {});
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "my notes are here" }), { bundle_id: "com.apple.Notes" });
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open google chrome" }), { bundle_id: "com.google.Chrome" });
+});
+
+test("normalizeCuaArgs resolves common-app aliases without substring false positives", () => {
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open mail" }), { bundle_id: "com.apple.mail" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open the calendar" }), { bundle_id: "com.apple.iCal" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open keynote" }), { bundle_id: "com.apple.Keynote" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open iterm2" }), { bundle_id: "com.googlecode.iterm2" });
+  // "keynotes" (plural) is a different word than the "keynote" alias, so it
+  // must not resolve; "email" contains "mail" but not as a standalone word.
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open the keynotes deck" }), {});
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "check the email" }), {});
 });
 
 test("normalizeCuaArgs does not guess an app when launch_app already carries a URL", () => {
