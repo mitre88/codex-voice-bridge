@@ -127,3 +127,28 @@ test("lib.js re-exports the renderer helpers for a single import surface", async
   assert.equal(typeof lib.hasVirtualAudioDevice, "function");
   assert.ok(lib.VIRTUAL_AUDIO_LABEL instanceof RegExp);
 });
+
+test("sendFunctionOutput drops the pending send on timeout instead of sending it late", () => {
+  // A function output deferred to a not-yet-open data channel used to keep its
+  // once-listener alive after the 5s drop timeout: when the channel finally
+  // opened, the "dropped" output was sent anyway — contradicting the log and
+  // leaking a stale function_call_output (old callId from a dead session) into
+  // whatever channel was open by then. The timeout must remove the listener so
+  // a dropped output stays dropped, and the deferred send must target the
+  // captured channel rather than the global (which may belong to a new
+  // session after a reconnect).
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("function sendFunctionOutput");
+  assert.ok(fnStart !== -1, "renderer.js must define sendFunctionOutput");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf('connectButton.addEventListener("click", connectRealtime)'));
+  assert.match(
+    fnBody,
+    /channel\.removeEventListener\("open", onOpen\)/,
+    "the drop timeout must remove the pending open listener so the output cannot be sent late",
+  );
+  assert.match(
+    fnBody,
+    /send\(channel\)/,
+    "the deferred send must target the captured channel, not the global, so a stale output cannot leak into a later session",
+  );
+});

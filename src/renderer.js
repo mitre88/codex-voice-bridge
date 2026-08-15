@@ -690,23 +690,25 @@ function sendFunctionOutput(callId, output) {
     }),
     JSON.stringify({ type: "response.create" }),
   ];
-  const send = () => {
-    // The channel can close between the readyState check and send() (e.g. the
-    // user disconnected while a long Codex run was finishing); send() on a
-    // closing/closed channel throws InvalidStateError, so guard both the state
-    // and the call itself.
-    if (!actionDataChannel || actionDataChannel.readyState !== "open") {
+  // The channel can close between the readyState check and send() (e.g. the
+  // user disconnected while a long Codex run was finishing); send() on a
+  // closing/closed channel throws InvalidStateError, so guard both the state
+  // and the call itself. The channel is passed in rather than read from the
+  // global so a stale output can never leak into a later session's channel
+  // after a disconnect+reconnect.
+  const send = (channel) => {
+    if (!channel || channel.readyState !== "open") {
       log("Data channel closed before the function output could be sent.");
       return;
     }
     try {
-      messages.forEach((message) => actionDataChannel.send(message));
+      messages.forEach((message) => channel.send(message));
     } catch (error) {
       log("Function output could not be sent; data channel closed.", String(error));
     }
   };
   if (actionDataChannel && actionDataChannel.readyState === "open") {
-    send();
+    send(actionDataChannel);
     return;
   }
   // Dropping the output here would leave the Realtime session waiting forever
@@ -717,17 +719,20 @@ function sendFunctionOutput(callId, output) {
     return;
   }
   const channel = actionDataChannel;
-  const timeout = setTimeout(() => {
+  let dropTimer;
+  const onOpen = () => {
+    clearTimeout(dropTimer);
+    send(channel);
+  };
+  dropTimer = setTimeout(() => {
+    // Cancel the pending send: without the removal, the once-listener would
+    // still fire when the channel finally opens and send the output anyway —
+    // contradicting this log and leaking a stale function_call_output (with a
+    // callId from a dead session) into whatever channel is open by then.
+    channel.removeEventListener("open", onOpen);
     log("Data channel did not open in time; function output dropped.");
   }, 5000);
-  channel.addEventListener(
-    "open",
-    () => {
-      clearTimeout(timeout);
-      send();
-    },
-    { once: true },
-  );
+  channel.addEventListener("open", onOpen, { once: true });
 }
 
 connectButton.addEventListener("click", connectRealtime);
