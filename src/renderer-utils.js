@@ -45,6 +45,19 @@ export function humanizeError(error) {
   if (name === "OverconstrainedError" || haystack.includes("constraints could not be satisfied")) {
     return "The selected microphone or audio device is no longer available. Check that it is still connected, then reconnect or refresh the device list and try again.";
   }
+  // A device that exists but cannot be opened rejects getUserMedia with
+  // NotReadableError — almost always exclusive access: a video call, a
+  // recorder, or another Codex Voice Bridge window holding the microphone
+  // (macOS hands the mic to one app at a time). The raw Chromium message
+  // ("Could not start audio source") leaves the user guessing whether the
+  // mic or another app is at fault.
+  if (
+    name === "NotReadableError" ||
+    name === "TrackStartError" ||
+    haystack.includes("could not start audio source")
+  ) {
+    return "The microphone could not be started: it is in use by another app (a video call, a recorder, or another Codex Voice Bridge window) or is otherwise unavailable. Close the app using it or pick a different microphone, then retry.";
+  }
   // TLS/certificate verification failures (corporate proxy/VPN interception,
   // expired certificate, wrong system clock) surface as raw OpenSSL strings or
   // as the cause of an undici "fetch failed"; without this branch users see

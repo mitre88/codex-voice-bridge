@@ -302,6 +302,19 @@ test("humanizeError maps stale media device selections to an actionable message"
   assert.match(humanizeError(new Error("Constraints could not be satisfied")), /no longer available/i);
 });
 
+test("humanizeError maps a busy/unavailable microphone to an actionable message", () => {
+  // getUserMedia rejects with NotReadableError when the mic exists but is
+  // held by another app (video call, recorder, another bridge instance); the
+  // raw Chromium text would otherwise pass through as "Could not start audio
+  // source" with no hint about the cause.
+  assert.match(
+    humanizeError({ name: "NotReadableError", message: "Could not start audio source" }),
+    /in use by another app/i,
+  );
+  assert.match(humanizeError({ name: "TrackStartError", message: "Could not start audio source" }), /in use by another app/i);
+  assert.match(humanizeError(new Error("Could not start audio source")), /in use by another app/i);
+});
+
 test("humanizeError maps invalid API key failures to an actionable message", () => {
   assert.match(humanizeError(new Error("OpenAI Realtime token failed: 401 invalid_api_key")), /rejected the API key/i);
   assert.match(humanizeError(new Error("Incorrect API key provided")), /rejected the API key/i);
