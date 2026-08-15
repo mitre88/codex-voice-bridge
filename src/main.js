@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain } from "electron";
+import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, session } from "electron";
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -747,6 +747,44 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    // The interview mode's "Capture meeting audio" option calls
+    // navigator.mediaDevices.getDisplayMedia() in the renderer; Electron
+    // denies that request unless the main process registers a display-media
+    // handler, which made the whole interview connect fail with a permission
+    // error. Prefer the native system picker (macOS 15+/Windows 11) when the
+    // OS provides it — the handler then never runs. On older macOS the handler
+    // runs: grant the first screen source with loopback audio (the renderer
+    // drops the video track and keeps only the meeting audio), and only for
+    // our own renderer frame.
+    session.defaultSession.setDisplayMediaRequestHandler(
+      async (request, callback) => {
+        if (request.frame?.url !== RENDERER_URL) {
+          writeLog("blocked display media request from untrusted frame", { url: request.frame?.url });
+          callback({});
+          return;
+        }
+        try {
+          const sources = await desktopCapturer.getSources({
+            types: ["screen", "window"],
+            // No thumbnails or window icons: cheaper and avoids capturing
+            // screen content we never display.
+            thumbnailSize: { width: 0, height: 0 },
+            fetchWindowIcons: false,
+          });
+          const screen = sources.find((source) => source.id.startsWith("screen:")) || sources[0];
+          if (!screen) {
+            writeLog("display media request denied: no capture sources");
+            callback({});
+            return;
+          }
+          callback({ video: screen, audio: "loopback" });
+        } catch (error) {
+          writeLog("display media handler failed", { error: String(error) });
+          callback({});
+        }
+      },
+      { useSystemPicker: true },
+    );
     createWindow();
     const registered = globalShortcut.register(SHORTCUT, toggleWindow);
     if (!registered) writeLog("globalShortcut register failed", { shortcut: SHORTCUT });
