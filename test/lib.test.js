@@ -139,6 +139,11 @@ test("resolveAppIdentity maps common-app aliases to exact bundle ids", () => {
   assert.deepEqual(resolveAppIdentity({ app_name: "PowerPoint" }), { bundle_id: "com.microsoft.Powerpoint" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Word" }), { bundle_id: "com.microsoft.Word" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Zoom" }), { bundle_id: "us.zoom.xos" });
+  // Messaging/gaming apps with proper-noun names a voice user is likely to
+  // say; safe to guess from the reason text because they are not common words.
+  assert.deepEqual(resolveAppIdentity({ app_name: "Telegram" }), { bundle_id: "ru.keepcoder.Telegram" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "signal" }), { bundle_id: "org.whispersystems.signal" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Steam" }), { bundle_id: "com.valvesoftware.steam" });
 });
 
 test("normalizeCuaArgs fills bundle_id for launch_app from context", () => {
@@ -168,6 +173,13 @@ test("normalizeCuaArgs resolves common-app aliases without substring false posit
   // must not resolve; "email" contains "mail" but not as a standalone word.
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open the keynotes deck" }), {});
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "check the email" }), {});
+  // Proper-noun aliases resolve from the reason text like the other common
+  // apps, and word boundaries still apply: "signal" alone launches Signal,
+  // but "signals" (a different word) must not.
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open telegram" }), { bundle_id: "ru.keepcoder.Telegram" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open steam" }), { bundle_id: "com.valvesoftware.steam" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open signal" }), { bundle_id: "org.whispersystems.signal" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "check the signals" }), {});
 });
 
 test("normalizeCuaArgs does not guess an app when launch_app already carries a URL", () => {
