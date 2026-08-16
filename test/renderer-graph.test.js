@@ -56,9 +56,41 @@ test("renderer.js enables Disconnect at connect start so mid-connect cancel work
     "connectRealtime must enable the Disconnect button before the connect begins",
   );
   assert.ok(
-    connectBody.indexOf("connectAbortController = new AbortController()") >
+    connectBody.indexOf("new AbortController()") >
       connectBody.indexOf("disconnectButton.disabled = false"),
     "Disconnect must be enabled before the abort controller is created so the cancel path is reachable",
+  );
+});
+
+test("a stale connect's catch cannot abort or overwrite a newer connect", () => {
+  // The connect flow's abort checks and error path used to read the GLOBAL
+  // connectAbortController. After a fast Disconnect → Connect, the first
+  // (stale) connect's catch could see the NEW connect's controller: instead
+  // of taking the quiet Idle path for its own cancelled connect it would
+  // call disconnectRealtime({silent:true}) — aborting the new connect's
+  // controller and flipping the UI to Error over a healthy connect (and a
+  // stale connect that failed on its own would do the same). Each connect
+  // must capture its controller locally; the error path must bail out when
+  // the global no longer belongs to this connect, and the cancel check must
+  // use the captured controller.
+  const renderer = readSource("renderer.js");
+  const connectStart = renderer.indexOf("async function connectRealtime()");
+  assert.ok(connectStart !== -1, "renderer.js must define connectRealtime");
+  const connectBody = renderer.slice(connectStart, renderer.indexOf("async function disconnectRealtime()"));
+  assert.match(
+    connectBody,
+    /const controller = new AbortController\(\)/,
+    "connectRealtime must capture the abort controller in a local before assigning the global",
+  );
+  assert.match(
+    connectBody,
+    /if \(connectAbortController !== controller\) return;/,
+    "a stale connect must bail out of its error path instead of touching the UI or aborting a newer connect",
+  );
+  assert.match(
+    connectBody,
+    /if \(controller\.signal\.aborted\)/,
+    "the cancel check must use the locally captured controller, not the global",
   );
 });
 
@@ -90,20 +122,22 @@ test("connect passes the abort signal to getUserMedia so Disconnect cancels a pe
   // the microphone permission prompt would otherwise keep waiting on the OS
   // dialog after the UI went Idle; granting it would then start a pointless
   // token fetch + peer connection for a session the user cancelled. getUserMedia
-  // must receive the connect abort signal, and each stream acquisition must
-  // re-check the signal so a cancelled connect stops the mic immediately.
+  // must receive the connect abort signal (the controller captured at connect
+  // start and threaded through, never the global — see the stale-connect test
+  // below), and each stream acquisition must re-check the signal so a
+  // cancelled connect stops the mic immediately.
   const renderer = readSource("renderer.js");
   const singleStart = renderer.indexOf("async function connectSingleRealtime");
   assert.ok(singleStart !== -1, "renderer.js must define connectSingleRealtime");
   const singleBody = renderer.slice(singleStart, renderer.indexOf("async function connectInterviewRealtime"));
   assert.match(
     singleBody,
-    /signal: connectAbortController\?\.signal/,
+    /signal: controller\?\.signal/,
     "connectSingleRealtime must pass the connect abort signal to getUserMedia",
   );
   assert.match(
     singleBody,
-    /connectAbortController\?\.signal\.aborted/,
+    /controller\?\.signal\.aborted/,
     "connectSingleRealtime must re-check the abort signal after acquiring the mic stream",
   );
   const interviewStart = renderer.indexOf("async function connectInterviewRealtime");
@@ -111,11 +145,11 @@ test("connect passes the abort signal to getUserMedia so Disconnect cancels a pe
   const interviewBody = renderer.slice(interviewStart, renderer.indexOf("async function connectRealtime"));
   assert.match(
     interviewBody,
-    /signal: connectAbortController\?\.signal/,
+    /signal: controller\?\.signal/,
     "connectInterviewRealtime must pass the connect abort signal to getUserMedia",
   );
   assert.ok(
-    (interviewBody.match(/connectAbortController\?\.signal\.aborted/g) || []).length >= 2,
+    (interviewBody.match(/controller\?\.signal\.aborted/g) || []).length >= 2,
     "connectInterviewRealtime must re-check the abort signal after each stream acquisition",
   );
 });

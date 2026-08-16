@@ -416,7 +416,7 @@ async function refreshMediaDevices(promptForLabels = false) {
   }
 }
 
-async function getInterviewAudioStream(options) {
+async function getInterviewAudioStream(options, controller) {
   if (options.interviewerInputMode === "device") {
     return navigator.mediaDevices.getUserMedia({
       audio: deviceConstraint(options.interviewerAudioDeviceId, {
@@ -427,7 +427,7 @@ async function getInterviewAudioStream(options) {
       // Same cancel semantics as the assistant path: a Disconnect pressed
       // while this prompt is pending aborts it instead of leaving the OS
       // dialog up after the UI already went Idle.
-      signal: connectAbortController?.signal,
+      signal: controller?.signal,
     });
   }
   const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
@@ -451,7 +451,7 @@ async function applyAudioOutputDevice(audio, deviceId, label) {
   }
 }
 
-async function connectPeerSession({ label, tokenOptions, inputStream, outputDeviceId, transcriptTargets, enableTools = false }) {
+async function connectPeerSession({ label, tokenOptions, inputStream, outputDeviceId, transcriptTargets, enableTools = false, controller }) {
   const token = await getBridge().createClientSecret(tokenOptions);
   const pc = new RTCPeerConnection();
   const audio = document.createElement("audio");
@@ -502,7 +502,7 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
       // is never pushed with a live microphone after the UI already went Idle.
       signal: AbortSignal.any([
         AbortSignal.timeout(openaiCallTimeoutMs),
-        connectAbortController?.signal,
+        controller?.signal,
       ].filter(Boolean)),
     });
     if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${await response.text()}`);
@@ -518,7 +518,10 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
     // The user disconnected while the SDP exchange was in flight: refuse to
     // register the session — the catch below closes the peer connection and
     // stops the microphone so a "Disconnected" UI never leaves audio live.
-    if (connectAbortController?.signal.aborted) {
+    // Check the controller captured at connect start, never the global: a
+    // newer connect may have replaced it by now, and this session must only
+    // answer to the connect that created it.
+    if (controller?.signal.aborted) {
       throw new Error(`${label}: connection cancelled by disconnect.`);
     }
     activeSessions.push({ label, pc, dc, stream: inputStream, audio });
@@ -539,7 +542,7 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
   }
 }
 
-async function connectSingleRealtime(options) {
+async function connectSingleRealtime(options, controller) {
   // Respect the microphone selected in the UI (it was previously ignored
   // outside interview mode, silently falling back to the system default).
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -549,13 +552,13 @@ async function connectSingleRealtime(options) {
     // signal, getUserMedia keeps waiting on the OS prompt after the UI
     // already went Idle, and the grant then starts a pointless token fetch
     // and peer connection for a session the user cancelled.
-    signal: connectAbortController?.signal,
+    signal: controller?.signal,
   });
   // The abort can also win the race between getUserMedia resolving and this
   // check (the prompt was answered just as Disconnect was pressed); refuse
   // to start the SDP exchange so the mic is stopped here instead of staying
   // hot through a wasted token fetch and offer.
-  if (connectAbortController?.signal.aborted) {
+  if (controller?.signal.aborted) {
     stopMediaStream(stream);
     throw new Error("Connection cancelled by disconnect.");
   }
@@ -565,6 +568,7 @@ async function connectSingleRealtime(options) {
     inputStream: stream,
     transcriptTargets: { source: "source", output: "output" },
     enableTools: options.mode === "assistant",
+    controller,
   });
 }
 
@@ -576,14 +580,14 @@ function stopMediaStream(stream) {
   }
 }
 
-async function connectInterviewRealtime(options) {
-  const interviewerStream = await getInterviewAudioStream(options);
+async function connectInterviewRealtime(options, controller) {
+  const interviewerStream = await getInterviewAudioStream(options, controller);
   // A Disconnect pressed while the meeting-audio picker was open (or while
   // the device-mode mic prompt was pending) must not start the SDP exchange:
   // stop the captured stream and bail so the UI stays Idle. (The abort
   // signal above already cancels the device-mode prompt itself; this check
   // covers the system screen-picker path, which cannot be aborted.)
-  if (connectAbortController?.signal.aborted) {
+  if (controller?.signal.aborted) {
     stopMediaStream(interviewerStream);
     throw new Error("Connection cancelled by disconnect.");
   }
@@ -591,17 +595,18 @@ async function connectInterviewRealtime(options) {
   try {
     myMicStream = await navigator.mediaDevices.getUserMedia({
       audio: deviceConstraint(options.myMicDeviceId),
-      signal: connectAbortController?.signal,
+      signal: controller?.signal,
     });
     // Same race as connectSingleRealtime: the prompt was answered just as
     // Disconnect was pressed. The catch below stops both streams.
-    if (connectAbortController?.signal.aborted) throw new Error("Connection cancelled by disconnect.");
+    if (controller?.signal.aborted) throw new Error("Connection cancelled by disconnect.");
     await connectPeerSession({
       label: "Interview to Spanish",
       tokenOptions: { mode: "translate", targetLanguage: "es" },
       inputStream: interviewerStream,
       outputDeviceId: options.spanishOutputDeviceId,
       transcriptTargets: { source: null, output: "source" },
+      controller,
     });
     await connectPeerSession({
       label: "My reply to English",
@@ -609,6 +614,7 @@ async function connectInterviewRealtime(options) {
       inputStream: myMicStream,
       outputDeviceId: options.englishOutputDeviceId,
       transcriptTargets: { source: null, output: "output" },
+      controller,
     });
   } catch (error) {
     // Streams not yet owned by a session stay hot if the second half fails
@@ -631,16 +637,21 @@ async function connectRealtime() {
   disconnectButton.disabled = false;
   // A fresh controller per connect: disconnectRealtime() aborts it so a
   // Disconnect press mid-"Connecting" cancels the in-flight SDP exchange
-  // instead of letting the session come up afterwards.
-  connectAbortController = new AbortController();
+  // instead of letting the session come up afterwards. The controller is
+  // captured in a LOCAL first and threaded through the whole connect flow:
+  // the global can be replaced by a newer connect (Disconnect + quick
+  // Connect), and a stale connect must keep checking — and aborting — only
+  // its own controller, never the newer connect's.
+  const controller = new AbortController();
+  connectAbortController = controller;
   handledToolCalls.clear();
   resetCaptions();
   try {
     await ensureApiKeyReady();
     await refreshMediaDevices(false).catch(() => {});
     const options = getVoiceOptions();
-    if (options.mode === "interview") await connectInterviewRealtime(options);
-    else await connectSingleRealtime(options);
+    if (options.mode === "interview") await connectInterviewRealtime(options, controller);
+    else await connectSingleRealtime(options, controller);
     // Mode/tone/language/audio devices are captured at connect time; changing
     // them mid-session would not affect the running session and would mislead
     // the user into thinking it did, so lock them all until disconnect.
@@ -648,10 +659,16 @@ async function connectRealtime() {
     setStatus("Listening");
     disconnectButton.disabled = false;
   } catch (error) {
+    // A newer connect may have replaced the global controller while this
+    // connect was still in flight (Disconnect + quick Connect). A stale
+    // connect must never touch the UI or abort the newer connect's
+    // controller: only the connect that still owns the global may run the
+    // error path.
+    if (connectAbortController !== controller) return;
     // The user pressed Disconnect while this connect was still in flight:
     // disconnectRealtime() already tore down the UI, so surface the quiet
     // Idle state instead of flipping to Error over an intentional cancel.
-    if (connectAbortController?.signal.aborted) {
+    if (controller.signal.aborted) {
       setStatus("Idle");
       connectButton.disabled = false;
       return;
