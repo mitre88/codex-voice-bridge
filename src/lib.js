@@ -41,6 +41,22 @@ export const APP_BUNDLE_ALIASES = new Map([
   ["mail", "com.apple.mail"],
   ["messages", "com.apple.MobileSMS"],
   ["music", "com.apple.Music"],
+  // More apps a voice user is likely to name whose display name differs from
+  // the bundle id (App Store, Activity Monitor, Podcasts) or that are common
+  // enough to deserve a stable alias (Maps, VLC, Ghostty, 1Password, Todoist,
+  // Kindle). "podcast" and "podcasts" both map to the same app; a word like
+  // "podcasting" still cannot false-positive because the boundary regex
+  // requires a non-word character after the alias.
+  ["activity monitor", "com.apple.ActivityMonitor"],
+  ["app store", "com.apple.AppStore"],
+  ["ghostty", "com.mitchellh.ghostty"],
+  ["kindle", "com.amazon.Kindle"],
+  ["maps", "com.apple.Maps"],
+  ["podcast", "com.apple.podcasts"],
+  ["podcasts", "com.apple.podcasts"],
+  ["todoist", "com.todoist.mac.Todoist"],
+  ["vlc", "org.videolan.vlc"],
+  ["1password", "com.1password.1password"],
   ["notion", "notion.id"],
   ["numbers", "com.apple.iWork.Numbers"],
   ["outlook", "com.microsoft.Outlook"],

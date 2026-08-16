@@ -144,6 +144,18 @@ test("resolveAppIdentity maps common-app aliases to exact bundle ids", () => {
   assert.deepEqual(resolveAppIdentity({ app_name: "Telegram" }), { bundle_id: "ru.keepcoder.Telegram" });
   assert.deepEqual(resolveAppIdentity({ app_name: "signal" }), { bundle_id: "org.whispersystems.signal" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Steam" }), { bundle_id: "com.valvesoftware.steam" });
+  // System utilities and media/terminal apps whose display name differs from
+  // the bundle id, plus the podcast singular/plural pair.
+  assert.deepEqual(resolveAppIdentity({ app_name: "App Store" }), { bundle_id: "com.apple.AppStore" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Activity Monitor" }), { bundle_id: "com.apple.ActivityMonitor" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Maps" }), { bundle_id: "com.apple.Maps" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "podcast" }), { bundle_id: "com.apple.podcasts" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Podcasts" }), { bundle_id: "com.apple.podcasts" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "VLC" }), { bundle_id: "org.videolan.vlc" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Ghostty" }), { bundle_id: "com.mitchellh.ghostty" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "1Password" }), { bundle_id: "com.1password.1password" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Todoist" }), { bundle_id: "com.todoist.mac.Todoist" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Kindle" }), { bundle_id: "com.amazon.Kindle" });
 });
 
 test("normalizeCuaArgs fills bundle_id for launch_app from context", () => {
@@ -180,6 +192,16 @@ test("normalizeCuaArgs resolves common-app aliases without substring false posit
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open steam" }), { bundle_id: "com.valvesoftware.steam" });
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open signal" }), { bundle_id: "org.whispersystems.signal" });
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "check the signals" }), {});
+  // Newer aliases resolve from the reason text too, and word boundaries still
+  // hold: "podcast" is a substring of "podcasting" but not a standalone word,
+  // and "unmapped" must not launch Maps.
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open the maps" }), { bundle_id: "com.apple.Maps" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open podcasts" }), { bundle_id: "com.apple.podcasts" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open the app store" }), { bundle_id: "com.apple.AppStore" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open activity monitor" }), { bundle_id: "com.apple.ActivityMonitor" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open 1password" }), { bundle_id: "com.1password.1password" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "podcasting the session" }), {});
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "unmapped the fields" }), {});
 });
 
 test("normalizeCuaArgs does not guess an app when launch_app already carries a URL", () => {
