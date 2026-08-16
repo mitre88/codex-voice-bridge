@@ -100,6 +100,16 @@ test("resolveAppIdentity maps aliases and falls back to name", () => {
   assert.deepEqual(resolveAppIdentity({}), {});
 });
 
+test("resolveAppIdentity trims stray whitespace around app_name like isSafeLaunchUrl does for URLs", () => {
+  // Model-generated JSON often wraps values in stray whitespace/newlines;
+  // a trimmed alias must still resolve, and a raw name must launch trimmed.
+  assert.deepEqual(resolveAppIdentity({ app_name: " Safari " }), { bundle_id: "com.apple.Safari" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "\ngoogle chrome\t" }), { bundle_id: "com.google.Chrome" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "  MyApp  " }), { name: "MyApp" });
+  // A whitespace-only name trims to "" and falls through like an empty name.
+  assert.deepEqual(resolveAppIdentity({ app_name: "   " }), { name: "" });
+});
+
 test("resolveAppIdentity maps common-app aliases to exact bundle ids", () => {
   assert.deepEqual(resolveAppIdentity({ app_name: "Mail" }), { bundle_id: "com.apple.mail" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Calendar" }), { bundle_id: "com.apple.iCal" });

@@ -115,8 +115,17 @@ export function isSafeAppIdentity(identity = {}) {
 export function resolveAppIdentity(input = {}, aliases = APP_BUNDLE_ALIASES) {
   if (input.bundle_id) return { bundle_id: input.bundle_id };
   if (input.app_name) {
-    const appName = String(input.app_name).toLowerCase();
-    return aliases.has(appName) ? { bundle_id: aliases.get(appName) } : { name: input.app_name };
+    // Model-generated JSON often wraps values in stray whitespace or a
+    // trailing newline (e.g. a template literal) — the same cosmetic noise
+    // isSafeLaunchUrl already trims from URLs. Trim before the alias lookup
+    // so " Safari " resolves to the Safari bundle id and a raw-name launch
+    // never tries to open an app literally named " Safari ". Trimming cannot
+    // weaken the safety gates: the identity is still validated by
+    // isSafeAppIdentity afterwards, and a whitespace-only name trims to ""
+    // and fails the name regex like any other empty name.
+    const appName = String(input.app_name).trim();
+    const key = appName.toLowerCase();
+    return aliases.has(key) ? { bundle_id: aliases.get(key) } : { name: appName };
   }
   return {};
 }
