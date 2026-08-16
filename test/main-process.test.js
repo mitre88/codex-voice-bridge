@@ -49,6 +49,40 @@ test("openAppVisible reports the cua-driver launch result to the model, not just
   );
 });
 
+test("openAppVisible trims the url before validating and launching it", () => {
+  // The app+url path used to validate the TRIMMED url (isSafeLaunchUrl trims
+  // internally) but hand the RAW value to cua-driver via launchArgs.urls —
+  // the launch only worked because runCuaDriver happens to re-trim urls
+  // downstream. The string that passes validation must be the string that is
+  // launched, so openAppVisible must normalize input.url once at the source
+  // (same as resolveOpenAppTarget's URL-only path) and use the normalized
+  // value for both the safety gate and launchArgs.urls.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("async function openAppVisible");
+  assert.ok(fnStart !== -1, "main.js must define openAppVisible");
+  const fnBody = main.slice(fnStart, main.indexOf("async function typeTextInFrontApp"));
+  assert.match(
+    fnBody,
+    /const url = String\(input\.url\)\.trim\(\)/,
+    "openAppVisible must normalize input.url (trim) once at the source",
+  );
+  assert.match(
+    fnBody,
+    /isSafeLaunchUrl\(url\)/,
+    "openAppVisible must validate the normalized url, not the raw input.url",
+  );
+  assert.match(
+    fnBody,
+    /launchArgs\.urls = \[url\]/,
+    "openAppVisible must launch the normalized url, not the raw input.url",
+  );
+  assert.doesNotMatch(
+    fnBody,
+    /launchArgs\.urls = \[input\.url\]/,
+    "openAppVisible must not pass the raw input.url to cua-driver",
+  );
+});
+
 test("runProcess stops streaming child output to the renderer once the run has settled", () => {
   const main = readSource("main.js");
   const fnStart = main.indexOf("function runProcess");

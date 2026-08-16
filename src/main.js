@@ -634,12 +634,20 @@ async function openAppVisible(input = {}) {
   if (resolved.bundle_id) launchArgs.bundle_id = resolved.bundle_id;
   else launchArgs.name = resolved.name;
   if (input.url) {
+    // Normalize the URL once at the source, exactly like the URL-only path
+    // (resolveOpenAppTarget trims before opening) and normalizeCuaArgs do:
+    // isSafeLaunchUrl validates the trimmed form, so the raw value must not
+    // be the one handed to cua-driver. The launch currently works only
+    // because runCuaDriver re-trims urls downstream — the string that passed
+    // validation should be the string that is launched, never a
+    // whitespace-padded variant of it.
+    const url = String(input.url).trim();
     // Only http/https URLs may be opened: a model-controlled file:// or custom
     // scheme URL could open local files or trigger unintended handlers.
-    if (!isSafeLaunchUrl(input.url)) {
+    if (!isSafeLaunchUrl(url)) {
       return { ok: false, code: -9, stdout: "", stderr: "Rejected unsafe url (only http/https URLs may be opened)." };
     }
-    launchArgs.urls = [input.url];
+    launchArgs.urls = [url];
   }
 
   const cuaResult = await runCuaDriver({ tool_name: "launch_app", json_args: launchArgs, reason: input.reason || "Open app visibly." });
