@@ -375,6 +375,20 @@ test("resolveOpenAppTarget rejects unsafe or missing targets", () => {
   assert.equal(resolveOpenAppTarget({ url: "javascript:alert(1)" }).code, -9);
 });
 
+test("resolveOpenAppTarget rejects a URL that would overflow the argv entry", () => {
+  // The URL becomes a single argv entry to the `open` command (macOS caps one
+  // argument at ~256 KiB), so an unbounded model-controlled URL would make
+  // spawn() fail with E2BIG — the same failure the prompt/text/json_args
+  // guards exist to prevent. The cap is the same requireMaxLength gate those
+  // paths use, so a megabyte URL fails with the clear message instead of an
+  // opaque spawn error.
+  const huge = `https://example.com/${"x".repeat(9000)}`;
+  assert.equal(resolveOpenAppTarget({ url: huge }).kind, "error");
+  assert.match(resolveOpenAppTarget({ url: huge }).message, /maximum length/i);
+  // A normal URL still passes.
+  assert.equal(resolveOpenAppTarget({ url: "https://example.com" }).kind, "url");
+});
+
 test("isSafeCuaToolName accepts snake_case identifiers and rejects option-like names", () => {
   assert.equal(isSafeCuaToolName("launch_app"), true);
   assert.equal(isSafeCuaToolName("list_apps"), true);
@@ -601,6 +615,20 @@ test("humanizeError maps TLS certificate failures to a certificate message", () 
   const wrapped = new TypeError("fetch failed");
   wrapped.cause = new Error("unable to verify the first certificate");
   assert.match(humanizeError(wrapped), /tls certificate/i);
+  // undici TLS protocol failures (EPROTO) carry the interception root cause
+  // too: a proxy/antivirus speaking plain HTTP to a TLS port, a captive
+  // portal, or a MITM. The raw OpenSSL text must map to the TLS message, not
+  // pass through raw — and the cause-wrapped "fetch failed" form must not be
+  // shadowed by the generic connectivity message.
+  assert.match(
+    humanizeError(new Error("write EPROTO: error:1408F10B:SSL routines:ssl3_get_record:wrong version number")),
+    /tls certificate/i,
+  );
+  assert.match(humanizeError(new Error("tlsv1 alert unknown ca")), /tls certificate/i);
+  assert.match(humanizeError(new Error("sslv3 alert handshake failure")), /tls certificate/i);
+  const eprotoWrapped = new TypeError("fetch failed");
+  eprotoWrapped.cause = { code: "EPROTO", message: "wrong version number" };
+  assert.match(humanizeError(eprotoWrapped), /tls certificate/i);
   // A network error without a certificate cause still maps to connectivity.
   assert.match(humanizeError(new TypeError("fetch failed")), /could not reach the openai api/i);
 });

@@ -206,3 +206,49 @@ test("pressKeyInFrontApp drops non-string modifier entries before calling cua-dr
     "pressKeyInFrontApp must keep the array-shape normalization",
   );
 });
+
+test("runCodex and openAppVisible cap argv-bound values like the prompt guard does", () => {
+  // Every model-controlled value that becomes a single argv entry (prompt,
+  // text, json_args, and now cwd + url) must go through the same
+  // requireMaxLength gate: an unbounded value would otherwise make spawn()
+  // fail with E2BIG (macOS ARG_MAX) and surface as an opaque spawn error
+  // instead of a clean, self-correctable message. cwd is interpolated into
+  // "--cd <workdir>" and url travels inside launchArgs.urls / the `open`
+  // argv, so both must be capped at the source.
+  const main = readSource("main.js");
+  const codexFn = main.slice(main.indexOf("function runCodex"), main.indexOf("function runCuaDriver"));
+  assert.match(
+    codexFn,
+    /requireMaxLength\(input\?\.cwd, "cwd", 4096\)/,
+    "runCodex must cap the cwd argv entry",
+  );
+  const openFn = main.slice(main.indexOf("async function openAppVisible"), main.indexOf("async function typeTextInFrontApp"));
+  assert.match(
+    openFn,
+    /requireMaxLength\(url, "url", 8192\)/,
+    "openAppVisible must cap the url argv entry before launching",
+  );
+  // resolveOpenAppTarget (lib.js) applies the same cap to the URL-only path;
+  // the app+url path must not be the only one capped.
+  const lib = readSource("lib.js");
+  assert.match(
+    lib,
+    /requireMaxLength\(input\.url, "url", 8192\)/,
+    "resolveOpenAppTarget must cap the url-only path",
+  );
+});
+
+test("runCuaDriver rejects unsafe launch_app args with a settled promise", () => {
+  // Every rejection branch in runCuaDriver returns Promise.resolve(...) so
+  // callers can await uniformly; the unsafe-launch_app branch must do the
+  // same instead of returning a bare object.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("function runCuaDriver");
+  assert.ok(fnStart !== -1, "main.js must define runCuaDriver");
+  const fnBody = main.slice(fnStart, main.indexOf("async function runMacAction"));
+  assert.match(
+    fnBody,
+    /Promise\.resolve\(\{[\s\S]*?Rejected unsafe launch_app arguments/,
+    "unsafe launch_app args must return a settled promise",
+  );
+});

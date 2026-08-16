@@ -281,6 +281,13 @@ export function resolveOpenAppTarget(input = {}, aliases = APP_BUNDLE_ALIASES) {
   const identity = resolveAppIdentity(input, aliases);
   if (identity.bundle_id || identity.name) return { kind: "app", identity };
   if (input.url != null && input.url !== "") {
+    // The URL becomes a single argv entry to the `open` command (no shell), so
+    // it must respect the same per-argument cap the prompt/text/json_args
+    // guards enforce: a model-controlled megabyte URL would otherwise make
+    // spawn() fail with E2BIG — or worse, on a lenient kernel, pass an
+    // unbounded string to the OS. 8192 bytes is far beyond any real URL.
+    const lengthError = requireMaxLength(input.url, "url", 8192);
+    if (lengthError) return { kind: "error", code: -9, message: lengthError };
     if (isSafeLaunchUrl(input.url)) return { kind: "url", url: String(input.url).trim() };
     return { kind: "error", code: -9, message: "Rejected unsafe url (only http/https URLs may be opened)." };
   }

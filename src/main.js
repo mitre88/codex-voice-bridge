@@ -572,6 +572,11 @@ function runCodex(input) {
   // would make spawn() fail with E2BIG, so reject oversized prompts cleanly.
   const lengthError = requireMaxLength(input?.prompt, "prompt");
   if (lengthError) return Promise.resolve({ ok: false, code: -6, stdout: "", stderr: lengthError });
+  // cwd is interpolated into the codex argv as "--cd <workdir>" — the same
+  // single-argv-entry cap applies, so a model-controlled megabyte path would
+  // otherwise make spawn() fail with E2BIG. 4096 bytes covers any real path.
+  const cwdLengthError = requireMaxLength(input?.cwd, "cwd", 4096);
+  if (cwdLengthError) return Promise.resolve({ ok: false, code: -6, stdout: "", stderr: cwdLengthError });
   const { prompt, cwd } = input;
   const workdir = resolveWorkdir(cwd, DEFAULT_WORKDIR);
   // "--" terminates option parsing so a prompt that starts with "-" (e.g. a
@@ -606,12 +611,12 @@ function runCuaDriver(input = {}) {
   // it must obey the same gates: a model-supplied file:// or custom-scheme URL
   // (or an unsafe app identity) must not slip past the checks open_app applies.
   if (toolName === "launch_app" && !isSafeCuaLaunchArgs(normalizedArgs)) {
-    return {
+    return Promise.resolve({
       ok: false,
       code: -9,
       stdout: "",
       stderr: "Rejected unsafe launch_app arguments (only http/https URLs and a safe app identity may be used).",
-    };
+    });
   }
   const argsBlob = JSON.stringify(normalizedArgs);
   const argsLengthError = requireMaxLength(argsBlob, "json_args");
@@ -658,6 +663,12 @@ async function openAppVisible(input = {}) {
     // validation should be the string that is launched, never a
     // whitespace-padded variant of it.
     const url = String(input.url).trim();
+    // Same argv-bound cap as resolveOpenAppTarget's URL-only path: the url
+    // travels inside launchArgs.urls to cua-driver as a single argv entry,
+    // so a model-controlled megabyte URL must be rejected here with a clear
+    // message instead of failing downstream with an opaque E2BIG.
+    const urlLengthError = requireMaxLength(url, "url", 8192);
+    if (urlLengthError) return { ok: false, code: -9, stdout: "", stderr: urlLengthError };
     // Only http/https URLs may be opened: a model-controlled file:// or custom
     // scheme URL could open local files or trigger unintended handlers.
     if (!isSafeLaunchUrl(url)) {

@@ -92,7 +92,19 @@ export function humanizeError(error) {
     // ERR_SSL_VERSION_OR_CIPHER_MISMATCH, ERR_NO_SSL_VERSIONS_ENABLED, ...)
     // share the interception/clock root causes with certificate errors, and a
     // raw pass-through would leave the user blaming the key or the network.
-    haystack.includes("err_ssl_")
+    haystack.includes("err_ssl_") ||
+    // undici surfaces TLS protocol failures as EPROTO with an OpenSSL detail
+    // ("write EPROTO: error:1408F10B:SSL routines:ssl3_get_record:wrong
+    // version number") — a proxy/antivirus speaking plain HTTP to a TLS port,
+    // a captive portal, or a MITM interception. The raw text would otherwise
+    // pass through with no hint that TLS (not the key or the network) is at
+    // fault. "ssl routines" / "tlsv1 alert" / "sslv3 alert" cover the other
+    // OpenSSL handshake-failure strings that carry the same root causes.
+    haystack.includes("eproto") ||
+    haystack.includes("wrong version number") ||
+    haystack.includes("ssl routines") ||
+    haystack.includes("tlsv1 alert") ||
+    haystack.includes("sslv3 alert")
   ) {
     return "Could not verify the OpenAI API server's TLS certificate. This usually means a corporate proxy or VPN is intercepting traffic, the system clock is wrong, or the certificate expired — check those and retry.";
   }
