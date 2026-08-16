@@ -368,6 +368,24 @@ async function handleToolEvent(event) {
     });
     return;
   }
+  // A well-formed JSON payload is not necessarily an object: the model can
+  // emit "null", a bare string, a number, or an array (e.g. a hallucinated
+  // call with json_args "[]"). The codex path would then read
+  // action.args.prompt off null and throw a raw TypeError (caught by
+  // executeAction, but surfaced to the model as an opaque "Cannot read
+  // properties of null" message), and an array/string would reach the main
+  // process where validation rejects it with a misleading message. Reject
+  // non-object args here with a clean error so the model can self-correct
+  // from the message, and the pending panel never shows junk args.
+  if (args === null || typeof args !== "object" || Array.isArray(args)) {
+    sendFunctionOutput(functionCall.callId, {
+      ok: false,
+      code: -101,
+      stdout: "",
+      stderr: "Invalid tool arguments: expected a JSON object.",
+    });
+    return;
+  }
   const isMacAction = ["open_app", "type_text_in_front_app", "press_key_in_front_app"].includes(functionCall.name);
   // The declared tool name is the source of truth for dispatch: runMacAction
   // switches on input.action, so a model-supplied "action" key inside the

@@ -195,6 +195,31 @@ test("mac actions dispatch on the declared tool name, never on a model-supplied 
   );
 });
 
+test("tool calls with non-object args get a clean error instead of a raw TypeError", () => {
+  // A well-formed JSON payload is not necessarily an object: "null", a bare
+  // string, a number, or an array all parse successfully. The codex path
+  // would then read action.args.prompt off null and throw a raw TypeError
+  // inside executeAction — caught, but surfaced to the model as an opaque
+  // "Cannot read properties of null" message — and an array/string would
+  // reach the main process, where validation rejects it with a misleading
+  // message. handleToolEvent must reject non-object args with a clean error
+  // so the model can self-correct from the message.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("async function handleToolEvent");
+  assert.ok(fnStart !== -1, "renderer.js must define handleToolEvent");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("function deviceConstraint"));
+  assert.match(
+    fnBody,
+    /args === null \|\| typeof args !== "object"/,
+    "handleToolEvent must reject null and other non-object args before they reach action.args.prompt",
+  );
+  assert.match(
+    fnBody,
+    /Array\.isArray\(args\)/,
+    "handleToolEvent must reject array args (a JSON array parses but is not a valid tool-args object)",
+  );
+});
+
 test("the config line displays the Codex workdir", () => {
   // app:config returns workdir (CODEX_VOICE_WORKDIR or the launch cwd — the
   // directory Codex operates on), but the config line used to render only
