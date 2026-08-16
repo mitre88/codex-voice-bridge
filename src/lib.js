@@ -121,6 +121,35 @@ export function resolveAppIdentity(input = {}, aliases = APP_BUNDLE_ALIASES) {
   return {};
 }
 
+// Escape a string for literal use inside a RegExp. The alias matching below
+// interpolates aliases into a pattern, and an alias containing a regex
+// metacharacter (".", "+", "(", "[", ...) would otherwise be interpreted —
+// e.g. "c++" would match "cc", and an unbalanced "(" would throw a
+// SyntaxError on every launch_app call. Escaping keeps the match literal.
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Compiled word-boundary patterns for an aliases map, cached per map so the
+// default APP_BUNDLE_ALIASES (and any custom map a caller passes) compiles
+// once instead of rebuilding a regex for every alias on every launch_app call
+// without an explicit identity. A WeakMap keyed on the map object keeps the
+// cache bounded (a discarded map is collectable).
+const aliasPatternCache = new WeakMap();
+function getAliasPatterns(aliases) {
+  let patterns = aliasPatternCache.get(aliases);
+  if (!patterns) {
+    patterns = new Map(
+      [...aliases].map(([alias, bundleId]) => [
+        alias,
+        { bundleId, re: new RegExp(`(^|[^a-z0-9])${escapeRegExp(alias)}($|[^a-z0-9])`) },
+      ]),
+    );
+    aliasPatternCache.set(aliases, patterns);
+  }
+  return patterns;
+}
+
 export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliases = APP_BUNDLE_ALIASES) {
   const args = jsonArgs && typeof jsonArgs === "object" ? { ...jsonArgs } : {};
   // Only guess an app from context when the call carries neither an explicit
@@ -129,12 +158,12 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
   // docs") must not silently redirect that URL to a guessed app.
   if (toolName === "launch_app" && !args.bundle_id && !args.name && !args.urls && !args.url) {
     const text = JSON.stringify({ args, fullInput }).toLowerCase();
-    for (const [alias, bundleId] of aliases.entries()) {
+    for (const { bundleId, re } of getAliasPatterns(aliases).values()) {
       // Match the alias on word boundaries, not as a raw substring: "keynotes"
       // contains "notes" and "previewing" contains "preview", so a substring
       // check would launch the wrong app for "open the keynotes deck" or
       // "previewing the diff". Only a standalone alias mention is a hint.
-      if (new RegExp(`(^|[^a-z0-9])${alias}($|[^a-z0-9])`).test(text)) {
+      if (re.test(text)) {
         args.bundle_id = bundleId;
         break;
       }

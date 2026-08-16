@@ -163,6 +163,32 @@ test("normalizeCuaArgs does not guess an app when launch_app already carries a U
   );
 });
 
+test("normalizeCuaArgs matches aliases with regex metacharacters literally", () => {
+  // Aliases are interpolated into a RegExp, so a metacharacter in an alias
+  // must be escaped: unescaped, "c++" would match "cc" (and an unbalanced
+  // "(" would throw a SyntaxError on every call). A custom alias map is the
+  // only way to exercise this today; a future default alias with a
+  // metacharacter must behave the same way.
+  const customAliases = new Map([
+    ["c++", "com.example.cpp"],
+    ["vs.code", "com.example.vscode"],
+    ["a(b", "com.example.paren"],
+  ]);
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open c++" }, customAliases), {
+    bundle_id: "com.example.cpp",
+  });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open vs.code" }, customAliases), {
+    bundle_id: "com.example.vscode",
+  });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open a(b now" }, customAliases), {
+    bundle_id: "com.example.paren",
+  });
+  // "cc" is not the "c++" alias: the escaped pattern must not match it.
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open cc" }, customAliases), {});
+  // Word boundaries still apply to escaped aliases.
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open c++x" }, customAliases), {});
+});
+
 test("isSafeCuaLaunchArgs accepts safe launch_app identities and http/https urls", () => {
   assert.equal(isSafeCuaLaunchArgs({ bundle_id: "com.apple.Safari" }), true);
   assert.equal(isSafeCuaLaunchArgs({ name: "Visual Studio Code" }), true);
