@@ -209,6 +209,28 @@ test("normalizeCuaArgs matches aliases with regex metacharacters literally", () 
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open c++x" }, customAliases), {});
 });
 
+test("normalizeCuaArgs bounds the alias-guess scan so a huge args blob cannot stall it", () => {
+  // The guess scans the serialized call context for an alias mention. A
+  // model-controlled json_args can be arbitrarily large (prompt injection or
+  // hallucination), and an unbounded scan runs every alias regex over the
+  // whole payload — freezing the main process before the json_args length
+  // guard downstream even runs. The scan must be bounded to the head of the
+  // payload, with the reason first so a long args blob cannot truncate it.
+  const hugeArgs = { padding: "x".repeat(100000) };
+  // The alias mention lives in the reason, which is stringified before args,
+  // so it must still resolve even with a huge args blob present.
+  assert.deepEqual(
+    normalizeCuaArgs("launch_app", hugeArgs, { reason: "open safari" }),
+    { bundle_id: "com.apple.Safari", padding: "x".repeat(100000) },
+  );
+  // A mention buried beyond the scan window is not a hint (and must not
+  // resolve): the guess only reads the head of the payload.
+  assert.deepEqual(
+    normalizeCuaArgs("launch_app", { reason: `${"x".repeat(5000)} open safari` }),
+    { reason: `${"x".repeat(5000)} open safari` },
+  );
+});
+
 test("normalizeCuaArgs resolves launch_app app_name through the open_app alias map", () => {
   // open_app understands app_name; launch_app must resolve the same key so a
   // model using app_name gets the identical identity (alias -> bundle_id).

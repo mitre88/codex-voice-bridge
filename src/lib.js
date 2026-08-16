@@ -198,7 +198,17 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
   // browser" intent, so a keyword in the reason text (e.g. "open the chrome
   // docs") must not silently redirect that URL to a guessed app.
   if (!args.bundle_id && !args.name && !args.urls && !args.url) {
-    const text = JSON.stringify({ args, fullInput }).toLowerCase();
+    // The alias guess is a heuristic over short context: the model's reason
+    // for the call and the (small) args blob. A model-controlled json_args
+    // can be arbitrarily large (e.g. a prompt-injected launch_app carrying a
+    // multi-MB blob), and scanning the full serialized payload — a regex test
+    // per alias over a multi-MB string — would block the main process for
+    // seconds before the json_args length guard downstream even runs. Scan
+    // only the head of the payload: the reason is stringified FIRST so a long
+    // args blob cannot truncate the very field the guess is meant to read.
+    // A standalone alias mention lives in the reason or the first chars of
+    // args, so truncating cannot weaken the guess for legitimate calls.
+    const text = JSON.stringify({ reason: fullInput?.reason, args }).slice(0, 4096).toLowerCase();
     for (const { bundleId, re } of getAliasPatterns(aliases).values()) {
       // Match the alias on word boundaries, not as a raw substring: "keynotes"
       // contains "notes" and "previewing" contains "preview", so a substring
