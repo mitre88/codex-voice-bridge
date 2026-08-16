@@ -160,6 +160,14 @@ function runProcess(command, args, options = {}) {
       detached: true, // own process group so we can kill descendants too
     });
     runningChildren.add(child);
+    // A child that exits before reading stdin (e.g. `security` failing early
+    // on a locked keychain, or a command that never reads stdin at all)
+    // breaks the pipe: the end() below then emits EPIPE on the stdin stream,
+    // and without a listener that surfaces as an uncaught 'error' event —
+    // caught only by the app-level handler and logged as a scary stack trace,
+    // or crashing the main process if that handler is ever removed. Swallow
+    // it: the child is gone and the write is pointless.
+    child.stdin.on("error", () => {});
     child.stdin.end(options.stdin || "");
 
     let stdout = "";

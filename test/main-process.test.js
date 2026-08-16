@@ -83,6 +83,30 @@ test("openAppVisible trims the url before validating and launching it", () => {
   );
 });
 
+test("runProcess swallows EPIPE on child stdin so an early-exiting child cannot raise an uncaught error", () => {
+  // runProcess always ends child.stdin (empty, or the API key for the
+  // keychain save). A child that exits without reading stdin — e.g. the
+  // `security` command failing early on a locked keychain — breaks the pipe,
+  // and the end()/write then emits EPIPE on the stdin stream. Without an
+  // error listener that becomes an uncaught 'error' event (caught only by
+  // the app-level handler, logged as a scary stack trace, or crashing the
+  // main process if that handler is ever removed). The listener must be
+  // attached before end() so the EPIPE from the write is already covered.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("function runProcess");
+  assert.ok(fnStart !== -1, "main.js must define runProcess");
+  const fnBody = main.slice(fnStart, main.indexOf("async function readKeychainApiKey"));
+  assert.match(
+    fnBody,
+    /child\.stdin\.on\("error"/,
+    "runProcess must attach an error listener to child.stdin so a child that exits without reading stdin cannot raise an uncaught EPIPE",
+  );
+  assert.ok(
+    fnBody.indexOf('child.stdin.on("error"') < fnBody.indexOf("child.stdin.end("),
+    "the stdin error listener must be attached before end() so the EPIPE from the write is caught",
+  );
+});
+
 test("runProcess stops streaming child output to the renderer once the run has settled", () => {
   const main = readSource("main.js");
   const fnStart = main.indexOf("function runProcess");
