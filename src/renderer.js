@@ -111,11 +111,11 @@ function tryBridge() {
 }
 
 window.addEventListener("error", (event) => {
-  tryBridge()?.log("window.error", { message: event.message, filename: event.filename, lineno: event.lineno });
+  tryBridge()?.log("window.error", { message: event.message, filename: event.filename, lineno: event.lineno }).catch(() => {});
 });
 
 window.addEventListener("unhandledrejection", (event) => {
-  tryBridge()?.log("window.unhandledrejection", { reason: String(event.reason), stack: event.reason?.stack });
+  tryBridge()?.log("window.unhandledrejection", { reason: String(event.reason), stack: event.reason?.stack }).catch(() => {});
 });
 
 function setStatus(text, state) {

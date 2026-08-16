@@ -131,24 +131,32 @@ function rotateLogFile() {
 }
 
 function writeLog(message, data) {
-  let payload;
   try {
-    payload = JSON.stringify({
-      ts: new Date().toISOString(),
-      message,
-      data: data === undefined ? undefined : redactSecrets(JSON.stringify(data)),
-    });
+    let payload;
+    try {
+      payload = JSON.stringify({
+        ts: new Date().toISOString(),
+        message,
+        data: data === undefined ? undefined : redactSecrets(JSON.stringify(data)),
+      });
+    } catch {
+      // Never let a non-serializable payload take down the logging path (or the
+      // uncaughtException handler that calls it).
+      payload = JSON.stringify({ ts: new Date().toISOString(), message, data: String(data) });
+    }
+    if (logStream && logStream.bytesWritten >= LOG_MAX_BYTES) {
+      logStream.end();
+      logStream = null;
+      rotateLogFile();
+    }
+    getLogStream().write(`${payload}\n`);
   } catch {
-    // Never let a non-serializable payload take down the logging path (or the
-    // uncaughtException handler that calls it).
-    payload = JSON.stringify({ ts: new Date().toISOString(), message, data: String(data) });
+    // Logging is best-effort and must never throw: writeLog runs inside the
+    // uncaughtException/unhandledRejection handlers and the log:renderer IPC
+    // handler, and a throw here (e.g. the log directory cannot be created)
+    // would crash the app or make the error handlers loop forever — each
+    // failed log call triggering another error event that logs again.
   }
-  if (logStream && logStream.bytesWritten >= LOG_MAX_BYTES) {
-    logStream.end();
-    logStream = null;
-    rotateLogFile();
-  }
-  getLogStream().write(`${payload}\n`);
 }
 
 function runProcess(command, args, options = {}) {

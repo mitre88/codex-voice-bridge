@@ -83,6 +83,35 @@ test("openAppVisible trims the url before validating and launching it", () => {
   );
 });
 
+test("writeLog swallows logging-path failures so error handlers cannot crash or loop", () => {
+  // writeLog is called from the uncaughtException / unhandledRejection
+  // handlers and from the log:renderer IPC handler. If the logging path
+  // itself throws (e.g. the log directory cannot be created, mkdirSync
+  // EACCES), the main-process error handlers would loop forever — each
+  // failed log call raising another error that logs again — and the IPC
+  // handler would reject, firing unhandledrejection in the renderer. The
+  // whole body must be wrapped so every failure inside the logging path is
+  // swallowed.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("function writeLog");
+  assert.ok(fnStart !== -1, "main.js must define writeLog");
+  const fnBody = main.slice(fnStart, main.indexOf("function runProcess"));
+  assert.match(
+    fnBody,
+    /function writeLog\(message, data\) \{\n  try \{/,
+    "writeLog must wrap its body in an outer try/catch",
+  );
+  assert.ok(
+    fnBody.indexOf("try {") < fnBody.indexOf("getLogStream().write("),
+    "the try must cover the log-stream write so a stream failure cannot throw",
+  );
+  assert.match(
+    fnBody,
+    /\n  \} catch \{\n    \/\/ Logging is best-effort/,
+    "writeLog must swallow logging failures silently",
+  );
+});
+
 test("runProcess swallows EPIPE on child stdin so an early-exiting child cannot raise an uncaught error", () => {
   // runProcess always ends child.stdin (empty, or the API key for the
   // keychain save). A child that exits without reading stdin — e.g. the

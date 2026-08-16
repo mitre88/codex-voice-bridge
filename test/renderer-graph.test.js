@@ -41,6 +41,33 @@ test("renderer-utils.js has zero imports (loadable in a sandboxed renderer)", ()
   assert.ok(!utils.includes('from "node:'), 'renderer-utils.js must not reference "node:" specifiers');
 });
 
+test("renderer window error handlers swallow log failures so a rejected log IPC cannot loop", () => {
+  // The window "error" / "unhandledrejection" handlers forward to the
+  // log:renderer IPC. If that IPC ever rejects, an unhandled rejection from
+  // the handler's own log call would fire "unhandledrejection" again —
+  // which calls log again — looping forever and spamming the main process.
+  // Both handlers must catch the promise rejection to break the loop.
+  const renderer = readSource("renderer.js");
+  const errorHandler = renderer.slice(
+    renderer.indexOf('window.addEventListener("error"'),
+    renderer.indexOf('window.addEventListener("unhandledrejection"'),
+  );
+  assert.match(
+    errorHandler,
+    /\.catch\(\(\) => \{\}\)/,
+    "the window error handler must catch log promise rejections",
+  );
+  const rejectionHandler = renderer.slice(
+    renderer.indexOf('window.addEventListener("unhandledrejection"'),
+    renderer.indexOf("function setStatus"),
+  );
+  assert.match(
+    rejectionHandler,
+    /\.catch\(\(\) => \{\}\)/,
+    "the unhandledrejection handler must catch log promise rejections",
+  );
+});
+
 test("renderer.js enables Disconnect at connect start so mid-connect cancel works", () => {
   // A connect can take tens of seconds (token fetch + SDP exchange). The
   // Disconnect button must be clickable while "Connecting" so the abort
