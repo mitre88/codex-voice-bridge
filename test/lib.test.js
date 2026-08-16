@@ -788,6 +788,70 @@ test("resolveWorkdir rejects traversal and outside absolute paths", () => {
   assert.equal(resolveWorkdir(base, base), base);
 });
 
+test("resolveWorkdir resolves symlinks so an inside link to outside cannot escape", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cvb-workdir-"));
+  const base = path.join(root, "workspace");
+  const outside = path.join(root, "outside");
+  fs.mkdirSync(base);
+  fs.mkdirSync(path.join(outside, "sub"), { recursive: true });
+  try {
+    fs.symlinkSync(outside, path.join(base, "evil"), "dir");
+  } catch {
+    t.skip("symlinks not available on this platform");
+    return;
+  }
+  try {
+    // The link is lexically inside the workspace but points outside: the
+    // real-path check must reject it instead of trusting the string prefix.
+    assert.equal(resolveWorkdir(path.join(base, "evil"), base), base);
+    assert.equal(resolveWorkdir(path.join(base, "evil", "sub"), base), base);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveWorkdir allows a symlink that stays inside the workspace", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cvb-workdir-"));
+  const base = path.join(root, "workspace");
+  const real = path.join(base, "real");
+  fs.mkdirSync(real, { recursive: true });
+  try {
+    fs.symlinkSync(real, path.join(base, "alias"), "dir");
+  } catch {
+    t.skip("symlinks not available on this platform");
+    return;
+  }
+  try {
+    // The link resolves back inside the workspace, so it stays allowed and
+    // the canonical (de-symlinked) path is returned.
+    assert.equal(resolveWorkdir(path.join(base, "alias"), base), fs.realpathSync(real));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveWorkdir admits children of a symlinked base", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cvb-workdir-"));
+  const realBase = path.join(root, "real-base");
+  fs.mkdirSync(realBase);
+  const linkBase = path.join(root, "link-base");
+  try {
+    fs.symlinkSync(realBase, linkBase, "dir");
+  } catch {
+    t.skip("symlinks not available on this platform");
+    return;
+  }
+  try {
+    // The base itself is reached through a symlink (like macOS /tmp): a
+    // child of the base must resolve under the real base and stay allowed.
+    assert.equal(resolveWorkdir("sub", linkBase), path.join(fs.realpathSync(realBase), "sub"));
+    // A non-existent outside path under a symlinked base is still rejected.
+    assert.equal(resolveWorkdir(path.join(linkBase, "..", "elsewhere"), linkBase), linkBase);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("parseEnvFile parses KEY=VALUE lines, comments, blanks, and quoted values", () => {
   assert.deepEqual(
     parseEnvFile(`

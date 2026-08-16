@@ -1,6 +1,7 @@
 // Pure helpers shared between the Electron main process and the renderer.
 // No Node/Electron-specific APIs here so these stay unit-testable in a plain Node runtime.
 
+import fs from "node:fs";
 import path from "node:path";
 
 // The sandboxed renderer (Chromium ESM loader) cannot import node: builtins,
@@ -522,8 +523,32 @@ export function resolveWorkdir(requested, baseWorkdir) {
   const raw = typeof requested === "string" && requested.trim() ? requested.trim() : baseWorkdir;
   const resolved = path.isAbsolute(raw) ? raw : path.resolve(baseWorkdir, raw);
   const normalized = path.normalize(resolved);
-  if (normalized !== baseWorkdir && !normalized.startsWith(baseWorkdir + path.sep)) return baseWorkdir;
-  return normalized;
+  // The lexical prefix check alone trusts path strings, and path.normalize
+  // does not follow symlinks: a symlink inside the workspace pointing outside
+  // (e.g. work/evil -> /etc) would pass the prefix check and move the Codex
+  // run out of the configured workspace. Resolve real paths so the
+  // containment check sees where the directory actually is. realpathSync
+  // throws when a path does not exist yet; fall back to the lexical path in
+  // that case — a not-yet-created directory cannot hide a symlink escape, and
+  // the run would fail with "no such directory" anyway. The workspace root is
+  // realpath'd too so the prefix comparison is consistent even when the root
+  // itself is reached through a symlink (e.g. macOS /tmp -> /private/tmp).
+  let base = baseWorkdir;
+  try {
+    base = fs.realpathSync(baseWorkdir);
+  } catch {
+    // Workspace root does not exist yet; compare lexically.
+  }
+  let target = normalized;
+  try {
+    target = fs.realpathSync(normalized);
+  } catch {
+    // Target does not exist yet; resolve it against the real base so a
+    // symlinked base still admits its legitimate children.
+    target = path.resolve(base, path.relative(baseWorkdir, normalized));
+  }
+  if (target !== base && !target.startsWith(base + path.sep)) return baseWorkdir;
+  return target;
 }
 
 export const LOG_MAX_BYTES = 2 * 1024 * 1024;
