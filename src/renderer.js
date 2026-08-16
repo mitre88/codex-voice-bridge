@@ -420,7 +420,15 @@ function setSelectOptions(select, devices, defaultLabel) {
 
 async function refreshMediaDevices(promptForLabels = false) {
   let permissionStream;
-  if (promptForLabels) permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  try {
+    if (promptForLabels) permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    // Permission denied or the prompt dismissed: getUserMedia rejects, but the
+    // device list can still be enumerated and refreshed (labels just come back
+    // empty). Letting the rejection abort the refresh would leave the dropdowns
+    // stale — worse than unlabeled — and surface a raw "Permission denied" log
+    // on every interview-mode switch.
+  }
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     lastMediaDevices = devices;

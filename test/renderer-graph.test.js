@@ -264,3 +264,26 @@ test("sendFunctionOutput drops the pending send on timeout instead of sending it
     "the deferred send must target the captured channel, not the global, so a stale output cannot leak into a later session",
   );
 });
+
+test("refreshMediaDevices survives a denied permission prompt so the list still refreshes", () => {
+  // Switching to interview mode calls refreshMediaDevices(true), which asks
+  // for microphone permission via getUserMedia to obtain device labels. If the
+  // user denies (or dismisses) the prompt, getUserMedia rejects — and the old
+  // code let that rejection abort the whole refresh before enumerateDevices
+  // ran, leaving the dropdowns stale and logging a raw "Permission denied" on
+  // every switch. The permission request must sit in its own try/catch so the
+  // enumeration (and the list refresh) still runs with empty labels.
+  const renderer = readSource("renderer.js");
+  const refreshStart = renderer.indexOf("async function refreshMediaDevices");
+  assert.ok(refreshStart !== -1, "renderer.js must define refreshMediaDevices");
+  const refreshBody = renderer.slice(refreshStart, renderer.indexOf("async function getInterviewAudioStream"));
+  const permissionRequest = refreshBody.indexOf("getUserMedia({ audio: true })");
+  const enumeration = refreshBody.indexOf("enumerateDevices()");
+  const catchIndex = refreshBody.indexOf("catch", permissionRequest);
+  assert.ok(permissionRequest !== -1, "refreshMediaDevices must request mic permission when labels are wanted");
+  assert.ok(enumeration !== -1, "refreshMediaDevices must enumerate devices");
+  assert.ok(
+    catchIndex !== -1 && permissionRequest < catchIndex && catchIndex < enumeration,
+    "the getUserMedia permission request must be isolated in its own try/catch before enumerateDevices so a denied prompt cannot abort the refresh",
+  );
+});
