@@ -454,12 +454,25 @@ export function requireTypeableLength(textLength, budgetMs = 48000) {
 // or the input is not a string.
 export function extractFirstJsonObject(text) {
   if (typeof text !== "string") return null;
-  for (let i = 0; i < text.length; i++) {
+  // The inner scan restarts from every '{', so a pathological input turns
+  // this quadratic: each unclosed candidate re-scans nearly the whole buffer.
+  // That is reachable in practice — the model can type a barrage of '{' into
+  // an app, the editor's window title carries them, and cua-driver's
+  // list_apps stdout (capped at 1MB) surfaces them here; O(n²) over 1MB would
+  // freeze the main process for minutes. Bound the total scanning work to ~2×
+  // the input length: legitimate output still costs ~N total (each candidate
+  // scans at most up to its own closing brace, and braces inside strings are
+  // skipped), while an adversarial run of unclosed candidates exhausts the
+  // budget after a couple of attempts and bails out in linear time. A null
+  // here degrades exactly like the driver emitting no JSON at all — callers
+  // already handle that.
+  let scanBudget = text.length * 2;
+  for (let i = 0; i < text.length && scanBudget > 0; i++) {
     if (text[i] !== "{") continue;
     let depth = 0;
     let inString = false;
     let escaped = false;
-    for (let j = i; j < text.length; j++) {
+    for (let j = i; j < text.length && scanBudget > 0; j++, scanBudget--) {
       const ch = text[j];
       if (inString) {
         if (escaped) escaped = false;

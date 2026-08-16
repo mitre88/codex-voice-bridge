@@ -1043,6 +1043,24 @@ test("extractFirstJsonObject returns null for non-JSON or non-string input", () 
   assert.equal(extractFirstJsonObject(undefined), null);
   assert.equal(extractFirstJsonObject(42), null);
 });
+test("extractFirstJsonObject bails out in linear time on a barrage of unclosed braces", () => {
+  // A window title full of '{' (text the model typed into an app, surfaced by
+  // cua-driver's list_apps stdout) would make every '{' start a fresh O(n)
+  // inner scan — O(n²) over the 1MB output cap would freeze the main process
+  // for minutes. The bounded scan must return null quickly: with the fix this
+  // is microseconds; the unbounded version takes tens of seconds.
+  const barrage = "{".repeat(200000);
+  const started = Date.now();
+  assert.equal(extractFirstJsonObject(barrage), null);
+  assert.ok(Date.now() - started < 2000, "a brace barrage must not stall the scanner");
+});
+test("extractFirstJsonObject still finds a real object after an unterminated candidate", () => {
+  // The scan budget must not break legitimate output: a stray unclosed brace
+  // (log noise) before the real JSON payload must still find the payload.
+  assert.deepEqual(extractFirstJsonObject('{"log":"unterminated\n{"apps":[{"pid":1,"active":true}]}'), {
+    apps: [{ pid: 1, active: true }],
+  });
+});
 
 test("typeDelayMs scales the per-character delay so long texts fit the timeout", () => {
   assert.equal(typeDelayMs(0), 20);
