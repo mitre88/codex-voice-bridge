@@ -130,3 +130,26 @@ test("type/press tools surface the cua-driver failure instead of a generic no-ac
     );
   }
 });
+
+test("pressKeyInFrontApp drops non-string modifier entries before calling cua-driver", () => {
+  // cua-driver's press_key expects a modifiers array of strings; a malformed
+  // model call carrying non-string entries (e.g. modifiers: ["cmd", 42] or
+  // [["cmd"]]) would serialize garbage into json_args and make the driver
+  // fail with an opaque error the model cannot self-correct from. The tool
+  // must keep only string entries — a bare-string or non-array modifiers
+  // already normalizes to [].
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("async function pressKeyInFrontApp");
+  assert.ok(fnStart !== -1, "main.js must define pressKeyInFrontApp");
+  const fnBody = main.slice(fnStart, main.indexOf("async function getActiveAppFromCua"));
+  assert.match(
+    fnBody,
+    /\.filter\(\(modifier\) => typeof modifier === "string"\)/,
+    "pressKeyInFrontApp must filter modifiers to strings",
+  );
+  assert.match(
+    fnBody,
+    /Array\.isArray\(input\.modifiers\)/,
+    "pressKeyInFrontApp must keep the array-shape normalization",
+  );
+});

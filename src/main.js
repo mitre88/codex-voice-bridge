@@ -710,9 +710,13 @@ async function pressKeyInFrontApp(input = {}) {
   if (!active?.pid) {
     return { ok: false, code: -1, stdout: "", stderr: active?.error || "No active app pid found." };
   }
-  // cua-driver expects an array of modifiers; anything else (a bare string
-  // like "cmd") would be misparsed, so normalize defensively.
-  const modifiers = Array.isArray(input.modifiers) ? input.modifiers : [];
+  // cua-driver expects an array of modifier strings; anything else (a bare
+  // string like "cmd", or non-string entries like [42] from a malformed call)
+  // would be misparsed and make the driver fail with an opaque error, so
+  // normalize defensively: keep only string entries.
+  const modifiers = Array.isArray(input.modifiers)
+    ? input.modifiers.filter((modifier) => typeof modifier === "string")
+    : [];
   return runCuaDriver({ tool_name: "press_key", json_args: { pid: active.pid, key: input.key, modifiers } });
 }
 
