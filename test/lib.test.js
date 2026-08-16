@@ -241,6 +241,29 @@ test("normalizeCuaArgs trims stray whitespace around launch_app bundle_id and na
   assert.deepEqual(normalizeCuaArgs("launch_app", { bundle_id: "   " }), { bundle_id: "" });
 });
 
+test("normalizeCuaArgs trims stray whitespace around launch_app url/urls", () => {
+  // isSafeLaunchUrl validates the trimmed URL, so an untrimmed value would
+  // pass the gate but reach cua-driver padded and fail to open. The same
+  // cosmetic-noise trim that applies to bundle_id/name must apply to URLs.
+  assert.deepEqual(normalizeCuaArgs("launch_app", { url: "  https://example.com  " }), {
+    url: "https://example.com",
+  });
+  assert.deepEqual(normalizeCuaArgs("launch_app", { url: "\nhttp://localhost:3000\t" }), {
+    url: "http://localhost:3000",
+  });
+  assert.deepEqual(normalizeCuaArgs("launch_app", { urls: ["  https://example.com  ", "\thttps://x.test\n"] }), {
+    urls: ["https://example.com", "https://x.test"],
+  });
+  // A whitespace-only URL trims to "" but must NOT be re-guessed as an app:
+  // the alias guess runs before the trim, so an explicit (even if empty)
+  // url field still suppresses context guessing and the safety gate rejects.
+  assert.deepEqual(normalizeCuaArgs("launch_app", { url: "   " }, { reason: "open safari" }), { url: "" });
+  // Non-string entries are left untouched for the safety gate to reject.
+  assert.deepEqual(normalizeCuaArgs("launch_app", { urls: ["https://example.com", 42] }), {
+    urls: ["https://example.com", 42],
+  });
+});
+
 test("normalizeCuaArgs resolves app_name alongside urls like open_app does", () => {
   // open_app launches the identity AND passes a safe url; launch_app must do
   // the same instead of leaving the app_name unresolved when urls are present.
@@ -307,6 +330,17 @@ test("resolveOpenAppTarget allows a url-only open in the default browser", () =>
   assert.deepEqual(resolveOpenAppTarget({ url: "http://localhost:3000/page" }), {
     kind: "url",
     url: "http://localhost:3000/page",
+  });
+  // The same cosmetic-noise trim isSafeLaunchUrl applies for validation must
+  // apply to the value handed to the `open` command: a padded URL would pass
+  // the gate but fail to open with the whitespace attached.
+  assert.deepEqual(resolveOpenAppTarget({ url: "  https://example.com  " }), {
+    kind: "url",
+    url: "https://example.com",
+  });
+  assert.deepEqual(resolveOpenAppTarget({ url: "https://example.com\n" }), {
+    kind: "url",
+    url: "https://example.com",
   });
 });
 

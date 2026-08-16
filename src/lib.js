@@ -210,6 +210,19 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
       }
     }
   }
+  // URLs get the same cosmetic-noise trim the identity fields get above:
+  // isSafeLaunchUrl validates the trimmed value, so a whitespace-padded URL
+  // would pass the gate but reach cua-driver untrimmed and fail to open.
+  // Trim AFTER the alias-guess guard: a whitespace-only url is still truthy
+  // there (an explicit "open this URL" intent must never be re-guessed as an
+  // app), and trims to "" only for the downstream safety gate to reject.
+  // Trimming cannot weaken the gates: isSafeCuaLaunchArgs re-validates every
+  // URL afterwards, and a whitespace-only entry trims to "" and fails like
+  // any other empty value.
+  if (typeof args.url === "string") args.url = args.url.trim();
+  if (Array.isArray(args.urls)) {
+    args.urls = args.urls.map((url) => (typeof url === "string" ? url.trim() : url));
+  }
   return args;
 }
 
@@ -257,7 +270,7 @@ export function resolveOpenAppTarget(input = {}, aliases = APP_BUNDLE_ALIASES) {
   const identity = resolveAppIdentity(input, aliases);
   if (identity.bundle_id || identity.name) return { kind: "app", identity };
   if (input.url != null && input.url !== "") {
-    if (isSafeLaunchUrl(input.url)) return { kind: "url", url: input.url };
+    if (isSafeLaunchUrl(input.url)) return { kind: "url", url: String(input.url).trim() };
     return { kind: "error", code: -9, message: "Rejected unsafe url (only http/https URLs may be opened)." };
   }
   return { kind: "error", code: -1, message: "Missing app_name, bundle_id, or url." };
