@@ -110,6 +110,16 @@ test("resolveAppIdentity trims stray whitespace around app_name like isSafeLaunc
   assert.deepEqual(resolveAppIdentity({ app_name: "   " }), { name: "" });
 });
 
+test("resolveAppIdentity trims stray whitespace around bundle_id like it does for app_name", () => {
+  // The same cosmetic noise that wraps app_name in whitespace/newlines also
+  // wraps bundle_id; an untrimmed bundle_id would fail BUNDLE_ID_RE and come
+  // back as "Rejected unsafe app_name or bundle_id" for a safe identity.
+  assert.deepEqual(resolveAppIdentity({ bundle_id: " com.apple.Safari " }), { bundle_id: "com.apple.Safari" });
+  assert.deepEqual(resolveAppIdentity({ bundle_id: "\ncom.google.Chrome\t" }), { bundle_id: "com.google.Chrome" });
+  // A whitespace-only bundle_id trims to "" and is no longer a usable identity.
+  assert.deepEqual(resolveAppIdentity({ bundle_id: "   " }), { bundle_id: "" });
+});
+
 test("resolveAppIdentity maps common-app aliases to exact bundle ids", () => {
   assert.deepEqual(resolveAppIdentity({ app_name: "Mail" }), { bundle_id: "com.apple.mail" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Calendar" }), { bundle_id: "com.apple.iCal" });
@@ -215,6 +225,20 @@ test("normalizeCuaArgs resolves launch_app app_name through the open_app alias m
     app_name: "Safari",
   });
   assert.deepEqual(normalizeCuaArgs("list_apps", { app_name: "Safari" }), { app_name: "Safari" });
+});
+
+test("normalizeCuaArgs trims stray whitespace around launch_app bundle_id and name", () => {
+  // The same cosmetic noise that wraps app_name also wraps bundle_id/name;
+  // an untrimmed value would fail the identity gate for a safe identity.
+  assert.deepEqual(normalizeCuaArgs("launch_app", { bundle_id: " com.apple.Safari " }), {
+    bundle_id: "com.apple.Safari",
+  });
+  assert.deepEqual(normalizeCuaArgs("launch_app", { bundle_id: "\ncom.google.Chrome\t" }), {
+    bundle_id: "com.google.Chrome",
+  });
+  assert.deepEqual(normalizeCuaArgs("launch_app", { name: "  MyApp  " }), { name: "MyApp" });
+  // A whitespace-only bundle_id trims to "" and cannot smuggle an identity.
+  assert.deepEqual(normalizeCuaArgs("launch_app", { bundle_id: "   " }), { bundle_id: "" });
 });
 
 test("normalizeCuaArgs resolves app_name alongside urls like open_app does", () => {

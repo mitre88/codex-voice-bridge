@@ -113,7 +113,17 @@ export function isSafeAppIdentity(identity = {}) {
 }
 
 export function resolveAppIdentity(input = {}, aliases = APP_BUNDLE_ALIASES) {
-  if (input.bundle_id) return { bundle_id: input.bundle_id };
+  if (input.bundle_id) {
+    // Same cosmetic-noise trim as app_name below: model-generated JSON often
+    // wraps values in stray whitespace or a trailing newline (e.g. a template
+    // literal), and an untrimmed bundle_id would fail BUNDLE_ID_RE and come
+    // back as "Rejected unsafe app_name or bundle_id" for a perfectly safe,
+    // correctly-intended identity. Trimming cannot weaken the gates: the
+    // identity is still validated by isSafeAppIdentity afterwards, and a
+    // whitespace-only bundle_id trims to "" and fails the regex like any
+    // empty value.
+    return { bundle_id: String(input.bundle_id).trim() };
+  }
   if (input.app_name) {
     // Model-generated JSON often wraps values in stray whitespace or a
     // trailing newline (e.g. a template literal) — the same cosmetic noise
@@ -162,6 +172,16 @@ function getAliasPatterns(aliases) {
 export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliases = APP_BUNDLE_ALIASES) {
   const args = jsonArgs && typeof jsonArgs === "object" ? { ...jsonArgs } : {};
   if (toolName !== "launch_app") return args;
+  // Same cosmetic-noise trim as resolveAppIdentity applies to app_name: a
+  // model-generated bundle_id/name wrapped in stray whitespace or a trailing
+  // newline (e.g. a template literal) would otherwise fail the identity gate
+  // below and come back as "Rejected unsafe launch_app arguments" for a
+  // perfectly safe identity. Trimming cannot weaken the gates: the identity
+  // is still validated by isSafeCuaLaunchArgs/isSafeAppIdentity afterwards,
+  // and a whitespace-only value trims to "" and fails the regexes like any
+  // empty value.
+  if (typeof args.bundle_id === "string") args.bundle_id = args.bundle_id.trim();
+  if (typeof args.name === "string") args.name = args.name.trim();
   // cua-driver's launch_app speaks name/bundle_id, but callers may pass the
   // app_name key the open_app tool uses. Resolve it through the same alias
   // map so launch_app({app_name}) validates and launches the exact identity
