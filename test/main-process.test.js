@@ -184,13 +184,17 @@ test("type/press tools surface the cua-driver failure instead of a generic no-ac
   }
 });
 
-test("pressKeyInFrontApp drops non-string modifier entries before calling cua-driver", () => {
+test("pressKeyInFrontApp normalizes modifiers so a bare string is never silently dropped", () => {
   // cua-driver's press_key expects a modifiers array of strings; a malformed
   // model call carrying non-string entries (e.g. modifiers: ["cmd", 42] or
   // [["cmd"]]) would serialize garbage into json_args and make the driver
   // fail with an opaque error the model cannot self-correct from. The tool
-  // must keep only string entries — a bare-string or non-array modifiers
-  // already normalizes to [].
+  // must keep only string entries. A bare string like "cmd" — a very
+  // plausible model output — must NOT silently normalize to []: that would
+  // press the key WITHOUT the modifier the model asked for (Cmd+X becomes
+  // plain X, a different action in the front app). A string becomes a
+  // one-element array, and entries are trimmed + lowercased so "CMD" /
+  // " Command " reach the driver in the exact lowercase form it expects.
   const main = readSource("main.js");
   const fnStart = main.indexOf("async function pressKeyInFrontApp");
   assert.ok(fnStart !== -1, "main.js must define pressKeyInFrontApp");
@@ -204,6 +208,16 @@ test("pressKeyInFrontApp drops non-string modifier entries before calling cua-dr
     fnBody,
     /Array\.isArray\(input\.modifiers\)/,
     "pressKeyInFrontApp must keep the array-shape normalization",
+  );
+  assert.match(
+    fnBody,
+    /typeof input\.modifiers === "string"\s*\? \[input\.modifiers\]/,
+    "pressKeyInFrontApp must treat a bare-string modifiers as a one-element array instead of dropping it",
+  );
+  assert.match(
+    fnBody,
+    /\.map\(\(modifier\) => modifier\.trim\(\)\.toLowerCase\(\)\)/,
+    "pressKeyInFrontApp must trim and lowercase each modifier so the driver receives the exact form it expects",
   );
 });
 

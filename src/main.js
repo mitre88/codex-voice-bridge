@@ -737,13 +737,24 @@ async function pressKeyInFrontApp(input = {}) {
   if (!active?.pid) {
     return { ok: false, code: -1, stdout: "", stderr: active?.error || "No active app pid found." };
   }
-  // cua-driver expects an array of modifier strings; anything else (a bare
-  // string like "cmd", or non-string entries like [42] from a malformed call)
-  // would be misparsed and make the driver fail with an opaque error, so
-  // normalize defensively: keep only string entries.
-  const modifiers = Array.isArray(input.modifiers)
-    ? input.modifiers.filter((modifier) => typeof modifier === "string")
-    : [];
+  // cua-driver expects an array of lowercase modifier strings ("cmd", "ctrl",
+  // "alt", "shift", ...). Anything else — non-string entries like [42], or a
+  // bare string like "cmd" (a very plausible model output) — would be
+  // misparsed and make the driver fail with an opaque error, so normalize
+  // defensively. A bare string must NOT silently become []: that would press
+  // the key WITHOUT the modifier the model asked for (Cmd+X becomes plain X,
+  // a different action in the front app). A string therefore becomes a
+  // one-element array, every entry is trimmed and lowercased ("CMD",
+  // " Command ") so the driver receives the exact form it expects, and
+  // non-string entries are dropped.
+  const rawModifiers = Array.isArray(input.modifiers)
+    ? input.modifiers
+    : typeof input.modifiers === "string"
+      ? [input.modifiers]
+      : [];
+  const modifiers = rawModifiers
+    .filter((modifier) => typeof modifier === "string")
+    .map((modifier) => modifier.trim().toLowerCase());
   return runCuaDriver({ tool_name: "press_key", json_args: { pid: active.pid, key: input.key, modifiers } });
 }
 
