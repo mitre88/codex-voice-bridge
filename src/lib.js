@@ -152,11 +152,23 @@ function getAliasPatterns(aliases) {
 
 export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliases = APP_BUNDLE_ALIASES) {
   const args = jsonArgs && typeof jsonArgs === "object" ? { ...jsonArgs } : {};
+  if (toolName !== "launch_app") return args;
+  // cua-driver's launch_app speaks name/bundle_id, but callers may pass the
+  // app_name key the open_app tool uses. Resolve it through the same alias
+  // map so launch_app({app_name}) validates and launches the exact identity
+  // the open_app path would — otherwise an app_name (aliased or not) would
+  // skip both the alias resolution and the isSafeAppIdentity gate below.
+  if (args.app_name && !args.bundle_id && !args.name) {
+    const identity = resolveAppIdentity({ app_name: args.app_name }, aliases);
+    if (identity.bundle_id) args.bundle_id = identity.bundle_id;
+    else if (identity.name) args.name = identity.name;
+    delete args.app_name;
+  }
   // Only guess an app from context when the call carries neither an explicit
   // identity nor a URL. A url/urls field is an explicit "open in the default
   // browser" intent, so a keyword in the reason text (e.g. "open the chrome
   // docs") must not silently redirect that URL to a guessed app.
-  if (toolName === "launch_app" && !args.bundle_id && !args.name && !args.urls && !args.url) {
+  if (!args.bundle_id && !args.name && !args.urls && !args.url) {
     const text = JSON.stringify({ args, fullInput }).toLowerCase();
     for (const { bundleId, re } of getAliasPatterns(aliases).values()) {
       // Match the alias on word boundaries, not as a raw substring: "keynotes"
@@ -184,7 +196,16 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
 // Nothing unsafe is rejected beyond that: missing identities/URLs are
 // cua-driver's problem.
 export function isSafeCuaLaunchArgs(args = {}) {
-  const identity = args.bundle_id ? { bundle_id: args.bundle_id } : args.name ? { name: args.name } : null;
+  // A raw app_name field is validated as a name (the same semantic open_app
+  // gives it): normalizeCuaArgs resolves it first, but any caller that skips
+  // normalization must not get a free pass past the identity gate.
+  const identity = args.bundle_id
+    ? { bundle_id: args.bundle_id }
+    : args.name
+      ? { name: args.name }
+      : args.app_name
+        ? { name: args.app_name }
+        : null;
   if (identity && !isSafeAppIdentity(identity)) return false;
   const hasUrls = args.urls !== undefined || args.url !== undefined;
   if (!hasUrls) return true;

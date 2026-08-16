@@ -189,6 +189,41 @@ test("normalizeCuaArgs matches aliases with regex metacharacters literally", () 
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open c++x" }, customAliases), {});
 });
 
+test("normalizeCuaArgs resolves launch_app app_name through the open_app alias map", () => {
+  // open_app understands app_name; launch_app must resolve the same key so a
+  // model using app_name gets the identical identity (alias -> bundle_id).
+  assert.deepEqual(normalizeCuaArgs("launch_app", { app_name: "safari" }), { bundle_id: "com.apple.Safari" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", { app_name: "Visual Studio Code" }), {
+    bundle_id: "com.microsoft.VSCode",
+  });
+  // Unknown app names stay plain names, exactly like resolveAppIdentity.
+  assert.deepEqual(normalizeCuaArgs("launch_app", { app_name: "MyApp" }), { name: "MyApp" });
+  // An explicit bundle_id/name wins and app_name is left untouched for
+  // non-launch tools.
+  assert.deepEqual(normalizeCuaArgs("launch_app", { bundle_id: "x.y.z", app_name: "Safari" }), {
+    bundle_id: "x.y.z",
+    app_name: "Safari",
+  });
+  assert.deepEqual(normalizeCuaArgs("list_apps", { app_name: "Safari" }), { app_name: "Safari" });
+});
+
+test("normalizeCuaArgs resolves app_name alongside urls like open_app does", () => {
+  // open_app launches the identity AND passes a safe url; launch_app must do
+  // the same instead of leaving the app_name unresolved when urls are present.
+  assert.deepEqual(
+    normalizeCuaArgs("launch_app", { app_name: "safari", urls: ["https://example.com"] }),
+    { bundle_id: "com.apple.Safari", urls: ["https://example.com"] },
+  );
+});
+
+test("isSafeCuaLaunchArgs validates a raw app_name identity", () => {
+  assert.equal(isSafeCuaLaunchArgs({ app_name: "Safari" }), true);
+  assert.equal(isSafeCuaLaunchArgs({ app_name: "Música" }), true);
+  // The same unsafe string open_app rejects must not pass the launch_app gate.
+  assert.equal(isSafeCuaLaunchArgs({ app_name: 'x"\ndo shell script' }), false);
+  assert.equal(isSafeCuaLaunchArgs({ app_name: "Música\u0007" }), false);
+});
+
 test("isSafeCuaLaunchArgs accepts safe launch_app identities and http/https urls", () => {
   assert.equal(isSafeCuaLaunchArgs({ bundle_id: "com.apple.Safari" }), true);
   assert.equal(isSafeCuaLaunchArgs({ name: "Visual Studio Code" }), true);
