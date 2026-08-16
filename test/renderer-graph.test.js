@@ -343,3 +343,31 @@ test("captions are capped so a long session cannot grow the DOM without bound", 
     "appendCaption must mark the truncation so the cut is visible, not silent",
   );
 });
+
+test("connectPeerSession fetches the token inside the try so a failed fetch cannot leave the mic hot", () => {
+  // connectPeerSession used to await createClientSecret BEFORE its try block.
+  // If that fetch threw (bad key, network, quota), the catch that closes the
+  // peer connection and stops inputStream tracks never ran — and since the
+  // session is never pushed to activeSessions on that path, disconnectRealtime()
+  // could not stop the microphone either. The mic stayed hot after a failed
+  // connect. The token fetch must live inside the try so the cleanup path
+  // always runs.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("async function connectPeerSession");
+  assert.ok(fnStart !== -1, "renderer.js must define connectPeerSession");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("async function connectSingleRealtime"));
+  const tryIndex = fnBody.indexOf("try {");
+  const tokenFetch = fnBody.indexOf("createClientSecret");
+  assert.ok(tryIndex !== -1, "connectPeerSession must have a try block");
+  assert.ok(tokenFetch !== -1, "connectPeerSession must fetch a client secret");
+  assert.ok(
+    tryIndex < tokenFetch,
+    "the client-secret fetch must be inside the try block so a failed fetch still runs the cleanup that stops the mic",
+  );
+  assert.match(
+    fnBody,
+    /inputStream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/,
+    "the catch must stop the input stream tracks so the mic cannot stay hot after a failed connect",
+  );
+});
+

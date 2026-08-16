@@ -492,11 +492,17 @@ async function applyAudioOutputDevice(audio, deviceId, label) {
 }
 
 async function connectPeerSession({ label, tokenOptions, inputStream, outputDeviceId, transcriptTargets, enableTools = false, controller }) {
-  const token = await getBridge().createClientSecret(tokenOptions);
   const pc = new RTCPeerConnection();
   const audio = document.createElement("audio");
   audio.autoplay = true;
   try {
+    // The token fetch must live inside the try: a failure here (bad key,
+    // network, quota) would otherwise skip the catch below, and since this
+    // session is never pushed to activeSessions, disconnectRealtime() cannot
+    // stop the microphone either — the mic would stay hot after a failed
+    // connect. Fetching it inside the try guarantees the cleanup path always
+    // runs: pc closed and inputStream tracks stopped.
+    const token = await getBridge().createClientSecret(tokenOptions);
     await applyAudioOutputDevice(audio, outputDeviceId, label);
 
     pc.ontrack = (event) => {
