@@ -540,6 +540,7 @@ test("humanizeError maps Chromium net:: network codes to a connectivity message"
   assert.match(humanizeError(new Error("net::ERR_CONNECTION_CLOSED")), /could not reach the openai api/i);
   assert.match(humanizeError(new Error("net::ERR_CONNECTION_FAILED")), /could not reach the openai api/i);
   assert.match(humanizeError(new Error("net::ERR_TIMED_OUT")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("net::ERR_CONNECTION_TIMED_OUT")), /could not reach the openai api/i);
   assert.match(humanizeError(new Error("net::ERR_TUNNEL_CONNECTION_FAILED")), /could not reach the openai api/i);
   assert.match(humanizeError(new Error("net::ERR_ADDRESS_UNREACHABLE")), /could not reach the openai api/i);
   assert.match(humanizeError(new Error("net::ERR_NETWORK_CHANGED")), /could not reach the openai api/i);

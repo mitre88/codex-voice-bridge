@@ -141,6 +141,11 @@ export function humanizeError(error) {
     haystack.includes("err_connection_closed") ||
     haystack.includes("err_connection_failed") ||
     haystack.includes("err_timed_out") ||
+    // ERR_CONNECTION_TIMED_OUT is the most common Chromium form of a silently
+    // dropped connection (firewall/proxy dropping SYN packets, a blocked
+    // host); the bare "err_timed_out" match above does not cover it because
+    // the substring is "connection_timed_out", not "err_timed_out".
+    haystack.includes("err_connection_timed_out") ||
     haystack.includes("err_tunnel_connection_failed") ||
     haystack.includes("err_address_unreachable") ||
     haystack.includes("err_network_changed") ||
