@@ -193,10 +193,24 @@ function renderCaptions() {
   outputCaptionEl.textContent = outputCaption.trim() || "...";
 }
 
+// Cap each accumulated caption so a long session cannot grow the caption
+// strings and the DOM without bound — the debug log, the codex output
+// buffer, and the main-process output buffers are all capped, and the
+// captions were the one unbounded accumulator. A single spoken turn is far
+// below the cap, and .completed/.done events replace the whole caption, so
+// the cap only trims runaway accumulation. Truncation keeps the NEWEST text
+// (the tail is what the user is reading live) with a marker showing the cut.
+const MAX_CAPTION_CHARS = 50000;
+
 function appendCaption(kind, text, replace = false) {
   if (!text) return;
-  if (kind === "source") sourceCaption = replace ? text : `${sourceCaption}${text}`;
-  else outputCaption = replace ? text : `${outputCaption}${text}`;
+  let next =
+    kind === "source" ? (replace ? text : `${sourceCaption}${text}`) : (replace ? text : `${outputCaption}${text}`);
+  if (next.length > MAX_CAPTION_CHARS) {
+    next = `...[truncated ${next.length - MAX_CAPTION_CHARS} chars]\n${next.slice(-MAX_CAPTION_CHARS)}`;
+  }
+  if (kind === "source") sourceCaption = next;
+  else outputCaption = next;
   renderCaptions();
 }
 

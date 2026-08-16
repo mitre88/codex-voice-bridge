@@ -287,3 +287,32 @@ test("refreshMediaDevices survives a denied permission prompt so the list still 
     "the getUserMedia permission request must be isolated in its own try/catch before enumerateDevices so a denied prompt cannot abort the refresh",
   );
 });
+
+test("captions are capped so a long session cannot grow the DOM without bound", () => {
+  // The debug log, the codex output buffer, and the main-process output
+  // buffers are all bounded, but the accumulated transcript captions used to
+  // grow without limit: transcript delta events append to sourceCaption /
+  // outputCaption forever, so a long session (or an unusually long turn)
+  // grows the caption strings and the DOM without bound — the one unbounded
+  // accumulator in the renderer. appendCaption must enforce a cap and keep
+  // the newest text (the tail the user is reading) when truncating.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("function appendCaption");
+  assert.ok(fnStart !== -1, "renderer.js must define appendCaption");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("function handleTranscriptEvent"));
+  assert.match(
+    fnBody,
+    /MAX_CAPTION_CHARS/,
+    "appendCaption must enforce a cap on the accumulated caption length",
+  );
+  assert.match(
+    fnBody,
+    /next\.slice\(-MAX_CAPTION_CHARS\)/,
+    "appendCaption must keep the newest text (tail) when truncating an over-long caption",
+  );
+  assert.match(
+    fnBody,
+    /truncated \$\{next\.length - MAX_CAPTION_CHARS\} chars/,
+    "appendCaption must mark the truncation so the cut is visible, not silent",
+  );
+});
