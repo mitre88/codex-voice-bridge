@@ -689,6 +689,17 @@ test("humanizeError maps TLS certificate failures to a certificate message", () 
   assert.match(humanizeError(eprotoWrapped), /tls certificate/i);
   // A network error without a certificate cause still maps to connectivity.
   assert.match(humanizeError(new TypeError("fetch failed")), /could not reach the openai api/i);
+  // The macOS application firewall denying this app outbound access surfaces
+  // as Chromium's ERR_NETWORK_ACCESS_DENIED — a firewall problem that must
+  // map to the connectivity message instead of passing through raw, so the
+  // user does not blame the key or the server.
+  assert.match(humanizeError(new Error("net::ERR_NETWORK_ACCESS_DENIED")), /could not reach the openai api/i);
+  assert.match(humanizeError(new Error("fetch failed: enetdown")), /could not reach the openai api/i);
+  // A syscall-code-only failure (the message is only the generic "fetch
+  // failed", the code carries the diagnosis) must still map to connectivity.
+  const enetdown = new TypeError("fetch failed");
+  enetdown.cause = { code: "ENETDOWN", message: "network is down" };
+  assert.match(humanizeError(enetdown), /could not reach the openai api/i);
 });
 
 test("humanizeError maps insufficient permissions failures to an actionable message", () => {

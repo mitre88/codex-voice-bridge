@@ -219,6 +219,11 @@ test("pressKeyInFrontApp normalizes modifiers so a bare string is never silently
     /\.map\(\(modifier\) => modifier\.trim\(\)\.toLowerCase\(\)\)/,
     "pressKeyInFrontApp must trim and lowercase each modifier so the driver receives the exact form it expects",
   );
+  assert.match(
+    fnBody,
+    /\.filter\(\(modifier\) => modifier\.length > 0\)/,
+    "pressKeyInFrontApp must drop whitespace-only modifiers (they trim to '')",
+  );
 });
 
 test("pressKeyInFrontApp trims the key so wrapped whitespace cannot reach the driver", () => {

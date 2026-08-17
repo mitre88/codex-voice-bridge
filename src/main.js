@@ -764,7 +764,12 @@ async function pressKeyInFrontApp(input = {}) {
       : [];
   const modifiers = rawModifiers
     .filter((modifier) => typeof modifier === "string")
-    .map((modifier) => modifier.trim().toLowerCase());
+    .map((modifier) => modifier.trim().toLowerCase())
+    // A whitespace-only entry ("  ", " \n") trims to "" — an empty modifier
+    // string would reach cua-driver and fail with an opaque error just like
+    // the non-string entries filtered above. Drop it so the driver only ever
+    // sees real modifier names.
+    .filter((modifier) => modifier.length > 0);
   return runCuaDriver({ tool_name: "press_key", json_args: { pid: active.pid, key, modifiers } });
 }
 

@@ -229,6 +229,20 @@ function handleTranscriptEvent(event, targets = { source: "source", output: "out
   }
 }
 
+// Cap the JSON shown in the pending-action panel so a model-generated args
+// blob (bounded at 200KB for run_cua_driver, unbounded for the rest) cannot
+// inflate the textarea and the DOM without limit — the log, the captions, and
+// the output buffers are all capped, and the panel was the one unbounded sink.
+// Truncation is display-only: the full args are still sent for execution, so
+// the model never loses data it asked to run. A marker shows the cut.
+const MAX_PENDING_ARGS_CHARS = 20000;
+
+function formatPendingArgs(args) {
+  const text = JSON.stringify(args || {}, null, 2);
+  if (text.length <= MAX_PENDING_ARGS_CHARS) return text;
+  return `${text.slice(0, MAX_PENDING_ARGS_CHARS)}\n...[truncated ${text.length - MAX_PENDING_ARGS_CHARS} chars]`;
+}
+
 function setPendingAction(action) {
   clearPendingActionTimer();
   // The Realtime API can emit several function calls in one turn (parallel
@@ -248,8 +262,13 @@ function setPendingAction(action) {
   pendingAction = action;
   pendingPanel.hidden = !action;
   if (!action) pendingPromptEl.value = "";
-  else if (action.kind === "codex") pendingPromptEl.value = action.args?.prompt || "";
-  else pendingPromptEl.value = JSON.stringify(action.args || {}, null, 2);
+  // Display-only caps for both branches: the codex prompt and the args JSON
+  // arrive from the Realtime API before the main process validates their
+  // length, so an oversized model-generated prompt (or args blob) must not
+  // inflate the textarea without limit. The full value is still sent for
+  // execution — the panel is just a preview for the human to approve.
+  else if (action.kind === "codex") pendingPromptEl.value = formatPendingArgs(action.args?.prompt || "");
+  else pendingPromptEl.value = formatPendingArgs(action.args);
   runCodexButton.disabled = !action;
   rejectCodexButton.disabled = !action;
   // If the human never answers (model waiting on Run/Reject), auto-reject so

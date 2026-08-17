@@ -143,7 +143,13 @@ export function humanizeError(error) {
     haystack.includes("und_err_socket") ||
     haystack.includes("enetunreach") ||
     haystack.includes("ehostunreach") ||
+    haystack.includes("enetdown") ||
     haystack.includes("econnaborted") ||
+    // The macOS application firewall (or a network filter) denying this app
+    // outbound access surfaces as Chromium's ERR_NETWORK_ACCESS_DENIED — a
+    // firewall problem, not a server outage or a key problem. Without this
+    // the raw net:: text passes through and the user blames the wrong thing.
+    haystack.includes("err_network_access_denied") ||
     haystack.includes("err_internet_disconnected") ||
     haystack.includes("err_name_not_resolved") ||
     haystack.includes("err_name_resolution_failed") ||

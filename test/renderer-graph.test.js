@@ -371,3 +371,42 @@ test("connectPeerSession fetches the token inside the try so a failed fetch cann
   );
 });
 
+
+test("setPendingAction caps the args shown in the pending panel (display-only truncation)", () => {
+  // The pending panel previews what the model wants to run. The args blob
+  // arrives from the Realtime API before the main process validates its
+  // length (json_args is bounded at 200KB for run_cua_driver, the codex
+  // prompt is bounded later too), so an oversized model-generated prompt or
+  // args must not inflate the textarea and the DOM without limit — the log,
+  // captions, and output buffers are all capped, and the panel was the one
+  // unbounded sink. The truncation is display-only: the FULL args are still
+  // sent for execution (setPendingAction never rewrites action.args), so the
+  // model does not lose data it asked to run. A marker shows the cut.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("const MAX_PENDING_ARGS_CHARS");
+  assert.ok(fnStart !== -1, "renderer.js must define MAX_PENDING_ARGS_CHARS");
+  // Slice from the constant (defined just above setPendingAction) so the body
+  // includes both the cap definition and the function that enforces it.
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("function clearPendingActionTimer"));
+  assert.match(
+    fnBody,
+    /formatPendingArgs\(/,
+    "setPendingAction must route both the codex prompt and the args JSON through the display cap",
+  );
+  assert.match(
+    fnBody,
+    /MAX_PENDING_ARGS_CHARS/,
+    "setPendingAction must enforce a cap on the pending-panel display",
+  );
+  assert.match(
+    fnBody,
+    /truncated \$\{text\.length - MAX_PENDING_ARGS_CHARS\} chars/,
+    "setPendingAction must mark the truncation so the cut is visible, not silent",
+  );
+  // The cap must never rewrite what is executed: pendingAction keeps the full
+  // args object, only the textarea preview is truncated.
+  assert.ok(
+    !/pendingAction\.args\s*=/.test(fnBody),
+    "setPendingAction must not rewrite the pending action args (display-only truncation)",
+  );
+});
