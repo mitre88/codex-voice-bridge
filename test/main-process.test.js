@@ -353,3 +353,23 @@ test("runCuaDriver and runMacAction guard a null IPC payload like runCodex does"
     "runMacAction must read action with optional chaining so null settles cleanly",
   );
 });
+
+test("app:config reports the resolved workdir, not the raw env value", () => {
+  // The UI shows this path, so it must be the same directory Codex actually
+  // operates on. The raw DEFAULT_WORKDIR may be relative, a symlink, or not
+  // exist yet — resolveWorkdir normalizes all three (realpath, mkdir,
+  // containment fallback) and runCodex uses it. Exposing the raw value lets
+  // the UI claim a path Codex never uses (e.g. "~/codex" while Codex runs in
+  // "/Users/you/codex" after ~ expansion).
+  const main = readSource("main.js");
+  const configStart = main.indexOf('ipcMain.handle("app:config"');
+  assert.ok(configStart !== -1, "main.js must define app:config");
+  // app:config is the last ipcMain.handle registration; slice to the end of
+  // the file (there is no later handler to bound it).
+  const configBody = main.slice(configStart);
+  assert.match(
+    configBody,
+    /workdir: resolveWorkdir\(undefined, DEFAULT_WORKDIR\)/,
+    "app:config must report the resolved workdir",
+  );
+});

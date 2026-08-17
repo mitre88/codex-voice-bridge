@@ -124,7 +124,20 @@ function setStatus(text, state) {
 }
 
 function log(message, data) {
-  const suffix = data ? `\n${typeof data === "string" ? data : JSON.stringify(data, null, 2)}` : "";
+  // Serialize defensively: log() runs inside the window error/unhandled
+  // rejection handlers too, and a non-serializable payload (a circular
+  // reason object, a throwing toJSON, a BigInt) would make JSON.stringify
+  // throw *inside* the error handler — the new throw then triggers the same
+  // handler again, and the renderer loops forever logging a log failure.
+  // main.js writeLog already guards its own stringify for exactly this
+  // reason; the renderer log must not be the one unguarded link.
+  let serialized;
+  try {
+    serialized = JSON.stringify(data, null, 2);
+  } catch {
+    serialized = String(data);
+  }
+  const suffix = data ? `\n${typeof data === "string" ? data : serialized}` : "";
   logEl.textContent = `${new Date().toLocaleTimeString()}  ${message}${suffix}\n${logEl.textContent}`;
   // Cap the in-memory log so long Codex streams cannot grow the DOM forever.
   if (logEl.textContent.length > 50000) logEl.textContent = logEl.textContent.slice(0, 50000);

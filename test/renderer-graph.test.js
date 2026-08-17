@@ -410,3 +410,21 @@ test("setPendingAction caps the args shown in the pending panel (display-only tr
     "setPendingAction must not rewrite the pending action args (display-only truncation)",
   );
 });
+
+test("log() serializes defensively so a non-serializable payload cannot loop the error handlers", () => {
+  // log() runs inside the window error/unhandledrejection handlers. A
+  // circular reason object, a throwing toJSON, or a BigInt would make
+  // JSON.stringify throw *inside* the error handler — the new throw then
+  // triggers the same handler again, and the renderer loops forever logging
+  // a log failure. main.js writeLog already guards its own stringify for
+  // exactly this reason; the renderer log must not be the one unguarded link.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("function log(message, data)");
+  assert.ok(fnStart !== -1, "renderer.js must define log()");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("function updateModeControls"));
+  assert.match(
+    fnBody,
+    /try \{[\s\S]*?JSON\.stringify\(data, null, 2\)[\s\S]*?\} catch \{[\s\S]*?serialized = String\(data\);/,
+    "log() must fall back to String(data) when JSON.stringify throws",
+  );
+});

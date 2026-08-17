@@ -954,7 +954,13 @@ ipcMain.handle("app:config", guard(() => ({
   voice: DEFAULT_VOICE,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   targetLanguage: DEFAULT_TARGET_LANGUAGE,
-  workdir: DEFAULT_WORKDIR,
+  // Resolve the workdir exactly like runCodex does: the raw env value may be
+  // a relative path, a symlink, or a path that does not exist yet, and
+  // resolveWorkdir normalizes all three (realpath, mkdir, containment
+  // fallback). Showing the raw value here would let the UI claim a directory
+  // that Codex never operates on (e.g. "~/codex" while Codex uses
+  // "/Users/you/codex" after ~ expansion).
+  workdir: resolveWorkdir(undefined, DEFAULT_WORKDIR),
   shortcut: SHORTCUT,
   actionTimeoutMs: ACTION_TIMEOUT_MS,
   // The renderer's SDP exchange is the second OpenAI HTTP hop of a connect
