@@ -447,6 +447,24 @@ export function isSafeCuaLaunchArgs(args = {}) {
   return urls.every((url) => isSafeLaunchUrl(url));
 }
 
+// cua-driver's press_key and type_text_chars require a key and a text
+// respectively, but the run_cua_driver tool schema only requires tool_name
+// and json_args — so the model can call them directly with the required
+// field missing, and the driver would fail with an opaque error the model
+// cannot self-correct from (the same class of failure the dedicated
+// type_text_in_front_app/press_key_in_front_app requireNonEmptyString guards
+// exist to prevent). Callers run this on the NORMALIZED args, so a
+// whitespace-only key ("  " trims to "") fails here instead of reaching the
+// driver raw. Other tools have no required fields this bridge knows of:
+// missing identities/URLs are the launch_app gate's problem, and everything
+// else is cua-driver's problem. Returns null when valid, or a short
+// human-readable error message.
+export function validateCuaDriverRequiredArgs(toolName, args = {}) {
+  if (toolName === "press_key") return requireNonEmptyString(args.key, "key");
+  if (toolName === "type_text_chars") return requireNonEmptyString(args.text, "text");
+  return null;
+}
+
 // Decide what open_app should launch. An app identity (bundle_id/name) wins;
 // with none, a plain http/https URL opens in the default browser. Returns:
 //   { kind: "app", identity }        -> launch the app (cua-driver + activate)

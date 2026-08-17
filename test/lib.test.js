@@ -34,6 +34,7 @@ import {
   rotateLogIfNeeded,
   toPositiveInt,
   truncateOutput,
+  validateCuaDriverRequiredArgs,
 } from "../src/lib.js";
 
 test("normalizeReasoningEffort accepts known values and falls back", () => {
@@ -288,6 +289,48 @@ test("normalizeCuaArgs normalizes press_key key/modifiers like the dedicated too
   // dedicated tool always sends), and other tools are not affected.
   assert.deepEqual(normalizeCuaArgs("press_key", { key: 7 }), { key: 7, modifiers: [] });
   assert.deepEqual(normalizeCuaArgs("type_text_chars", { text: "Return" }), { text: "Return" });
+});
+
+test("validateCuaDriverRequiredArgs rejects missing/blank/non-string press_key key and type_text_chars text", () => {
+  // The run_cua_driver schema only requires tool_name+json_args, so the model
+  // can call press_key/type_text_chars directly with the required field
+  // missing — a shape cua-driver rejects with an opaque error. The guard must
+  // refuse missing, whitespace-only (trims to ""), and non-string values with
+  // the same clean message the dedicated tools use.
+  assert.equal(validateCuaDriverRequiredArgs("press_key", {}), "key must be a non-empty string.");
+  assert.equal(validateCuaDriverRequiredArgs("press_key", { key: "   " }), "key must be a non-empty string.");
+  assert.equal(validateCuaDriverRequiredArgs("press_key", { key: 7 }), "key must be a non-empty string.");
+  assert.equal(validateCuaDriverRequiredArgs("type_text_chars", {}), "text must be a non-empty string.");
+  assert.equal(validateCuaDriverRequiredArgs("type_text_chars", { text: "\n" }), "text must be a non-empty string.");
+  assert.equal(validateCuaDriverRequiredArgs("type_text_chars", { text: 42 }), "text must be a non-empty string.");
+});
+
+test("validateCuaDriverRequiredArgs passes valid args and ignores other tools", () => {
+  // Only press_key/type_text_chars have required fields this bridge knows of;
+  // every other tool (including launch_app, which has its own safety gate)
+  // must pass through untouched.
+  assert.equal(validateCuaDriverRequiredArgs("press_key", { key: "return", modifiers: ["cmd"] }), null);
+  assert.equal(validateCuaDriverRequiredArgs("press_key", { key: "p" }), null);
+  assert.equal(validateCuaDriverRequiredArgs("type_text_chars", { text: "hola" }), null);
+  assert.equal(validateCuaDriverRequiredArgs("list_apps", {}), null);
+  assert.equal(validateCuaDriverRequiredArgs("get_active_app", {}), null);
+  assert.equal(validateCuaDriverRequiredArgs("launch_app", { name: "Safari" }), null);
+  assert.equal(validateCuaDriverRequiredArgs("launch_app", {}), null);
+});
+
+test("validateCuaDriverRequiredArgs runs on normalized args", () => {
+  // Callers normalize first, so a "+"-joined combo normalizes to a real key
+  // and must pass, while a whitespace-only key trims to "" and must fail.
+  const combo = normalizeCuaArgs("press_key", { key: "CMD+SHIFT+P" });
+  assert.equal(combo.key, "p");
+  assert.equal(validateCuaDriverRequiredArgs("press_key", combo), null);
+  const blank = normalizeCuaArgs("press_key", { key: "   " });
+  assert.equal(blank.key, "");
+  assert.equal(validateCuaDriverRequiredArgs("press_key", blank), "key must be a non-empty string.");
+  assert.equal(
+    validateCuaDriverRequiredArgs("type_text_chars", normalizeCuaArgs("type_text_chars", { text: " ok " })),
+    null,
+  );
 });
 
 test("normalizeCuaArgs matches aliases on word boundaries, not substrings", () => {

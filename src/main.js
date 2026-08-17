@@ -31,6 +31,7 @@ import {
   rotateLogIfNeeded,
   toPositiveInt,
   typeDelayMs,
+  validateCuaDriverRequiredArgs,
 } from "./lib.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -662,6 +663,16 @@ function runCuaDriver(input = {}) {
   // the model would make spawn() fail with E2BIG — reject it cleanly like the
   // prompt/text guards do.
   const normalizedArgs = normalizeCuaArgs(toolName, input.json_args, input);
+  // press_key/type_text_chars need key/text, and the run_cua_driver schema
+  // only requires tool_name+json_args: a model call with the field missing
+  // would otherwise reach cua-driver and fail with an opaque error the model
+  // cannot self-correct from — the same class of failure the dedicated
+  // type_text_in_front_app/press_key_in_front_app guards prevent. Runs on
+  // the NORMALIZED args so a whitespace-only key that trims to "" fails here.
+  const requiredArgsError = validateCuaDriverRequiredArgs(toolName, normalizedArgs);
+  if (requiredArgsError) {
+    return Promise.resolve({ ok: false, code: -5, stdout: "", stderr: requiredArgsError });
+  }
   // launch_app reaches the same local-app machinery as the open_app path, so
   // it must obey the same gates: a model-supplied file:// or custom-scheme URL
   // (or an unsafe app identity) must not slip past the checks open_app applies.

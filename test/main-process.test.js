@@ -490,6 +490,34 @@ test("runCuaDriver and runMacAction guard a null IPC payload like runCodex does"
   );
 });
 
+test("runCuaDriver validates required press_key/type_text_chars args before spawning", () => {
+  // The run_cua_driver schema only requires tool_name+json_args, so the model
+  // can call press_key (no key) or type_text_chars (no text) directly — a
+  // shape cua-driver rejects with an opaque error the model cannot
+  // self-correct from, the same class of failure the dedicated tools'
+  // requireNonEmptyString guards prevent. runCuaDriver must run the
+  // validation on the NORMALIZED args (so a whitespace-only key that trims to
+  // "" fails too) and settle with a clean error before spawning the driver.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("function runCuaDriver");
+  assert.ok(fnStart !== -1, "main.js must define runCuaDriver");
+  const fnBody = main.slice(fnStart, main.indexOf("async function runMacAction"));
+  assert.match(
+    fnBody,
+    /validateCuaDriverRequiredArgs\(toolName, normalizedArgs\)/,
+    "runCuaDriver must validate press_key/type_text_chars required args on the normalized args",
+  );
+  assert.match(
+    fnBody,
+    /requiredArgsError\) \{\n    return Promise\.resolve\(\{ ok: false, code: -5/,
+    "runCuaDriver must settle with a clean error when the required args are missing",
+  );
+  assert.ok(
+    fnBody.indexOf("validateCuaDriverRequiredArgs(toolName, normalizedArgs)") < fnBody.indexOf("runProcess(\"cua-driver\""),
+    "the required-args guard must run before spawning cua-driver",
+  );
+});
+
 test("app:config reports the resolved workdir, not the raw env value", () => {
   // The UI shows this path, so it must be the same directory Codex actually
   // operates on. The raw DEFAULT_WORKDIR may be relative, a symlink, or not
