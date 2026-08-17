@@ -1070,6 +1070,20 @@ test("parseEnvFile strips inline comments after quoted values", () => {
   assert.deepEqual(parseEnvFile('KEY="a"b'), { KEY: '"a"b' });
 });
 
+test("parseEnvFile handles escaped quotes and backslashes in double-quoted values", () => {
+  // A naive first-closing-quote scan would stop at the escaped quote and keep
+  // the raw `"a\"b"` (quotes included), silently corrupting the value.
+  assert.deepEqual(parseEnvFile('KEY="a\\"b"'), { KEY: 'a"b' });
+  assert.deepEqual(parseEnvFile('KEY="quote\\"" # comment'), { KEY: 'quote"' });
+  assert.deepEqual(parseEnvFile('KEY="a\\\\b"'), { KEY: "a\\b" });
+  // dotenv-style \n, \r, \t escapes are unescaped inside double quotes.
+  assert.deepEqual(parseEnvFile('KEY="line1\\nline2"'), { KEY: "line1\nline2" });
+  // An escaped quote at the very end does not leave the value unterminated.
+  assert.deepEqual(parseEnvFile('KEY="a\\"'), { KEY: '"a\\"' });
+  // Single-quoted values stay literal: no escape processing, matching dotenv.
+  assert.deepEqual(parseEnvFile("KEY='a\\'b'"), { KEY: "'a\\'b'" });
+});
+
 test("parseEnvFile accepts the shell-style export prefix", () => {
   assert.deepEqual(
     parseEnvFile("export OPENAI_API_KEY=sk-test-123\nexport QUOTED='a=b' # comment\nexport UNQUOTED=val # trailing"),

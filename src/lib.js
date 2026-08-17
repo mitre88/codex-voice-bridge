@@ -590,10 +590,45 @@ export function parseEnvFile(contents) {
       // quote never closes or stray text follows the closing quote, keep the
       // raw value untouched, matching the previous behavior.
       const quote = value[0];
-      const closing = value.indexOf(quote, 1);
+      // Double-quoted values may escape a quote or backslash (\" and \\,
+      // matching dotenv): value.indexOf(quote, 1) would mistake the escaped
+      // quote in `KEY="a\"b"` for the closing one and keep the raw value
+      // WITH its quotes, silently corrupting e.g. a quoted password. Scan
+      // for the real closing quote, skipping escaped characters.
+      let closing = -1;
+      if (quote === '"') {
+        let escaped = false;
+        for (let i = 1; i < value.length; i++) {
+          const ch = value[i];
+          if (escaped) {
+            escaped = false;
+            continue;
+          }
+          if (ch === "\\") {
+            escaped = true;
+            continue;
+          }
+          if (ch === '"') {
+            closing = i;
+            break;
+          }
+        }
+      } else {
+        closing = value.indexOf(quote, 1);
+      }
       if (closing !== -1) {
         const tail = value.slice(closing + 1).trim();
-        if (!tail || tail.startsWith("#")) value = value.slice(1, closing);
+        if (!tail || tail.startsWith("#")) {
+          value = value.slice(1, closing);
+          // Unescape the sequences dotenv supports inside double quotes so
+          // `KEY="a\"b"` yields a"b and `KEY="a\\b"` yields a\b — not the
+          // raw backslashes, which would corrupt the value downstream.
+          if (quote === '"') {
+            value = value.replace(/\\(["\\nrt])/g, (match, esc) =>
+              esc === "n" ? "\n" : esc === "r" ? "\r" : esc === "t" ? "\t" : esc,
+            );
+          }
+        }
       }
     }
     result[key] = value;
