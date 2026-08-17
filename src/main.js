@@ -273,10 +273,26 @@ function runProcess(command, args, options = {}) {
       // A failed spawn never emits "close", so drop the tracking entry here.
       runningChildren.delete(child);
       cancelHardKill();
-      // A missing binary (ENOENT) or a non-executable one (EACCES) is the
-      // most common first-run failure; turn it into an actionable message so
-      // the user (and the model relaying it) knows the command is not
-      // installed instead of guessing from "spawn codex ENOENT".
+      // spawn() reports a nonexistent cwd as ENOENT with the command in
+      // error.path — the same code a missing binary produces — and runCodex
+      // hands a model-controlled cwd to spawn, so a working directory that
+      // does not exist would otherwise surface as the misleading "codex was
+      // not found on PATH" and make the model (and the user relaying it)
+      // blame the install instead of the path. Check the cwd this spawn
+      // actually used: if it is gone, that is the failure to report. A
+      // missing binary (ENOENT) or a non-executable one (EACCES) stays the
+      // most common first-run failure and keeps its actionable message so
+      // the user knows the command is not installed instead of guessing from
+      // "spawn codex ENOENT".
+      if (error?.code === "ENOENT" && !fs.existsSync(options.cwd || DEFAULT_WORKDIR)) {
+        finish({
+          ok: false,
+          code: -1,
+          stdout,
+          stderr: `The working directory does not exist: ${options.cwd || DEFAULT_WORKDIR}`,
+        });
+        return;
+      }
       finish({ ok: false, code: -1, stdout, stderr: humanizeSpawnError(command, error) });
     });
   });

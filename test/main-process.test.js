@@ -159,6 +159,34 @@ test("runProcess swallows EPIPE on child stdin so an early-exiting child cannot 
   );
 });
 
+test("runProcess distinguishes a missing cwd from a missing binary on ENOENT", () => {
+  // spawn() reports a nonexistent cwd as ENOENT with the command in
+  // error.path — the same code a missing binary produces — and runCodex
+  // hands a model-controlled cwd to spawn, so a working directory that does
+  // not exist would otherwise surface as the misleading "codex was not found
+  // on PATH" and make the model blame the install instead of the path. The
+  // error handler must check the cwd it actually used and report the missing
+  // directory, falling back to humanizeSpawnError only when the cwd exists.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("function runProcess");
+  assert.ok(fnStart !== -1, "main.js must define runProcess");
+  const fnBody = main.slice(fnStart, main.indexOf("async function readKeychainApiKey"));
+  assert.match(
+    fnBody,
+    /error\?\.code === "ENOENT" && !fs\.existsSync\(options\.cwd \|\| DEFAULT_WORKDIR\)/,
+    "runProcess must detect a missing cwd on ENOENT before blaming the binary",
+  );
+  assert.match(
+    fnBody,
+    /The working directory does not exist: \$\{options\.cwd \|\| DEFAULT_WORKDIR\}/,
+    "runProcess must report the missing working directory explicitly",
+  );
+  assert.ok(
+    fnBody.indexOf("fs.existsSync(options.cwd") < fnBody.indexOf("humanizeSpawnError(command, error)"),
+    "the cwd check must run before the missing-binary message",
+  );
+});
+
 test("runProcess stops streaming child output to the renderer once the run has settled", () => {
   const main = readSource("main.js");
   const fnStart = main.indexOf("function runProcess");
