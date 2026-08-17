@@ -228,6 +228,41 @@ function getAliasPatterns(aliases) {
 
 export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliases = APP_BUNDLE_ALIASES) {
   const args = jsonArgs && typeof jsonArgs === "object" ? { ...jsonArgs } : {};
+  // press_key reaches the same cua-driver machinery as the dedicated
+  // press_key_in_front_app tool, so its args must be normalized identically:
+  // the model can call run_cua_driver directly with tool_name "press_key",
+  // and a capitalized key ("Return"), a bare-string modifiers ("cmd"), or a
+  // "+"-joined combo ("cmd+shift") would otherwise reach the driver raw and
+  // fail with an opaque error the model cannot self-correct from — the exact
+  // failures pressKeyInFrontApp's normalization exists to prevent. The
+  // dedicated tool normalizes before calling runCuaDriver, and this
+  // normalization is idempotent (trim/lowercase/split of an already-normalized
+  // value is a no-op), so that path is unaffected.
+  if (toolName === "press_key") {
+    // Same trim+lowercase as pressKeyInFrontApp: cua-driver expects lowercase
+    // key names, and model-generated keys are often capitalized or wrapped in
+    // whitespace. Key names are never case-distinct, so lowercasing cannot
+    // change which key is pressed.
+    if (typeof args.key === "string") args.key = args.key.trim().toLowerCase();
+    // Same array normalization as pressKeyInFrontApp: a bare string must
+    // become a one-element array (never [] — that would press the key without
+    // the modifier the model asked for), every entry is trimmed/lowercased
+    // and split on "+" (modifier names never contain "+", so the split can
+    // only expand one modifier into the several the model named), whitespace-
+    // only entries are dropped, and exact duplicates collapse.
+    const rawModifiers = Array.isArray(args.modifiers)
+      ? args.modifiers
+      : typeof args.modifiers === "string"
+        ? [args.modifiers]
+        : [];
+    args.modifiers = rawModifiers
+      .filter((modifier) => typeof modifier === "string")
+      .map((modifier) => modifier.trim().toLowerCase())
+      .flatMap((modifier) => modifier.split("+").map((part) => part.trim()))
+      .filter((modifier) => modifier.length > 0)
+      .filter((modifier, index, all) => all.indexOf(modifier) === index);
+    return args;
+  }
   if (toolName !== "launch_app") return args;
   // Same cosmetic-noise trim as resolveAppIdentity applies to app_name: a
   // model-generated bundle_id/name wrapped in stray whitespace or a trailing

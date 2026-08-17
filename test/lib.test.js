@@ -215,6 +215,48 @@ test("normalizeCuaArgs fills bundle_id for launch_app from context", () => {
   assert.deepEqual(normalizeCuaArgs("other_tool", { a: 1 }), { a: 1 });
 });
 
+test("normalizeCuaArgs normalizes press_key key/modifiers like the dedicated tool", () => {
+  // A direct run_cua_driver call with tool_name "press_key" must get the same
+  // normalization pressKeyInFrontApp applies: cua-driver expects a lowercase
+  // key and an array of lowercase modifier names, and a capitalized key,
+  // bare-string modifiers, or a "+"-joined combo would otherwise fail
+  // opaquely in the driver.
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "Return", modifiers: "cmd" }), {
+    pid: 42,
+    key: "return",
+    modifiers: ["cmd"],
+  });
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: " esc ", modifiers: ["CMD", "Shift"] }), {
+    pid: 42,
+    key: "esc",
+    modifiers: ["cmd", "shift"],
+  });
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "x", modifiers: "Cmd + Shift" }), {
+    pid: 42,
+    key: "x",
+    modifiers: ["cmd", "shift"],
+  });
+  // Whitespace-only modifier entries and duplicates collapse; non-string
+  // modifier entries are dropped.
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "v", modifiers: ["cmd", "  ", "cmd", 7] }), {
+    pid: 42,
+    key: "v",
+    modifiers: ["cmd"],
+  });
+  // Normalization is idempotent: the already-normalized args the dedicated
+  // tool sends pass through unchanged.
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "return", modifiers: ["cmd"] }), {
+    pid: 42,
+    key: "return",
+    modifiers: ["cmd"],
+  });
+  // Non-string keys stay untouched (they fail in the driver like today), a
+  // missing modifiers becomes the explicit empty array (same shape the
+  // dedicated tool always sends), and other tools are not affected.
+  assert.deepEqual(normalizeCuaArgs("press_key", { key: 7 }), { key: 7, modifiers: [] });
+  assert.deepEqual(normalizeCuaArgs("type_text_chars", { text: "Return" }), { text: "Return" });
+});
+
 test("normalizeCuaArgs matches aliases on word boundaries, not substrings", () => {
   // "keynotes" contains "notes" and "previewing" contains "preview": a raw
   // substring match would launch the wrong app for these reasons.
