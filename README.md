@@ -94,6 +94,7 @@ export CODEX_VOICE_TIMEOUT_MS="120000"                       # codex CLI timeout
 export CODEX_VOICE_CUA_TIMEOUT_MS="60000"                    # cua-driver timeout
 export CODEX_VOICE_OPENAI_TIMEOUT_MS="60000"                 # OpenAI HTTP timeout
 export CODEX_VOICE_ACTION_TIMEOUT_MS="120000"                # auto-reject pending Run/Reject after N ms
+export CODEX_VOICE_ENV_FILE="/path/to/your/.env"             # load .env from a custom location (default: <cwd>/.env)
 ```
 
 You can also put these in a `.env` file in the directory you launch from (see `.env.example`); it is loaded automatically on start. Variables already set in your shell always take precedence, and `CODEX_VOICE_ENV_FILE` can point to a `.env` elsewhere. Timeout values are validated — an invalid value falls back to the default instead of misbehaving.
@@ -152,7 +153,7 @@ npm run smoke:cua # CUA Driver connectivity check (requires CUA Driver)
 npm start
 ```
 
-CI on `main` runs `npm ci`, `npm test`, and `npm run check` on Node 20.
+CI on `main` runs `npm ci`, `npm run lint`, `npm test`, and `npm run check` on Node 20.
 
 ---
 
@@ -179,9 +180,12 @@ codex-voice-bridge/
 ├── scripts/
 │   └── smoke-cua.sh     # CUA Driver connectivity check
 ├── test/
-│   ├── lib.test.js      # Unit tests for lib.js helpers (node:test)
-│   └── renderer-graph.test.js  # Static guard: renderer stays free of node: imports
-├── .github/workflows/   # CI: npm test + npm run check
+│   ├── lib.test.js          # Unit tests for lib.js helpers (node:test)
+│   ├── main-process.test.js # Main-process behavior: runProcess, tool dispatch, IPC guards
+│   ├── main-media.test.js   # Static guard: display-media handler pairing for interview mode
+│   ├── renderer-graph.test.js  # Static guard: renderer stays free of node: imports
+│   └── tool-pairing.test.js # Static guard: KNOWN_TOOLS matches the declared assistant tools
+├── .github/workflows/   # CI: npm run lint + npm test + npm run check
 ├── package.json
 └── .env.example
 ```
