@@ -585,7 +585,13 @@ function runCodex(input) {
   return runProcess("codex", ["exec", "--cd", workdir, "--sandbox", "read-only", "--skip-git-repo-check", "--", prompt], {
     cwd: workdir,
     timeoutMs: CODEX_TIMEOUT_MS,
-    onOutput: (chunk) => mainWindow?.webContents.send("codex-output", chunk),
+    // A run can outlive the window (Cmd+W while Codex streams output): sending
+    // to a destroyed webContents throws "Object has been destroyed", so guard
+    // the same way toggleWindow/second-instance/activate do instead of relying
+    // on the optional chain alone (mainWindow is only nulled on "closed").
+    onOutput: (chunk) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("codex-output", chunk);
+    },
   });
 }
 
@@ -627,7 +633,11 @@ function runCuaDriver(input = {}) {
   const args = ["call", toolName, argsBlob, "--compact"];
   return runProcess("cua-driver", args, {
     timeoutMs: CUA_TIMEOUT_MS,
-    onOutput: (chunk) => mainWindow?.webContents.send("codex-output", chunk),
+    // Same destroyed-window guard as runCodex: a cua-driver call streaming
+    // output while the window is closing must not throw on webContents.send.
+    onOutput: (chunk) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("codex-output", chunk);
+    },
   });
 }
 

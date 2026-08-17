@@ -20,6 +20,29 @@ function readSource(name) {
   return readFileSync(new URL(name, SRC), "utf8");
 }
 
+test("runCodex and runCuaDriver guard codex-output sends against a destroyed window", () => {
+  // A run can outlive the window (Cmd+W while Codex/CUA output streams): the
+  // mainWindow reference is only nulled on the "closed" event, so during the
+  // close sequence webContents.send on a destroyed webContents throws "Object
+  // has been destroyed" — an uncaught exception from inside the child output
+  // handler. Every other mainWindow touch in main.js checks
+  // !mainWindow.isDestroyed(); the onOutput callbacks must do the same.
+  const main = readSource("main.js");
+  for (const [label, fnStart, fnEnd] of [
+    ["runCodex", "function runCodex", "function runCuaDriver"],
+    ["runCuaDriver", "function runCuaDriver", "async function runMacAction"],
+  ]) {
+    const start = main.indexOf(fnStart);
+    assert.ok(start !== -1, `main.js must define ${fnStart}`);
+    const fnBody = main.slice(start, main.indexOf(fnEnd));
+    assert.match(
+      fnBody,
+      /mainWindow && !mainWindow\.isDestroyed\(\)\) mainWindow\.webContents\.send\("codex-output", chunk\)/,
+      `${label} must guard the codex-output send with !mainWindow.isDestroyed()`,
+    );
+  }
+});
+
 test("openAppVisible reports the cua-driver launch result to the model, not just activation", () => {
   // openAppVisible combines two independent steps (cua-driver launch_app +
   // osascript activate) into one ok flag, but its stdout used to report only
