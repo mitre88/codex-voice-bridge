@@ -300,3 +300,33 @@ test("runCuaDriver rejects unsafe launch_app args with a settled promise", () =>
     "unsafe launch_app args must return a settled promise",
   );
 });
+
+test("runCuaDriver and runMacAction guard a null IPC payload like runCodex does", () => {
+  // runCodex dereferences input with optional chaining (input?.prompt) so a
+  // null IPC payload settles with a clean error, but runCuaDriver and
+  // runMacAction used to dereference input.tool_name / input.action directly:
+  // a null payload would throw a TypeError inside the ipcMain.handle guard
+  // instead of returning the clean "Missing tool_name" / "Unknown mac action"
+  // error the model can self-correct from. The renderer validates args before
+  // dispatch (code -101), but defense in depth is the pattern here — the
+  // requireNonEmptyString guard exists precisely because "a null IPC payload
+  // would throw a TypeError while destructuring".
+  const main = readSource("main.js");
+  const cuaStart = main.indexOf("function runCuaDriver");
+  assert.ok(cuaStart !== -1, "main.js must define runCuaDriver");
+  const cuaBody = main.slice(cuaStart, main.indexOf("async function runMacAction"));
+  assert.match(
+    cuaBody,
+    /input\?\.tool_name/,
+    "runCuaDriver must read tool_name with optional chaining so null settles cleanly",
+  );
+
+  const macStart = main.indexOf("async function runMacAction");
+  assert.ok(macStart !== -1, "main.js must define runMacAction");
+  const macBody = main.slice(macStart, main.indexOf("async function openAppVisible"));
+  assert.match(
+    macBody,
+    /input\?\.action/,
+    "runMacAction must read action with optional chaining so null settles cleanly",
+  );
+});

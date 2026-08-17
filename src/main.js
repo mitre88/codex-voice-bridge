@@ -590,7 +590,10 @@ function runCodex(input) {
 }
 
 function runCuaDriver(input = {}) {
-  const toolName = input.tool_name;
+  // Same optional chaining as runCodex: a null IPC payload must settle with
+  // the clean "Missing cua-driver tool_name." error below instead of throwing
+  // a TypeError that bypasses the model-facing error path entirely.
+  const toolName = input?.tool_name;
   if (!toolName || typeof toolName !== "string") {
     return Promise.resolve({ ok: false, code: -1, stdout: "", stderr: "Missing cua-driver tool_name." });
   }
@@ -629,10 +632,13 @@ function runCuaDriver(input = {}) {
 }
 
 async function runMacAction(input = {}) {
-  if (input.action === "open_app") return openAppVisible(input);
-  if (input.action === "type_text_in_front_app") return typeTextInFrontApp(input);
-  if (input.action === "press_key_in_front_app") return pressKeyInFrontApp(input);
-  return { ok: false, code: -1, stdout: "", stderr: `Unknown mac action: ${input.action}` };
+  // Same optional chaining as runCodex/runCuaDriver: a null IPC payload must
+  // settle with the "Unknown mac action" error below instead of throwing a
+  // TypeError inside the ipcMain.handle guard.
+  if (input?.action === "open_app") return openAppVisible(input);
+  if (input?.action === "type_text_in_front_app") return typeTextInFrontApp(input);
+  if (input?.action === "press_key_in_front_app") return pressKeyInFrontApp(input);
+  return { ok: false, code: -1, stdout: "", stderr: `Unknown mac action: ${input?.action}` };
 }
 
 async function openAppVisible(input = {}) {
