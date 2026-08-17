@@ -1001,6 +1001,34 @@ test("truncateOutput truncates long stdout and preserves metadata", () => {
   assert.equal(out.stderr, "");
 });
 
+test("truncateOutput truncates long stderr with the same tail+marker semantics", () => {
+  // The truncation loop covers stderr identically to stdout (a long run's
+  // error summary — the actionable part for the model — lives at the END of
+  // stderr too), but only the stdout branch was pinned by tests. A future
+  // refactor could special-case stderr and regress the tail-keeping that the
+  // model relies on to self-correct from the failure, so pin it explicitly:
+  // keep the tail, prepend the marker with the exact dropped count, and leave
+  // a short stdout untouched.
+  const out = truncateOutput({ ok: false, code: 1, stdout: "short", stderr: "X".repeat(60) + "Y".repeat(40) }, 50);
+  assert.ok(out.stderr.startsWith("...[truncated 50 chars]\n"));
+  assert.ok(out.stderr.endsWith("Y".repeat(40)));
+  assert.ok(!out.stderr.includes("X".repeat(60)));
+  assert.equal(out.stdout, "short");
+  assert.equal(out.ok, false);
+  assert.equal(out.code, 1);
+});
+
+test("truncateOutput truncates stdout and stderr independently when both are long", () => {
+  // Each stream gets its own cap and marker: truncating stdout must not
+  // consume the budget meant for stderr (or vice versa), and each keeps its
+  // own tail so both the result and the error summary reach the model.
+  const out = truncateOutput({ ok: false, code: 2, stdout: "A".repeat(40) + "B".repeat(40), stderr: "C".repeat(30) + "D".repeat(30) }, 50);
+  assert.ok(out.stdout.startsWith("...[truncated 30 chars]\n"));
+  assert.ok(out.stdout.endsWith("B".repeat(40)));
+  assert.ok(out.stderr.startsWith("...[truncated 10 chars]\n"));
+  assert.ok(out.stderr.endsWith("D".repeat(30)));
+});
+
 test("truncateOutput leaves short output untouched", () => {
   const out = truncateOutput({ ok: true, stdout: "short", stderr: "" }, 50);
   assert.equal(out.stdout, "short");
