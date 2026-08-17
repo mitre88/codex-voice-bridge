@@ -731,7 +731,17 @@ async function typeTextInFrontApp(input = {}) {
 async function pressKeyInFrontApp(input = {}) {
   const keyError = requireNonEmptyString(input.key, "key");
   if (keyError) return { ok: false, code: -5, stdout: "", stderr: keyError };
-  const keyLengthError = requireMaxLength(input.key, "key", 100);
+  // Model-generated JSON often wraps values in stray whitespace or a trailing
+  // newline (e.g. a template literal) — the same cosmetic noise the modifiers
+  // normalization below and the app_name/url trims in lib.js already handle.
+  // An untrimmed key like "return " or "esc\n" would reach cua-driver as-is
+  // and fail with an opaque error the model cannot self-correct from, so trim
+  // once at the source: the string that passes the gates is the string that
+  // is pressed. Trimming cannot weaken the gates — the trimmed value is still
+  // re-validated by requireMaxLength below, and a whitespace-only key already
+  // failed requireNonEmptyString above.
+  const key = String(input.key).trim();
+  const keyLengthError = requireMaxLength(key, "key", 100);
   if (keyLengthError) return { ok: false, code: -6, stdout: "", stderr: keyLengthError };
   const active = await getActiveAppFromCua();
   if (!active?.pid) {
@@ -755,7 +765,7 @@ async function pressKeyInFrontApp(input = {}) {
   const modifiers = rawModifiers
     .filter((modifier) => typeof modifier === "string")
     .map((modifier) => modifier.trim().toLowerCase());
-  return runCuaDriver({ tool_name: "press_key", json_args: { pid: active.pid, key: input.key, modifiers } });
+  return runCuaDriver({ tool_name: "press_key", json_args: { pid: active.pid, key, modifiers } });
 }
 
 async function getActiveAppFromCua() {

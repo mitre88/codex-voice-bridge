@@ -221,6 +221,35 @@ test("pressKeyInFrontApp normalizes modifiers so a bare string is never silently
   );
 });
 
+test("pressKeyInFrontApp trims the key so wrapped whitespace cannot reach the driver", () => {
+  // cua-driver's press_key expects a clean key name; model-generated JSON
+  // often wraps values in stray whitespace or a trailing newline (e.g. a
+  // template literal) — the same cosmetic noise the modifiers normalization
+  // and the app_name/url trims already handle. An untrimmed key like
+  // "return " or "esc\n" would make the driver fail with an opaque error the
+  // model cannot self-correct from, so the tool must trim the key once at the
+  // source and feed the trimmed value to the length gate and the driver call.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("async function pressKeyInFrontApp");
+  assert.ok(fnStart !== -1, "main.js must define pressKeyInFrontApp");
+  const fnBody = main.slice(fnStart, main.indexOf("async function getActiveAppFromCua"));
+  assert.match(
+    fnBody,
+    /const key = String\(input\.key\)\.trim\(\)/,
+    "pressKeyInFrontApp must normalize the key (trim) once at the source",
+  );
+  assert.match(
+    fnBody,
+    /requireMaxLength\(key, "key", 100\)/,
+    "pressKeyInFrontApp must apply the length gate to the normalized key",
+  );
+  assert.doesNotMatch(
+    fnBody,
+    /json_args: \{ pid: active\.pid, key: input\.key/,
+    "pressKeyInFrontApp must not pass the raw input.key to cua-driver",
+  );
+});
+
 test("runCodex and openAppVisible cap argv-bound values like the prompt guard does", () => {
   // Every model-controlled value that becomes a single argv entry (prompt,
   // text, json_args, and now cwd + url) must go through the same
