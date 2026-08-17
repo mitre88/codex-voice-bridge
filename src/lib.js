@@ -148,13 +148,29 @@ const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,253}$/;
 const APP_NAME_RE = /^[\p{L}\p{N}_ .'+-]{1,100}$/u;
 
 export function isSafeAppIdentity(identity = {}) {
-  if (identity.bundle_id) return BUNDLE_ID_RE.test(String(identity.bundle_id));
-  if (identity.name) return APP_NAME_RE.test(String(identity.name));
+  // Type-check before the regexes: they used to String() their input, so a
+  // model-supplied non-string value (e.g. launch_app with "bundle_id": 42)
+  // passed the gate as "42" and reached cua-driver in a shape the driver
+  // rejects with an opaque error the model cannot self-correct from. Reject
+  // it here so the callers' clean "Rejected unsafe ..." messages win. (All
+  // first-party callers already produce strings — resolveAppIdentity and
+  // normalizeCuaArgs trim string fields only — so this only tightens the raw
+  // model-controlled json_args path.)
+  if (identity.bundle_id !== undefined && typeof identity.bundle_id !== "string") return false;
+  if (identity.name !== undefined && typeof identity.name !== "string") return false;
+  if (identity.bundle_id) return BUNDLE_ID_RE.test(identity.bundle_id);
+  if (identity.name) return APP_NAME_RE.test(identity.name);
   return false;
 }
 
 export function resolveAppIdentity(input = {}, aliases = APP_BUNDLE_ALIASES) {
-  if (input.bundle_id) {
+  // Only string values are identities: a model-supplied non-string (e.g.
+  // open_app with "bundle_id": 42) used to be String()-coerced into "42" and
+  // launched as an app literally named "42" (or handed to cua-driver as a
+  // number), failing with an opaque driver error. Non-strings now resolve to
+  // {} so the caller's clean "Missing app_name, bundle_id, or url." wins and
+  // the model can self-correct from the message.
+  if (typeof input.bundle_id === "string" && input.bundle_id) {
     // Same cosmetic-noise trim as app_name below: model-generated JSON often
     // wraps values in stray whitespace or a trailing newline (e.g. a template
     // literal), and an untrimmed bundle_id would fail BUNDLE_ID_RE and come
@@ -163,9 +179,9 @@ export function resolveAppIdentity(input = {}, aliases = APP_BUNDLE_ALIASES) {
     // identity is still validated by isSafeAppIdentity afterwards, and a
     // whitespace-only bundle_id trims to "" and fails the regex like any
     // empty value.
-    return { bundle_id: String(input.bundle_id).trim() };
+    return { bundle_id: input.bundle_id.trim() };
   }
-  if (input.app_name) {
+  if (typeof input.app_name === "string" && input.app_name) {
     // Model-generated JSON often wraps values in stray whitespace or a
     // trailing newline (e.g. a template literal) — the same cosmetic noise
     // isSafeLaunchUrl already trims from URLs. Trim before the alias lookup
@@ -174,7 +190,7 @@ export function resolveAppIdentity(input = {}, aliases = APP_BUNDLE_ALIASES) {
     // weaken the safety gates: the identity is still validated by
     // isSafeAppIdentity afterwards, and a whitespace-only name trims to ""
     // and fails the name regex like any other empty name.
-    const appName = String(input.app_name).trim();
+    const appName = input.app_name.trim();
     const key = appName.toLowerCase();
     return aliases.has(key) ? { bundle_id: aliases.get(key) } : { name: appName };
   }
@@ -228,7 +244,11 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
   // map so launch_app({app_name}) validates and launches the exact identity
   // the open_app path would — otherwise an app_name (aliased or not) would
   // skip both the alias resolution and the isSafeAppIdentity gate below.
-  if (args.app_name && !args.bundle_id && !args.name) {
+  // Only string values resolve: a non-string app_name (e.g. 42) must stay
+  // untouched so the identity gate rejects it with the clean "Rejected unsafe
+  // launch_app arguments" message instead of being String()-coerced into a
+  // launch attempt for an app literally named "42".
+  if (typeof args.app_name === "string" && args.app_name && !args.bundle_id && !args.name) {
     const identity = resolveAppIdentity({ app_name: args.app_name }, aliases);
     if (identity.bundle_id) args.bundle_id = identity.bundle_id;
     else if (identity.name) args.name = identity.name;
@@ -237,8 +257,10 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
   // Only guess an app from context when the call carries neither an explicit
   // identity nor a URL. A url/urls field is an explicit "open in the default
   // browser" intent, so a keyword in the reason text (e.g. "open the chrome
-  // docs") must not silently redirect that URL to a guessed app.
-  if (!args.bundle_id && !args.name && !args.urls && !args.url) {
+  // docs") must not silently redirect that URL to a guessed app. A raw
+  // app_name is an explicit identity intent the same way, so it suppresses
+  // the guess too (a non-string app_name survives to this point unresolved).
+  if (!args.bundle_id && !args.name && !args.app_name && !args.urls && !args.url) {
     // The alias guess is a heuristic over short context: the model's reason
     // for the call and the (small) args blob. A model-controlled json_args
     // can be arbitrarily large (e.g. a prompt-injected launch_app carrying a

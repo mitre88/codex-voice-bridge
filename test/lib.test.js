@@ -92,6 +92,36 @@ test("isSafeAppIdentity accepts accented app names but not controls", () => {
   assert.equal(isSafeAppIdentity({ name: "Música\\" }), false); // backslash still rejected
 });
 
+test("isSafeAppIdentity rejects non-string identities instead of String()-coercing them", () => {
+  // The regexes used to String() their input, so a model-supplied numeric
+  // value (e.g. launch_app with "bundle_id": 42) passed the gate as "42" and
+  // reached cua-driver in a shape the driver rejects with an opaque error the
+  // model cannot self-correct from. Non-strings are now rejected up front.
+  assert.equal(isSafeAppIdentity({ bundle_id: 42 }), false);
+  assert.equal(isSafeAppIdentity({ bundle_id: true }), false);
+  assert.equal(isSafeAppIdentity({ bundle_id: ["com.apple.Safari"] }), false);
+  assert.equal(isSafeAppIdentity({ name: 42 }), false);
+  assert.equal(isSafeAppIdentity({ name: null }), false);
+  // String identities still pass — the type gate must not reject real values.
+  assert.equal(isSafeAppIdentity({ bundle_id: "com.apple.Safari" }), true);
+  assert.equal(isSafeAppIdentity({ name: "MyApp" }), true);
+});
+
+test("resolveAppIdentity does not String()-coerce non-string identities", () => {
+  // A numeric bundle_id/app_name used to be coerced to "42" and launched as
+  // an app literally named "42" (or handed to cua-driver as a number) — an
+  // opaque driver failure the model cannot self-correct from. Non-strings now
+  // resolve to {} so the caller's clean "Missing app_name, bundle_id, or
+  // url." (open_app) or "Rejected unsafe launch_app arguments" (launch_app)
+  // wins, and string identities still resolve exactly as before.
+  assert.deepEqual(resolveAppIdentity({ bundle_id: 42 }), {});
+  assert.deepEqual(resolveAppIdentity({ bundle_id: true }), {});
+  assert.deepEqual(resolveAppIdentity({ app_name: 42 }), {});
+  assert.deepEqual(resolveAppIdentity({ app_name: ["Safari"] }), {});
+  assert.deepEqual(resolveAppIdentity({ app_name: "Safari" }), { bundle_id: "com.apple.Safari" });
+  assert.deepEqual(resolveAppIdentity({ bundle_id: " com.apple.Safari " }), { bundle_id: "com.apple.Safari" });
+});
+
 test("resolveAppIdentity maps aliases and falls back to name", () => {
   assert.deepEqual(resolveAppIdentity({ app_name: "Safari" }), { bundle_id: "com.apple.Safari" });
   assert.deepEqual(resolveAppIdentity({ app_name: "google chrome" }), { bundle_id: "com.google.Chrome" });
@@ -351,6 +381,28 @@ test("normalizeCuaArgs resolves app_name alongside urls like open_app does", () 
     normalizeCuaArgs("launch_app", { app_name: "safari", urls: ["https://example.com"] }),
     { bundle_id: "com.apple.Safari", urls: ["https://example.com"] },
   );
+});
+
+test("normalizeCuaArgs does not resolve a non-string app_name into a launchable name", () => {
+  // The app_name resolution used to String()-coerce 42 into name "42", which
+  // then passed the identity gate and reached cua-driver as a launch attempt
+  // for an app literally named "42" — an opaque driver failure. A non-string
+  // app_name must stay unresolved so the identity gate rejects it cleanly.
+  const args = normalizeCuaArgs("launch_app", { app_name: 42 });
+  assert.equal(args.app_name, 42); // left untouched for the identity gate
+  assert.equal(isSafeCuaLaunchArgs(args), false);
+  // A string app_name still resolves exactly as before.
+  assert.deepEqual(normalizeCuaArgs("launch_app", { app_name: "Safari" }), { bundle_id: "com.apple.Safari" });
+});
+
+test("isSafeCuaLaunchArgs rejects non-string identities like the open_app gate does", () => {
+  assert.equal(isSafeCuaLaunchArgs({ bundle_id: 42 }), false);
+  assert.equal(isSafeCuaLaunchArgs({ name: 42 }), false);
+  assert.equal(isSafeCuaLaunchArgs({ app_name: 42 }), false);
+  assert.equal(isSafeCuaLaunchArgs({ bundle_id: true }), false);
+  // String identities still pass.
+  assert.equal(isSafeCuaLaunchArgs({ bundle_id: "com.apple.Safari" }), true);
+  assert.equal(isSafeCuaLaunchArgs({ app_name: "Safari" }), true);
 });
 
 test("isSafeCuaLaunchArgs validates a raw app_name identity", () => {
