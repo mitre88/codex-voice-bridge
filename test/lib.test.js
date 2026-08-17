@@ -24,6 +24,7 @@ import {
   parseEnvFile,
   redactSecrets,
   requireMaxLength,
+  requireNoNullBytes,
   requireNonEmptyString,
   requireTypeableLength,
   resolveAppIdentity,
@@ -571,6 +572,24 @@ test("requireMaxLength caps oversized argv-bound values", () => {
   // Non-strings pass through: type checks are the caller's job.
   assert.equal(requireMaxLength(undefined, "prompt"), null);
   assert.equal(requireMaxLength({ a: 1 }, "prompt"), null);
+});
+
+test("requireNoNullBytes rejects argv-bound strings containing a null byte", () => {
+  // A null byte in a spawn arg (or cwd) makes Node throw a synchronous
+  // TypeError ("must be a string without null bytes") instead of settling
+  // with a clean error — the exact failure the prompt/cwd/url guards exist
+  // to prevent. JSON args can encode "\u0000", so model-controlled values
+  // must be rejected here with a self-correctable message.
+  assert.equal(requireNoNullBytes("run the tests", "prompt"), null);
+  assert.equal(requireNoNullBytes("with\u0000null", "prompt"), "prompt must not contain null bytes.");
+  assert.equal(requireNoNullBytes("a\u0000b\u0000c", "cwd"), "cwd must not contain null bytes.");
+  // A lone null byte is still a null byte: an empty-ish value must not slip
+  // past the guard and reach spawn (requireNonEmptyString does not strip \0).
+  assert.equal(requireNoNullBytes("\u0000", "prompt"), "prompt must not contain null bytes.");
+  // Non-strings pass through: type checks are the caller's job.
+  assert.equal(requireNoNullBytes(undefined, "prompt"), null);
+  assert.equal(requireNoNullBytes(null, "prompt"), null);
+  assert.equal(requireNoNullBytes({ a: 1 }, "prompt"), null);
 });
 
 test("redactSecrets masks OpenAI keys", () => {

@@ -350,6 +350,11 @@ export function resolveOpenAppTarget(input = {}, aliases = APP_BUNDLE_ALIASES) {
     // unbounded string to the OS. 8192 bytes is far beyond any real URL.
     const lengthError = requireMaxLength(input.url, "url", 8192);
     if (lengthError) return { kind: "error", code: -9, message: lengthError };
+    // Same argv-entry constraint as the cap above: a URL containing a null
+    // byte (JSON args can encode "\u0000") would make spawn() throw a
+    // synchronous TypeError instead of settling with a clean error.
+    const nullByteError = requireNoNullBytes(input.url, "url");
+    if (nullByteError) return { kind: "error", code: -9, message: nullByteError };
     if (isSafeLaunchUrl(input.url)) return { kind: "url", url: String(input.url).trim() };
     return { kind: "error", code: -9, message: "Rejected unsafe url (only http/https URLs may be opened)." };
   }
@@ -406,6 +411,21 @@ export function requireNonEmptyString(value, label) {
 export function requireMaxLength(value, label, maxBytes = 200000) {
   if (typeof value === "string" && Buffer.byteLength(value, "utf8") > maxBytes) {
     return `${label} exceeds the maximum length of ${maxBytes} bytes.`;
+  }
+  return null;
+}
+
+// A value that will be passed to a child process as a single argv entry (or
+// as spawn's cwd) must not contain a null byte: Node's spawn() throws a
+// synchronous TypeError ("must be a string without null bytes") for a string
+// containing \0, so a model-controlled prompt/cwd/url carrying one (JSON args
+// can encode "\u0000") would surface as an opaque Node error instead of a
+// clean, self-correctable message. Returns null when valid, or a short
+// human-readable error message. Non-strings pass through: type checks are
+// the caller's job (see requireNonEmptyString).
+export function requireNoNullBytes(value, label) {
+  if (typeof value === "string" && value.includes("\0")) {
+    return `${label} must not contain null bytes.`;
   }
   return null;
 }

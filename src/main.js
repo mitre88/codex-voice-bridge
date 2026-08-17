@@ -23,6 +23,7 @@ import {
   parseEnvFile,
   redactSecrets,
   requireMaxLength,
+  requireNoNullBytes,
   requireNonEmptyString,
   requireTypeableLength,
   resolveOpenAppTarget,
@@ -572,11 +573,24 @@ function runCodex(input) {
   // would make spawn() fail with E2BIG, so reject oversized prompts cleanly.
   const lengthError = requireMaxLength(input?.prompt, "prompt");
   if (lengthError) return Promise.resolve({ ok: false, code: -6, stdout: "", stderr: lengthError });
+  // A prompt containing a null byte (JSON args can encode "\u0000") would
+  // make spawn() throw a synchronous TypeError ("must be a string without
+  // null bytes") instead of settling with a clean error, so reject it like
+  // the length guard above. The prompt becomes a direct argv entry after
+  // "--", so the same argv constraints apply.
+  const promptNullError = requireNoNullBytes(input?.prompt, "prompt");
+  if (promptNullError) return Promise.resolve({ ok: false, code: -6, stdout: "", stderr: promptNullError });
   // cwd is interpolated into the codex argv as "--cd <workdir>" — the same
   // single-argv-entry cap applies, so a model-controlled megabyte path would
   // otherwise make spawn() fail with E2BIG. 4096 bytes covers any real path.
   const cwdLengthError = requireMaxLength(input?.cwd, "cwd", 4096);
   if (cwdLengthError) return Promise.resolve({ ok: false, code: -6, stdout: "", stderr: cwdLengthError });
+  // A null byte in cwd would make spawn() throw on BOTH the "--cd <workdir>"
+  // argv entry and the cwd option ("options.cwd must be a string ... without
+  // null bytes") instead of settling with a clean error — same guard as the
+  // prompt above, before resolveWorkdir normalizes the path.
+  const cwdNullError = requireNoNullBytes(input?.cwd, "cwd");
+  if (cwdNullError) return Promise.resolve({ ok: false, code: -6, stdout: "", stderr: cwdNullError });
   const { prompt, cwd } = input;
   const workdir = resolveWorkdir(cwd, DEFAULT_WORKDIR);
   // "--" terminates option parsing so a prompt that starts with "-" (e.g. a
@@ -697,6 +711,14 @@ async function openAppVisible(input = {}) {
     // message instead of failing downstream with an opaque E2BIG.
     const urlLengthError = requireMaxLength(url, "url", 8192);
     if (urlLengthError) return { ok: false, code: -9, stdout: "", stderr: urlLengthError };
+    // Same argv-entry constraint as the cap above: a URL containing a null
+    // byte (JSON args can encode "\u0000") would make spawn() throw a
+    // synchronous TypeError somewhere downstream instead of settling with a
+    // clean error. (cua-driver receives the URL JSON-escaped, so the raw
+    // value can only reach a spawn here; reject it at the source like
+    // resolveOpenAppTarget does for the URL-only path.)
+    const urlNullError = requireNoNullBytes(url, "url");
+    if (urlNullError) return { ok: false, code: -9, stdout: "", stderr: urlNullError };
     // Only http/https URLs may be opened: a model-controlled file:// or custom
     // scheme URL could open local files or trigger unintended handlers.
     if (!isSafeLaunchUrl(url)) {

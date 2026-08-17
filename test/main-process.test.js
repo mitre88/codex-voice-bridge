@@ -315,6 +315,39 @@ test("runCodex and openAppVisible cap argv-bound values like the prompt guard do
   );
 });
 
+test("runCodex and the url paths reject null bytes before spawn can throw", () => {
+  // Every model-controlled value that becomes a direct argv entry (prompt,
+  // cwd) or spawn cwd (cwd) makes Node's spawn() throw a synchronous
+  // TypeError when it contains a null byte — JSON args can encode "\u0000",
+  // so a model-supplied prompt/cwd/url with one would surface as an opaque
+  // Node error instead of a clean, self-correctable message. The same three
+  // places that cap argv-bound values must reject null bytes at the source.
+  const main = readSource("main.js");
+  const codexFn = main.slice(main.indexOf("function runCodex"), main.indexOf("function runCuaDriver"));
+  assert.match(
+    codexFn,
+    /requireNoNullBytes\(input\?\.prompt, "prompt"\)/,
+    "runCodex must reject a null byte in the prompt before spawn",
+  );
+  assert.match(
+    codexFn,
+    /requireNoNullBytes\(input\?\.cwd, "cwd"\)/,
+    "runCodex must reject a null byte in cwd before spawn (argv entry and cwd option)",
+  );
+  const openFn = main.slice(main.indexOf("async function openAppVisible"), main.indexOf("async function typeTextInFrontApp"));
+  assert.match(
+    openFn,
+    /requireNoNullBytes\(url, "url"\)/,
+    "openAppVisible must reject a null byte in the url before launching",
+  );
+  const lib = readSource("lib.js");
+  assert.match(
+    lib,
+    /requireNoNullBytes\(input\.url, "url"\)/,
+    "resolveOpenAppTarget must reject a null byte in the url-only path",
+  );
+});
+
 test("runCuaDriver rejects unsafe launch_app args with a settled promise", () => {
   // Every rejection branch in runCuaDriver returns Promise.resolve(...) so
   // callers can await uniformly; the unsafe-launch_app branch must do the
