@@ -589,11 +589,17 @@ export function humanizeSpawnError(command, error) {
 // Append a chunk to a growing process-output buffer, capping the total length
 // so a runaway command cannot accumulate unbounded memory in the main process.
 // Returns { text, capped } where capped reports whether this chunk pushed the
-// buffer over the limit (the excess is dropped, not queued for later).
+// buffer over the limit. Truncation keeps the TAIL, not the head — the same
+// convention as truncateOutput and appendCaption: this buffer is what the
+// renderer later truncates and sends to the model as function_call_output, and
+// for a long run the actionable part (final result, error summary) is at the
+// END. Head-keeping would hand the model a verbose preamble and drop the
+// conclusion. The buffer also keeps rolling to the newest tail once capped:
+// output arriving after the first overflow (the true end of a long run) must
+// not be discarded, or the model would miss the very lines it needs.
 export function accumulateOutput(buffer, chunk, maxChars = 1024 * 1024) {
-  if (buffer.length >= maxChars) return { text: buffer, capped: true };
   const next = buffer + String(chunk);
-  if (next.length > maxChars) return { text: next.slice(0, maxChars), capped: true };
+  if (next.length > maxChars) return { text: next.slice(-maxChars), capped: true };
   return { text: next, capped: false };
 }
 

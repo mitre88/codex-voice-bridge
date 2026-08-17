@@ -235,8 +235,12 @@ function runProcess(command, args, options = {}) {
       clearTimeout(timeout);
       let out = result.stdout;
       let err = result.stderr;
-      if (stdoutCapped && typeof out === "string") out += "\n...[stdout truncated at 1MB]";
-      if (stderrCapped && typeof err === "string") err += "\n...[stderr truncated at 1MB]";
+      // The captured buffer keeps the TAIL (see accumulateOutput), so the
+      // marker goes at the FRONT, before the kept tail — appending it at the
+      // end would put the announcement after the very lines the model needs
+      // (final result, error summary), the same convention truncateOutput uses.
+      if (stdoutCapped && typeof out === "string") out = "...[stdout truncated at 1MB]\n" + out;
+      if (stderrCapped && typeof err === "string") err = "...[stderr truncated at 1MB]\n" + err;
       resolve({ ...result, stdout: String(out ?? "").trim(), stderr: String(err ?? "").trim() });
     }
 

@@ -1109,12 +1109,20 @@ test("humanizeSpawnError passes through other spawn errors", () => {
 });
 
 test("accumulateOutput caps the buffer at maxChars and reports truncation", () => {
-  const over = accumulateOutput("", "x".repeat(100), 50);
+  // Truncation keeps the TAIL, not the head — the same convention as
+  // truncateOutput: this buffer is what the model later receives as
+  // function_call_output, and for a long run the actionable part (result,
+  // error summary) is at the END.
+  const over = accumulateOutput("", "A".repeat(60) + "B".repeat(40), 50);
   assert.equal(over.text.length, 50);
+  assert.ok(over.text.endsWith("B".repeat(40)));
+  assert.ok(!over.text.startsWith("A".repeat(50)));
   assert.equal(over.capped, true);
-  // A buffer already at the cap stays put and keeps reporting truncation.
-  const full = accumulateOutput("x".repeat(50), "more", 50);
-  assert.equal(full.text, "x".repeat(50));
+  // A buffer already at the cap keeps rolling to the newest tail: output that
+  // arrives after the first overflow (the true end of a long run) must not be
+  // discarded, or the model would miss the conclusion it needs.
+  const full = accumulateOutput("x".repeat(50), "tail", 50);
+  assert.equal(full.text, "x".repeat(46) + "tail");
   assert.equal(full.capped, true);
   // Small chunks pass through untouched while under the cap.
   const ok = accumulateOutput("abc", "def", 100);
