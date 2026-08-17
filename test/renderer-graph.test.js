@@ -144,6 +144,34 @@ test("connect failures surface the humanized error in the status, not just the d
   );
 });
 
+test("connect reveals the API key input when the key itself was rejected", () => {
+  // The key input is hidden whenever ANY key exists (saved, env, or
+  // in-memory), so a saved key that gets revoked or expires leaves the input
+  // invisible while the 401 message tells the user to "save it again" — with
+  // no way to do it. The connect error path must reveal the input for the
+  // key-rejection class (isApiKeyRejection), and only for that class: a
+  // network, quota, or server failure must not make the user think the key is
+  // at fault by suddenly showing the input.
+  const renderer = readSource("renderer.js");
+  const connectStart = renderer.indexOf("async function connectRealtime()");
+  assert.ok(connectStart !== -1, "renderer.js must define connectRealtime");
+  const connectBody = renderer.slice(connectStart, renderer.indexOf("async function disconnectRealtime()"));
+  assert.match(
+    connectBody,
+    /if \(isApiKeyRejection\(error\)\) revealApiKeyField\(\)/,
+    "connectRealtime must reveal the key input when the API key was rejected",
+  );
+  assert.ok(
+    connectBody.indexOf("const message = humanizeError(error)") <
+      connectBody.indexOf("isApiKeyRejection(error)"),
+    "the key-rejection check must run alongside the humanized error, not before it",
+  );
+  // The reveal helper must exist and actually un-hide the field: the whole
+  // point is that applyKeyStatus hid it while a key existed.
+  assert.match(renderer, /function revealApiKeyField\(\)/);
+  assert.match(renderer, /apiKeyField\.hidden = false/);
+});
+
 test("connect passes the abort signal to getUserMedia so Disconnect cancels a pending permission prompt", () => {
   // Disconnect mid-"Connecting" aborts the SDP fetch, but a connect stuck on
   // the microphone permission prompt would otherwise keep waiting on the OS

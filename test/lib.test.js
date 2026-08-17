@@ -12,6 +12,7 @@ import {
   hasVirtualAudioDevice,
   humanizeError,
   humanizeSpawnError,
+  isApiKeyRejection,
   isPlausibleApiKey,
   isSafeAppIdentity,
   isSafeCuaLaunchArgs,
@@ -610,6 +611,30 @@ test("redactSecrets does not corrupt words containing sk-", () => {
 test("redactSecrets redacts keys at token boundaries only", () => {
   assert.equal(redactSecrets("key:sk-proj-abc123, ok"), "key:[REDACTED_OPENAI_KEY], ok");
   assert.equal(redactSecrets("\"sk-abc123\" and (sk-proj-x.y)"), "\"[REDACTED_OPENAI_KEY]\" and ([REDACTED_OPENAI_KEY])");
+});
+
+test("isApiKeyRejection detects only 401-class key rejections", () => {
+  // The main process surfaces a bad key as "OpenAI Realtime token failed: 401
+  // ...invalid_api_key..." (token fetch) or "Realtime call failed: 401"
+  // (SDP exchange); both must count as key rejections.
+  assert.equal(isApiKeyRejection(new Error("OpenAI Realtime token failed: 401 {\"error\":{\"code\":\"invalid_api_key\"}}")), true);
+  assert.equal(isApiKeyRejection(new Error("OpenAI Realtime token failed: 401 Incorrect API key provided: sk-abc")), true);
+  assert.equal(isApiKeyRejection(new Error("Realtime call failed: 401 Unauthorized")), true);
+  assert.equal(isApiKeyRejection(new Error("Error code: 401")), true);
+  // A stray 4+ digit number in an unrelated message must not false-positive,
+  // mirroring the humanizeError bare-status branches.
+  assert.equal(isApiKeyRejection(new Error("http status 4010 at line 12")), false);
+  // Everything else leaves the key alone: the input must NOT be revealed for
+  // network, quota, rate-limit, permission, or server failures.
+  assert.equal(isApiKeyRejection(new Error("OpenAI Realtime token failed: 429 rate_limit_exceeded")), false);
+  assert.equal(isApiKeyRejection(new Error("OpenAI Realtime token failed: 403 insufficient_permissions")), false);
+  assert.equal(isApiKeyRejection(new Error("OpenAI Realtime token failed: 500 Internal Server Error")), false);
+  assert.equal(isApiKeyRejection(new Error("OpenAI request timed out after 60s")), false);
+  assert.equal(isApiKeyRejection(new Error("insufficient_quota (402)")), false);
+  assert.equal(isApiKeyRejection(new Error("fetch failed")), false);
+  // Non-error input must not throw.
+  assert.equal(isApiKeyRejection(undefined), false);
+  assert.equal(isApiKeyRejection("OpenAI Realtime token failed: 401 Unauthorized"), true);
 });
 
 test("humanizeError maps common failure modes to actionable messages", () => {

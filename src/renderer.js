@@ -1,4 +1,4 @@
-import { hasVirtualAudioDevice, humanizeError, isSdpAnswer, truncateOutput } from "./renderer-utils.js";
+import { hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, truncateOutput } from "./renderer-utils.js";
 
 // How long the Realtime SDP exchange may take before we give up. The main
 // process already times out the token fetch; this bounds the second network
@@ -318,6 +318,20 @@ function applyKeyStatus(status) {
       : status.hasRuntimeKey
         ? "Using in-memory API key"
         : "";
+}
+
+// Reveal the API key input after a connect failed because the key itself was
+// rejected. The field is hidden whenever ANY key exists (saved, env, or
+// in-memory — see applyKeyStatus), so a key that gets revoked or expires
+// leaves the input invisible while the 401 error tells the user to "save it
+// again" — with no way to do it. Only the key-rejection class may reveal it:
+// a network, quota, or server error must not make the user think the key is
+// the problem by suddenly showing the input.
+function revealApiKeyField() {
+  hasStoredKey = false;
+  apiKeyField.hidden = false;
+  keyStatusEl.hidden = true;
+  keyStatusEl.textContent = "";
 }
 
 async function ensureApiKeyReady() {
@@ -758,6 +772,11 @@ async function connectRealtime() {
     // itself, keeping the "error" state so the orb styling still applies.
     const message = humanizeError(error);
     log(message);
+    // A rejected key (revoked, expired, wrong project) must also un-hide the
+    // key input: it is hidden whenever any key exists, so the user would see
+    // "save it again" with no way to save — reveal it only for the
+    // key-rejection class, never for network/quota/server failures.
+    if (isApiKeyRejection(error)) revealApiKeyField();
     setStatus(`Error: ${message}`, "error");
     connectButton.disabled = false;
   }

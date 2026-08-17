@@ -305,6 +305,24 @@ export function humanizeError(error) {
   return message;
 }
 
+// True when an error means the API key itself was rejected: invalid, revoked,
+// or belonging to the wrong project (the 401-class failures — OpenAI's
+// invalid_api_key / "Incorrect API key provided" bodies, or a bare 401 status
+// on either the token or the SDP call). Everything else — network, quota,
+// rate limits, permissions, 5xx, content policy — leaves the key alone, so
+// only this class must reveal the key input (see renderer.js). Mirrors the
+// 401 branch of humanizeError; the status must be exactly three digits (401\b)
+// so a stray 4+ digit number in an unrelated message cannot false-positive.
+export function isApiKeyRejection(error) {
+  const lower = String(error?.message || error).toLowerCase();
+  return (
+    lower.includes("invalid_api_key") ||
+    lower.includes("incorrect api key") ||
+    /(?:token|call) failed: 401\b/.test(lower) ||
+    /error code: 401\b/.test(lower)
+  );
+}
+
 // Every SDP document begins with the version line ("v=0"), so a body that
 // does not is definitively not an SDP answer. The Realtime SDP exchange
 // trusts response.ok alone; a proxy or captive portal answering the POST
