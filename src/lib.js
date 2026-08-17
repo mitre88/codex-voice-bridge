@@ -98,6 +98,62 @@ export const APP_BUNDLE_ALIASES = new Map([
   ["warp", "dev.warp.Warp-Stable"],
   ["weather", "com.apple.weather"],
   ["zed", "dev.zed.Zed"],
+  // Common macOS apps a voice user is likely to name whose display names
+  // differ from their bundle ids (Contacts -> AddressBook, Dictionary,
+  // Stickies) or that are common enough to deserve a stable alias (iMovie,
+  // GarageBand, QuickTime, Disk Utility, Stocks, Freeform). "contacts",
+  // "dictionary", and "stocks" are ordinary words, but in a launch_app
+  // context ("open my contacts", "look this up in the dictionary") they
+  // overwhelmingly mean the app, matching the existing "notes"/"mail"/
+  // "calendar" precedent.
+  ["contacts", "com.apple.AddressBook"],
+  ["dictionary", "com.apple.Dictionary"],
+  ["disk utility", "com.apple.DiskUtility"],
+  ["stickies", "com.apple.Stickies"],
+  ["font book", "com.apple.FontBook"],
+  ["keychain access", "com.apple.keychainaccess"],
+  ["script editor", "com.apple.ScriptEditor2"],
+  ["automator", "com.apple.Automator"],
+  ["imovie", "com.apple.iMovie"],
+  ["garageband", "com.apple.garageband"],
+  ["quicktime", "com.apple.QuickTimePlayerX"],
+  ["quicktime player", "com.apple.QuickTimePlayerX"],
+  ["stocks", "com.apple.stocks"],
+  ["freeform", "com.apple.Freeform"],
+  // Creative/professional apps with opaque bundle ids (Adobe, Blackmagic) or
+  // open-source apps users name by product name (Blender, GIMP, Inkscape).
+  // "acrobat", "premiere", and "lightroom" are unambiguous product names;
+  // "resolve" alone is deliberately NOT aliased (too common a word in model
+  // reason text like "resolve the issue") — only the full "davinci resolve".
+  ["photoshop", "com.adobe.Photoshop"],
+  ["illustrator", "com.adobe.illustrator"],
+  ["lightroom", "com.adobe.LightroomClassic"],
+  ["premiere", "com.adobe.PremierePro"],
+  ["after effects", "com.adobe.AfterEffects"],
+  ["indesign", "com.adobe.InDesign"],
+  ["acrobat", "com.adobe.Reader"],
+  ["blender", "org.blenderfoundation.blender"],
+  ["gimp", "org.gimp.gimp-2.10"],
+  ["inkscape", "org.inkscape.Inkscape"],
+  ["davinci resolve", "com.blackmagic-design.Resolve"],
+  ["final cut pro", "com.apple.FinalCut"],
+  ["logic pro", "com.apple.logic10"],
+  ["canva", "com.canva.CanvaDesktop"],
+  // Developer tools a voice user is likely to name (JetBrains IDEs, Android
+  // Studio, GitHub Desktop) and comms apps with opaque bundle ids (Skype,
+  // WeChat, Webex). "edge" alone is deliberately NOT aliased ("on the cutting
+  // edge", "edge case") — only the unambiguous "microsoft edge". Same for
+  // "obs" ("obs" appears in too many contexts) — only "obs studio".
+  ["android studio", "com.google.android.studio"],
+  ["intellij", "com.jetbrains.intellij"],
+  ["pycharm", "com.jetbrains.pycharm"],
+  ["webstorm", "com.jetbrains.webstorm"],
+  ["github desktop", "com.github.GitHubClient"],
+  ["microsoft edge", "com.microsoft.edgemac"],
+  ["obs studio", "com.obsproject.obs"],
+  ["skype", "com.skype.skype"],
+  ["wechat", "com.tencent.xinWeChat"],
+  ["webex", "com.cisco.webexmeetings"],
 ]);
 
 export function normalizeReasoningEffort(value, fallback = "low") {

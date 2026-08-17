@@ -335,6 +335,44 @@ test("normalizeCuaArgs resolves common-app aliases without substring false posit
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "check the weather report" }), { bundle_id: "com.apple.weather" });
 });
 
+test("normalizeCuaArgs resolves the newer system/creative/dev/comms aliases", () => {
+  // Apple system apps (display names differ from bundle ids).
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open my contacts" }), { bundle_id: "com.apple.AddressBook" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open the dictionary" }), { bundle_id: "com.apple.Dictionary" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open disk utility" }), { bundle_id: "com.apple.DiskUtility" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open stickies" }), { bundle_id: "com.apple.Stickies" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open imovie" }), { bundle_id: "com.apple.iMovie" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open garageband" }), { bundle_id: "com.apple.garageband" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open quicktime" }), { bundle_id: "com.apple.QuickTimePlayerX" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open the stocks" }), { bundle_id: "com.apple.stocks" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open freeform" }), { bundle_id: "com.apple.Freeform" });
+  // Creative/professional apps.
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open photoshop" }), { bundle_id: "com.adobe.Photoshop" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open after effects" }), { bundle_id: "com.adobe.AfterEffects" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open blender" }), { bundle_id: "org.blenderfoundation.blender" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open davinci resolve" }), { bundle_id: "com.blackmagic-design.Resolve" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open final cut pro" }), { bundle_id: "com.apple.FinalCut" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open logic pro" }), { bundle_id: "com.apple.logic10" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open canva" }), { bundle_id: "com.canva.CanvaDesktop" });
+  // Developer tools and comms apps.
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open android studio" }), { bundle_id: "com.google.android.studio" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open intellij" }), { bundle_id: "com.jetbrains.intellij" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open pycharm" }), { bundle_id: "com.jetbrains.pycharm" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open github desktop" }), { bundle_id: "com.github.GitHubClient" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open microsoft edge" }), { bundle_id: "com.microsoft.edgemac" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open obs studio" }), { bundle_id: "com.obsproject.obs" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open skype" }), { bundle_id: "com.skype.skype" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open wechat" }), { bundle_id: "com.tencent.xinWeChat" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open webex" }), { bundle_id: "com.cisco.webexmeetings" });
+  // Deliberately un-aliased ambiguous words must NOT resolve: "edge" alone
+  // (cutting edge / edge case), "resolve" alone (resolve the issue), "obs"
+  // alone (observation contexts), and "contacts" as a substring ("contactless").
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "on the cutting edge" }), {});
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "resolve the issue" }), {});
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "check the obs logs" }), {});
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "contactless payment" }), {});
+});
+
 test("normalizeCuaArgs does not guess an app when launch_app already carries a URL", () => {
   // An explicit URL means "open in the default browser"; a keyword in the
   // reason text must not silently redirect it to a guessed app.
