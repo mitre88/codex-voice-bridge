@@ -77,6 +77,27 @@ export const APP_BUNDLE_ALIASES = new Map([
   ["vscode", "com.microsoft.VSCode"],
   ["word", "com.microsoft.Word"],
   ["zoom", "us.zoom.xos"],
+  // Developer tools a voice user is likely to name whose bundle ids are opaque
+  // (Warp, Raycast, Docker, Postman, Zed, Cursor, Sublime Text, Alfred) and
+  // Apple system apps whose display names differ from their bundle ids
+  // (Books, Voice Memos, Clock, Weather, Shortcuts). "home", "bear", and
+  // "things" are deliberately NOT aliased: those words appear too often in
+  // model reason text ("home directory", "bear with me", "the things we need")
+  // and would false-positive the word-boundary guess into the wrong app.
+  ["alfred", "com.runningwithcrayons.Alfred"],
+  ["books", "com.apple.iBooks"],
+  ["clock", "com.apple.clock"],
+  ["cursor", "com.todesktop.230313mzl4w4u92"],
+  ["docker", "com.docker.docker"],
+  ["linear", "com.linear.linear"],
+  ["postman", "com.postmanlabs.mac"],
+  ["raycast", "com.raycast.macos"],
+  ["shortcuts", "com.apple.shortcuts"],
+  ["sublime text", "com.sublimetext.4"],
+  ["voice memos", "com.apple.VoiceMemos"],
+  ["warp", "dev.warp.Warp-Stable"],
+  ["weather", "com.apple.weather"],
+  ["zed", "dev.zed.Zed"],
 ]);
 
 export function normalizeReasoningEffort(value, fallback = "low") {

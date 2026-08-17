@@ -156,6 +156,22 @@ test("resolveAppIdentity maps common-app aliases to exact bundle ids", () => {
   assert.deepEqual(resolveAppIdentity({ app_name: "1Password" }), { bundle_id: "com.1password.1password" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Todoist" }), { bundle_id: "com.todoist.mac.Todoist" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Kindle" }), { bundle_id: "com.amazon.Kindle" });
+  // Developer tools with opaque bundle ids and Apple system apps whose display
+  // name differs from the bundle id, all named aloud by a voice user.
+  assert.deepEqual(resolveAppIdentity({ app_name: "Warp" }), { bundle_id: "dev.warp.Warp-Stable" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Raycast" }), { bundle_id: "com.raycast.macos" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Docker" }), { bundle_id: "com.docker.docker" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Postman" }), { bundle_id: "com.postmanlabs.mac" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Zed" }), { bundle_id: "dev.zed.Zed" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Cursor" }), { bundle_id: "com.todesktop.230313mzl4w4u92" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Sublime Text" }), { bundle_id: "com.sublimetext.4" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Alfred" }), { bundle_id: "com.runningwithcrayons.Alfred" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Books" }), { bundle_id: "com.apple.iBooks" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Voice Memos" }), { bundle_id: "com.apple.VoiceMemos" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Clock" }), { bundle_id: "com.apple.clock" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Weather" }), { bundle_id: "com.apple.weather" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Shortcuts" }), { bundle_id: "com.apple.shortcuts" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Linear" }), { bundle_id: "com.linear.linear" });
 });
 
 test("normalizeCuaArgs fills bundle_id for launch_app from context", () => {
@@ -202,6 +218,14 @@ test("normalizeCuaArgs resolves common-app aliases without substring false posit
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open 1password" }), { bundle_id: "com.1password.1password" });
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "podcasting the session" }), {});
   assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "unmapped the fields" }), {});
+  // Newer developer-tool and system-app aliases resolve from the reason text
+  // too, and word boundaries still hold: "warping" is not "warp".
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open warp" }), { bundle_id: "dev.warp.Warp-Stable" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open the voice memos" }), { bundle_id: "com.apple.VoiceMemos" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open sublime text" }), { bundle_id: "com.sublimetext.4" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "open raycast" }), { bundle_id: "com.raycast.macos" });
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "warping the selection" }), {});
+  assert.deepEqual(normalizeCuaArgs("launch_app", {}, { reason: "check the weather report" }), { bundle_id: "com.apple.weather" });
 });
 
 test("normalizeCuaArgs does not guess an app when launch_app already carries a URL", () => {
