@@ -249,22 +249,28 @@ test("pressKeyInFrontApp normalizes modifiers so a bare string is never silently
   );
 });
 
-test("pressKeyInFrontApp trims the key so wrapped whitespace cannot reach the driver", () => {
-  // cua-driver's press_key expects a clean key name; model-generated JSON
-  // often wraps values in stray whitespace or a trailing newline (e.g. a
+test("pressKeyInFrontApp trims and lowercases the key so wrapped whitespace or capitalization cannot reach the driver", () => {
+  // cua-driver's press_key expects a clean lowercase key name; model-generated
+  // JSON often wraps values in stray whitespace or a trailing newline (e.g. a
   // template literal) — the same cosmetic noise the modifiers normalization
   // and the app_name/url trims already handle. An untrimmed key like
   // "return " or "esc\n" would make the driver fail with an opaque error the
   // model cannot self-correct from, so the tool must trim the key once at the
   // source and feed the trimmed value to the length gate and the driver call.
+  // It must also lowercase it: the driver expects lowercase key names
+  // ("return", "escape", ...) and a model describing the action in natural
+  // language plausibly sends "Return" or "ESC" — the same normalization the
+  // modifiers already get. Key names are never case-distinct (single letters
+  // are the same physical key; capitalization is expressed via the shift
+  // modifier), so lowercasing cannot change which key is pressed.
   const main = readSource("main.js");
   const fnStart = main.indexOf("async function pressKeyInFrontApp");
   assert.ok(fnStart !== -1, "main.js must define pressKeyInFrontApp");
   const fnBody = main.slice(fnStart, main.indexOf("async function getActiveAppFromCua"));
   assert.match(
     fnBody,
-    /const key = String\(input\.key\)\.trim\(\)/,
-    "pressKeyInFrontApp must normalize the key (trim) once at the source",
+    /const key = String\(input\.key\)\.trim\(\)\.toLowerCase\(\)/,
+    "pressKeyInFrontApp must normalize the key (trim + lowercase) once at the source",
   );
   assert.match(
     fnBody,

@@ -756,7 +756,15 @@ async function pressKeyInFrontApp(input = {}) {
   // is pressed. Trimming cannot weaken the gates — the trimmed value is still
   // re-validated by requireMaxLength below, and a whitespace-only key already
   // failed requireNonEmptyString above.
-  const key = String(input.key).trim();
+  // Lowercase for the same reason the modifiers are lowercased below:
+  // cua-driver's press_key expects lowercase key names ("return", "escape",
+  // "cmd", ...), and a model describing the action in natural language very
+  // plausibly sends "Return", "ESC", or "Enter" — a capitalized key would
+  // make the driver fail with an opaque error the model cannot self-correct
+  // from. Key names are never case-distinct (single letters are the same
+  // physical key; capitalization is expressed via the shift modifier), so
+  // lowercasing cannot change which key is pressed.
+  const key = String(input.key).trim().toLowerCase();
   const keyLengthError = requireMaxLength(key, "key", 100);
   if (keyLengthError) return { ok: false, code: -6, stdout: "", stderr: keyLengthError };
   const active = await getActiveAppFromCua();
