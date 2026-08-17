@@ -599,14 +599,26 @@ function runCuaDriver(input = {}) {
   // Same optional chaining as runCodex: a null IPC payload must settle with
   // the clean "Missing cua-driver tool_name." error below instead of throwing
   // a TypeError that bypasses the model-facing error path entirely.
-  const toolName = input?.tool_name;
+  // cua-driver's tool registry is lowercase snake_case, and the model very
+  // plausibly emits a capitalized or whitespace-padded variant ("Launch_App",
+  // "List_Apps", " press_key ") from natural-language reasoning — the same
+  // cosmetic noise the press_key key/modifiers normalization already handles.
+  // Normalize once at the source so the canonical lowercase name flows
+  // through the blocked-tool set, the launch_app safety gates, and the driver
+  // call identically; an unnormalized name would otherwise pass the
+  // (case-insensitive) gate and reach the driver, failing with an opaque
+  // error the model cannot self-correct from — and a capitalized
+  // "Launch_App" would skip the launch_app safety checks entirely. The
+  // original value is kept for error messages so the model sees what it sent.
+  const rawToolName = input?.tool_name;
+  const toolName = typeof rawToolName === "string" ? rawToolName.trim().toLowerCase() : rawToolName;
   if (!toolName || typeof toolName !== "string") {
     return Promise.resolve({ ok: false, code: -1, stdout: "", stderr: "Missing cua-driver tool_name." });
   }
   // Only accept plain snake_case identifiers: a tool_name like "--version" or
   // "call --help" would otherwise be parsed as a cua-driver CLI option.
   if (!isSafeCuaToolName(toolName)) {
-    return Promise.resolve({ ok: false, code: -4, stdout: "", stderr: `Invalid cua-driver tool_name: ${toolName}.` });
+    return Promise.resolve({ ok: false, code: -4, stdout: "", stderr: `Invalid cua-driver tool_name: ${rawToolName}.` });
   }
   if (CUA_BLOCKED_TOOLS.has(toolName)) {
     return Promise.resolve({ ok: false, code: -3, stdout: "", stderr: `Blocked cua-driver tool for safety: ${toolName}.` });
