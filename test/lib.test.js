@@ -989,8 +989,13 @@ test("humanizeError passes through unknown messages", () => {
 });
 
 test("truncateOutput truncates long stdout and preserves metadata", () => {
-  const out = truncateOutput({ ok: true, code: 0, stdout: "x".repeat(100), stderr: "" }, 50);
-  assert.ok(out.stdout.includes("[truncated 50 chars]"));
+  // 100 chars: 60 "A" then 40 "B". Truncation must keep the TAIL (the last
+  // 50 chars) — the part of a long run's output where the result/error
+  // summary lives — with a marker at the front, never the head.
+  const out = truncateOutput({ ok: true, code: 0, stdout: "A".repeat(60) + "B".repeat(40), stderr: "" }, 50);
+  assert.ok(out.stdout.startsWith("...[truncated 50 chars]\n"));
+  assert.ok(out.stdout.endsWith("B".repeat(40)));
+  assert.ok(!out.stdout.includes("A".repeat(60)));
   assert.equal(out.ok, true);
   assert.equal(out.code, 0);
   assert.equal(out.stderr, "");

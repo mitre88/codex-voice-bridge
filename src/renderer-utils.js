@@ -339,7 +339,14 @@ export function truncateOutput(output, maxChars = 30000) {
   for (const key of ["stdout", "stderr"]) {
     if (typeof out[key] === "string" && out[key].length > maxChars) {
       const original = out[key].length;
-      out[key] = `${out[key].slice(0, maxChars)}\n...[truncated ${original - maxChars} chars]`;
+      // Keep the TAIL, not the head: this output is the function_call_output
+      // the model uses to decide its next action, and for a long run the
+      // actionable part (final result, error summary, exit message) is at the
+      // END — head-truncation handed the model the verbose preamble of a
+      // 100KB codex run and dropped the conclusion it needs to self-correct.
+      // Same convention as appendCaption, which keeps the newest text with a
+      // marker showing the cut.
+      out[key] = `...[truncated ${original - maxChars} chars]\n${out[key].slice(-maxChars)}`;
     }
   }
   return out;
