@@ -613,6 +613,19 @@ test("humanizeError maps the main-process request timeout to the timeout message
   );
 });
 
+test("humanizeError maps a bare HTTP 408 to the timeout message", () => {
+  // A proxy or server answering with a bare 408 (opaque body, or a response
+  // whose text is not the usual JSON error) carries no DOMException name; the
+  // status alone is a definitive timeout diagnosis and must map to the
+  // friendly timeout text instead of passing through raw, mirroring the
+  // bare-status 401/403/404/429/5xx branches.
+  assert.match(humanizeError(new Error("OpenAI token failed: 408 Request Timeout")), /request timed out/i);
+  assert.match(humanizeError(new Error("Realtime call failed: 408")), /request timed out/i);
+  assert.match(humanizeError(new Error("Error code: 408")), /request timed out/i);
+  // A stray 4+ digit number in an unrelated message must not false-positive.
+  assert.doesNotMatch(humanizeError(new Error("http status 4080 at line 12")), /request timed out/i);
+});
+
 test("humanizeError maps stale media device selections to an actionable message", () => {
   assert.match(
     humanizeError({ name: "OverconstrainedError", message: "Constraints could not be satisfied" }),

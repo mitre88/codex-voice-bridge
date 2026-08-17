@@ -34,7 +34,15 @@ export function humanizeError(error) {
     // is lost by the time the error reaches the UI — without this the most
     // common network-failure path (a hung token fetch) passes through as raw
     // text instead of the friendly timeout message.
-    lower.includes("openai request timed out after")
+    lower.includes("openai request timed out after") ||
+    // A proxy or server answering with a bare HTTP 408 Request Timeout
+    // (opaque body, or a response whose text is not the usual JSON error)
+    // would otherwise pass through raw even though the status alone is a
+    // definitive timeout diagnosis — mirroring the bare-status 401/403/404/
+    // 429/5xx branches. The status must be exactly three digits (408\b) so a
+    // stray 4+ digit number in an unrelated message cannot false-positive.
+    /(?:token|call) failed: 408\b/.test(lower) ||
+    /error code: 408\b/.test(lower)
   ) {
     return "The request timed out. Check your network connection and try again.";
   }
