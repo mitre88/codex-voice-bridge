@@ -823,11 +823,27 @@ async function pressKeyInFrontApp(input = {}) {
   const modifiers = rawModifiers
     .filter((modifier) => typeof modifier === "string")
     .map((modifier) => modifier.trim().toLowerCase())
+    // A model describing a shortcut in natural language very plausibly emits
+    // a combined modifier entry ("cmd+shift", "CMD + Shift") or a bare combo
+    // string ("cmd+shift") instead of the array of individual modifier names
+    // cua-driver's press_key expects. Such an entry would reach the driver as
+    // one bogus modifier name and fail with an opaque error the model cannot
+    // self-correct from. Modifier names never contain "+" (cmd/ctrl/alt/
+    // shift/option/...), so splitting every entry on "+" is unambiguous: it
+    // can only expand one modifier into the several the model named, never
+    // invent one that was not asked for. Parts are trimmed so "CMD + Shift"
+    // normalizes like "cmd+shift".
+    .flatMap((modifier) => modifier.split("+").map((part) => part.trim()))
     // A whitespace-only entry ("  ", " \n") trims to "" — an empty modifier
     // string would reach cua-driver and fail with an opaque error just like
     // the non-string entries filtered above. Drop it so the driver only ever
     // sees real modifier names.
-    .filter((modifier) => modifier.length > 0);
+    .filter((modifier) => modifier.length > 0)
+    // A duplicated modifier ("cmd+cmd") is never a meaningful instruction —
+    // pressing the same modifier twice is just pressing it once — and a
+    // duplicate would be a new shape the driver never sees today, so collapse
+    // exact duplicates while keeping the original order.
+    .filter((modifier, index, all) => all.indexOf(modifier) === index);
   return runCuaDriver({ tool_name: "press_key", json_args: { pid: active.pid, key, modifiers } });
 }
 

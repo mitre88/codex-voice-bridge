@@ -284,6 +284,33 @@ test("pressKeyInFrontApp trims and lowercases the key so wrapped whitespace or c
   );
 });
 
+test("pressKeyInFrontApp splits '+'-joined modifier entries into individual modifiers", () => {
+  // A model describing a shortcut in natural language very plausibly emits a
+  // combined modifier entry ("cmd+shift", "CMD + Shift") or a bare combo
+  // string ("cmd+shift") instead of the array of individual modifier names
+  // cua-driver's press_key expects. Without normalization such an entry
+  // reaches the driver as one bogus modifier name and fails with an opaque
+  // error the model cannot self-correct from. Modifier names never contain
+  // "+" (cmd/ctrl/alt/shift/option/...), so splitting every entry on "+" is
+  // unambiguous: it expands one entry into the several modifiers the model
+  // named, never inventing one that was not asked for — and it must keep the
+  // existing string/trim/lowercase handling intact.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("async function pressKeyInFrontApp");
+  assert.ok(fnStart !== -1, "main.js must define pressKeyInFrontApp");
+  const fnBody = main.slice(fnStart, main.indexOf("async function getActiveAppFromCua"));
+  assert.match(
+    fnBody,
+    /\.flatMap\(\(modifier\) => modifier\.split\("\+"\)\.map\(\(part\) => part\.trim\(\)\)\)/,
+    "pressKeyInFrontApp must split each modifier entry on '+' and trim the parts",
+  );
+  assert.match(
+    fnBody,
+    /\.filter\(\(modifier, index, all\) => all\.indexOf\(modifier\) === index\)/,
+    "pressKeyInFrontApp must collapse duplicate modifiers after the split",
+  );
+});
+
 test("runCodex and openAppVisible cap argv-bound values like the prompt guard does", () => {
   // Every model-controlled value that becomes a single argv entry (prompt,
   // text, json_args, and now cwd + url) must go through the same
