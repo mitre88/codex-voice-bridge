@@ -250,6 +250,39 @@ test("normalizeCuaArgs normalizes press_key key/modifiers like the dedicated too
     key: "return",
     modifiers: ["cmd"],
   });
+  // A model may put the whole shortcut in the key ("cmd+shift+p") instead of
+  // a single key + modifiers array: the last part becomes the pressed key
+  // and the preceding parts become modifiers, so the combo reaches the
+  // driver in the exact single-key + array shape it expects instead of
+  // failing opaquely. Key-derived modifiers merge with the explicit ones,
+  // and exact duplicates collapse ("cmd+p" with modifiers ["cmd"] is just
+  // cmd+p).
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "cmd+shift+p" }), {
+    pid: 42,
+    key: "p",
+    modifiers: ["cmd", "shift"],
+  });
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "CMD + SHIFT + P" }), {
+    pid: 42,
+    key: "p",
+    modifiers: ["cmd", "shift"],
+  });
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "cmd+p", modifiers: ["shift"] }), {
+    pid: 42,
+    key: "p",
+    modifiers: ["cmd", "shift"],
+  });
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "cmd+p", modifiers: ["cmd"] }), {
+    pid: 42,
+    key: "p",
+    modifiers: ["cmd"],
+  });
+  // The combo split is idempotent too: re-normalizing the normalized result
+  // is a no-op.
+  assert.deepEqual(normalizeCuaArgs("press_key", normalizeCuaArgs("press_key", { key: "cmd+shift+p" })), {
+    key: "p",
+    modifiers: ["cmd", "shift"],
+  });
   // Non-string keys stay untouched (they fail in the driver like today), a
   // missing modifiers becomes the explicit empty array (same shape the
   // dedicated tool always sends), and other tools are not affected.

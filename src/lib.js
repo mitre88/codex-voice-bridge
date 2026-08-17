@@ -244,17 +244,39 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
     // whitespace. Key names are never case-distinct, so lowercasing cannot
     // change which key is pressed.
     if (typeof args.key === "string") args.key = args.key.trim().toLowerCase();
+    // A model describing a shortcut in natural language very plausibly puts
+    // the whole combo in the key ("cmd+shift+p") instead of a single key
+    // plus a modifiers array. cua-driver's press_key expects a single key
+    // name, so such a key would reach the driver raw and fail with an opaque
+    // error the model cannot self-correct from — the same class of cosmetic
+    // noise the modifiers split below already handles. Key names never
+    // contain "+", so the split is unambiguous: the last part is the pressed
+    // key and the preceding parts join the modifiers pipeline (trimmed,
+    // lowercased, deduped like every other entry). Single keys are untouched,
+    // and the split is idempotent, so the dedicated tool's already-normalized
+    // args still pass through unchanged.
+    let comboModifiers = [];
+    if (typeof args.key === "string") {
+      const comboParts = args.key.split("+").map((part) => part.trim()).filter((part) => part.length > 0);
+      if (comboParts.length > 1) {
+        args.key = comboParts[comboParts.length - 1];
+        comboModifiers = comboParts.slice(0, -1);
+      }
+    }
     // Same array normalization as pressKeyInFrontApp: a bare string must
     // become a one-element array (never [] — that would press the key without
     // the modifier the model asked for), every entry is trimmed/lowercased
     // and split on "+" (modifier names never contain "+", so the split can
     // only expand one modifier into the several the model named), whitespace-
     // only entries are dropped, and exact duplicates collapse.
-    const rawModifiers = Array.isArray(args.modifiers)
-      ? args.modifiers
-      : typeof args.modifiers === "string"
-        ? [args.modifiers]
-        : [];
+    const rawModifiers = [
+      ...comboModifiers,
+      ...(Array.isArray(args.modifiers)
+        ? args.modifiers
+        : typeof args.modifiers === "string"
+          ? [args.modifiers]
+          : []),
+    ];
     args.modifiers = rawModifiers
       .filter((modifier) => typeof modifier === "string")
       .map((modifier) => modifier.trim().toLowerCase())

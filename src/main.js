@@ -799,6 +799,19 @@ async function pressKeyInFrontApp(input = {}) {
   // physical key; capitalization is expressed via the shift modifier), so
   // lowercasing cannot change which key is pressed.
   const key = String(input.key).trim().toLowerCase();
+  // A model describing a shortcut in natural language very plausibly puts the
+  // whole combo in the key ("cmd+shift+p") instead of a single key plus a
+  // modifiers array. cua-driver's press_key expects a single key name, so
+  // such a key would reach the driver raw and fail with an opaque error the
+  // model cannot self-correct from — the same class of cosmetic noise the
+  // modifiers split below already handles. Key names never contain "+", so
+  // the split is unambiguous: the last part is the pressed key and the
+  // preceding parts join the modifiers pipeline below (trimmed, lowercased,
+  // deduped like every other entry). Single keys are untouched. The length
+  // gate still runs on the original key — always at least as long as the
+  // pressed key — so the split cannot bypass it.
+  const keyCombo = key.split("+").map((part) => part.trim()).filter((part) => part.length > 0);
+  const pressedKey = keyCombo.length > 1 ? keyCombo[keyCombo.length - 1] : key;
   const keyLengthError = requireMaxLength(key, "key", 100);
   if (keyLengthError) return { ok: false, code: -6, stdout: "", stderr: keyLengthError };
   const active = await getActiveAppFromCua();
@@ -815,11 +828,14 @@ async function pressKeyInFrontApp(input = {}) {
   // one-element array, every entry is trimmed and lowercased ("CMD",
   // " Command ") so the driver receives the exact form it expects, and
   // non-string entries are dropped.
-  const rawModifiers = Array.isArray(input.modifiers)
-    ? input.modifiers
-    : typeof input.modifiers === "string"
-      ? [input.modifiers]
-      : [];
+  const rawModifiers = [
+    ...(keyCombo.length > 1 ? keyCombo.slice(0, -1) : []),
+    ...(Array.isArray(input.modifiers)
+      ? input.modifiers
+      : typeof input.modifiers === "string"
+        ? [input.modifiers]
+        : []),
+  ];
   const modifiers = rawModifiers
     .filter((modifier) => typeof modifier === "string")
     .map((modifier) => modifier.trim().toLowerCase())
@@ -844,7 +860,7 @@ async function pressKeyInFrontApp(input = {}) {
     // duplicate would be a new shape the driver never sees today, so collapse
     // exact duplicates while keeping the original order.
     .filter((modifier, index, all) => all.indexOf(modifier) === index);
-  return runCuaDriver({ tool_name: "press_key", json_args: { pid: active.pid, key, modifiers } });
+  return runCuaDriver({ tool_name: "press_key", json_args: { pid: active.pid, key: pressedKey, modifiers } });
 }
 
 async function getActiveAppFromCua() {

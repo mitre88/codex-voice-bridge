@@ -311,6 +311,48 @@ test("pressKeyInFrontApp splits '+'-joined modifier entries into individual modi
   );
 });
 
+test("pressKeyInFrontApp splits a '+'-joined combo out of the key field", () => {
+  // The modifiers split handles "+"-joined modifier entries, but a model
+  // describing a shortcut in natural language can just as plausibly put the
+  // WHOLE combo in the key ("cmd+shift+p") with no modifiers at all. Such a
+  // key reaches cua-driver's press_key as one bogus key name and fails with
+  // an opaque error the model cannot self-correct from. Key names never
+  // contain "+", so splitting the key on "+" is unambiguous: the last part
+  // is the pressed key and the preceding parts join the modifiers pipeline.
+  // The length gate must still run on the original key so the split cannot
+  // bypass it, and the driver call must use the pressed key, never the raw
+  // combo.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("async function pressKeyInFrontApp");
+  assert.ok(fnStart !== -1, "main.js must define pressKeyInFrontApp");
+  const fnBody = main.slice(fnStart, main.indexOf("async function getActiveAppFromCua"));
+  assert.match(
+    fnBody,
+    /const keyCombo = key\.split\("\+"\)\.map\(\(part\) => part\.trim\(\)\)\.filter\(\(part\) => part\.length > 0\)/,
+    "pressKeyInFrontApp must split a '+'-joined key into its parts",
+  );
+  assert.match(
+    fnBody,
+    /keyCombo\[keyCombo\.length - 1\]/,
+    "pressKeyInFrontApp must use the last combo part as the pressed key",
+  );
+  assert.match(
+    fnBody,
+    /keyCombo\.slice\(0, -1\)/,
+    "pressKeyInFrontApp must feed the preceding combo parts into the modifiers",
+  );
+  assert.match(
+    fnBody,
+    /requireMaxLength\(key, "key", 100\)/,
+    "pressKeyInFrontApp must keep the length gate on the original key so the split cannot bypass it",
+  );
+  assert.doesNotMatch(
+    fnBody,
+    /json_args: \{ pid: active\.pid, key: key \}/,
+    "pressKeyInFrontApp must not pass the unsplit key to cua-driver",
+  );
+});
+
 test("runCodex and openAppVisible cap argv-bound values like the prompt guard does", () => {
   // Every model-controlled value that becomes a single argv entry (prompt,
   // text, json_args, and now cwd + url) must go through the same
