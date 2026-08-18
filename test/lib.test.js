@@ -59,6 +59,14 @@ test("normalizeTone maps known tones and defaults to calm", () => {
   assert.match(normalizeTone("unknown"), /calm/);
 });
 
+test("normalizeTone normalizes case and whitespace like normalizeReasoningEffort", () => {
+  assert.match(normalizeTone("CALM"), /calm/);
+  assert.match(normalizeTone(" Direct "), /direct/);
+  assert.match(normalizeTone("ENERGETIC\n"), /upbeat/);
+  // A non-string value must keep falling back instead of throwing on .trim().
+  assert.match(normalizeTone(42), /calm/);
+});
+
 test("escapeAppleScript doubles quotes the AppleScript way", () => {
   assert.equal(escapeAppleScript('a"b\\c'), 'a""b\\c');
   assert.equal(escapeAppleScript("plain"), "plain");

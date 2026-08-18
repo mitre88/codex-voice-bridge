@@ -182,12 +182,21 @@ export function normalizeReasoningEffort(value, fallback = "low") {
 }
 
 export function normalizeTone(value) {
+  // Mirror normalizeReasoningEffort: .env files conventionally use UPPERCASE
+  // values and shell exports often carry stray whitespace, so "CALM" or
+  // " Calm " would otherwise silently fall back to the default tone and the
+  // model would speak with the wrong persona despite the user asking for
+  // another one. Normalize case and padding before the known-value check;
+  // the fallback still guards every other value, and a non-string value
+  // (e.g. a programmatic 42) keeps the previous fallback behavior instead
+  // of throwing on .trim().
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : value;
   return (
     {
       calm: "calm, warm, focused, and concise",
       direct: "direct, practical, and concise",
       energetic: "upbeat, clear, and action-oriented",
-    }[value] || "calm, warm, focused, and concise"
+    }[normalized] || "calm, warm, focused, and concise"
   );
 }
 
