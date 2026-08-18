@@ -320,6 +320,40 @@ test("sendFunctionOutput drops the pending send on timeout instead of sending it
   );
 });
 
+test("executeAction pins the data channel so a stale output cannot leak into a reconnected session", () => {
+  // A local action can outlive the session that approved it (a long Codex run
+  // while the user disconnects and reconnects): when it finishes, its output
+  // used to be sent through the GLOBAL actionDataChannel — which by then
+  // belongs to the NEW session, leaking a function_call_output whose call_id
+  // does not exist in the new conversation. executeAction must capture the
+  // channel of the session that approved the action BEFORE the run starts and
+  // deliver the output through that pinned channel (dropped when it is gone),
+  // and sendFunctionOutput must accept that channel instead of always reading
+  // the global.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("async function executeAction");
+  assert.ok(fnStart !== -1, "renderer.js must define executeAction");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("const KNOWN_TOOLS"));
+  assert.match(
+    fnBody,
+    /const channel = actionDataChannel;/,
+    "executeAction must capture the session's data channel before the local action runs",
+  );
+  assert.match(
+    fnBody,
+    /sendFunctionOutput\(action\.callId, result, channel\)/,
+    "executeAction must deliver the output through the captured channel, not the global",
+  );
+  const sendStart = renderer.indexOf("function sendFunctionOutput");
+  assert.ok(sendStart !== -1, "renderer.js must define sendFunctionOutput");
+  const sendBody = renderer.slice(sendStart, renderer.indexOf('connectButton.addEventListener("click", connectRealtime)'));
+  assert.match(
+    sendBody,
+    /function sendFunctionOutput\(callId, output, channel = actionDataChannel\)/,
+    "sendFunctionOutput must accept the caller's channel (defaulting to the global for non-action callers)",
+  );
+});
+
 test("refreshMediaDevices survives a denied permission prompt so the list still refreshes", () => {
   // Switching to interview mode calls refreshMediaDevices(true), which asks
   // for microphone permission via getUserMedia to obtain device labels. If the

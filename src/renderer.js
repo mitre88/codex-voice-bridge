@@ -362,6 +362,14 @@ function getFunctionCall(event) {
 
 async function executeAction(action) {
   setPendingAction(null);
+  // Pin the data channel of the session that approved this action BEFORE the
+  // (potentially long) local run: a disconnect+reconnect while Codex is still
+  // running replaces the global actionDataChannel with the NEW session's
+  // channel, and delivering this action's output into it would leak a stale
+  // function_call_output (a call_id that does not exist in the new
+  // conversation) into the new session. The output must go to the channel it
+  // was approved on — or be dropped when that channel is gone.
+  const channel = actionDataChannel;
   setStatus(action.kind === "codex" ? "Codex running" : "CUA running");
   let result;
   try {
@@ -382,7 +390,7 @@ async function executeAction(action) {
   // user disconnects. All "codex-output" chunks are posted before the IPC
   // call resolves, so flushing here captures the complete run.
   flushCodexOutput();
-  sendFunctionOutput(action.callId, result);
+  sendFunctionOutput(action.callId, result, channel);
   // The user may have disconnected while the local action ran (the child
   // process keeps running in the main process, so the IPC call still
   // resolves). Without this guard the status would flip back to "Listening"
@@ -807,7 +815,12 @@ function disconnectRealtime(options = {}) {
   }
 }
 
-function sendFunctionOutput(callId, output) {
+// The channel is passed in (defaulting to the global) rather than always read
+// from the global so a stale output can never leak into a later session's
+// channel after a disconnect+reconnect: executeAction pins the channel its
+// action was approved on, so an output that outlives its session is either
+// delivered on the original channel or dropped when that channel is gone.
+function sendFunctionOutput(callId, output, channel = actionDataChannel) {
   const messages = [
     JSON.stringify({
       type: "conversation.item.create",
@@ -818,37 +831,34 @@ function sendFunctionOutput(callId, output) {
   // The channel can close between the readyState check and send() (e.g. the
   // user disconnected while a long Codex run was finishing); send() on a
   // closing/closed channel throws InvalidStateError, so guard both the state
-  // and the call itself. The channel is passed in rather than read from the
-  // global so a stale output can never leak into a later session's channel
-  // after a disconnect+reconnect.
-  const send = (channel) => {
-    if (!channel || channel.readyState !== "open") {
+  // and the call itself.
+  const send = (target) => {
+    if (!target || target.readyState !== "open") {
       log("Data channel closed before the function output could be sent.");
       return;
     }
     try {
-      messages.forEach((message) => channel.send(message));
+      messages.forEach((message) => target.send(message));
     } catch (error) {
       log("Function output could not be sent; data channel closed.", String(error));
     }
   };
-  if (actionDataChannel && actionDataChannel.readyState === "open") {
-    send(actionDataChannel);
+  if (channel && channel.readyState === "open") {
+    send(channel);
     return;
   }
   // Dropping the output here would leave the Realtime session waiting forever
   // for a tool response (e.g. the user approved an action right after connect,
   // before the data channel finished opening). Wait briefly instead.
-  if (!actionDataChannel) {
+  if (!channel) {
     log("No data channel to deliver function output.");
     return;
   }
-  const channel = actionDataChannel;
-  let dropTimer;
   const onOpen = () => {
     clearTimeout(dropTimer);
     send(channel);
   };
+  let dropTimer;
   dropTimer = setTimeout(() => {
     // Cancel the pending send: without the removal, the once-listener would
     // still fire when the channel finally opens and send the output anyway —
