@@ -655,6 +655,27 @@ test("ALWAYS_ON_TOP trims CODEX_VOICE_ALWAYS_ON_TOP so a whitespace-padded 0 can
   );
 });
 
+test("SHORTCUT trims CODEX_VOICE_SHORTCUT so a whitespace-padded value cannot silently kill the toggle shortcut", () => {
+  // The WORKDIR/ALWAYS_ON_TOP/API-key trims normalize whitespace-padded env
+  // values at their sources, but the toggle shortcut used the raw value: a
+  // shell export with a trailing space (e.g. `export
+  // CODEX_VOICE_SHORTCUT="CommandOrControl+Shift+Space "` from a copy-paste,
+  // or a launchd plist string with stray whitespace) would make
+  // globalShortcut.register fail — reported only as a log line, so the user
+  // silently loses the toggle shortcut — and the padded string would also
+  // show in the UI config line. The value must be trimmed so a padded or
+  // whitespace-only value behaves exactly like the default.
+  const main = readSource("main.js");
+  const shortcutStart = main.indexOf("const SHORTCUT = ");
+  assert.ok(shortcutStart !== -1, "main.js must define SHORTCUT");
+  const shortcutBody = main.slice(shortcutStart, main.indexOf("// Whether the bridge window floats"));
+  assert.match(
+    shortcutBody,
+    /process\.env\.CODEX_VOICE_SHORTCUT\?\.trim\(\) \|\| "CommandOrControl\+Shift\+Space"/,
+    "SHORTCUT must trim CODEX_VOICE_SHORTCUT and fall back to the default for a whitespace-only value",
+  );
+});
+
 test("createRealtimeClientSecret trims the resolved API key so a whitespace-padded OPENAI_API_KEY cannot 401", () => {
   // The runtime key and the Keychain value are trimmed at their sources
   // (set-api-key trims, security -w output is trimmed), but an OPENAI_API_KEY

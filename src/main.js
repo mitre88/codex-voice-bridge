@@ -98,7 +98,14 @@ const LOG_DIR = path.join(os.homedir(), "Library", "Logs", "codex-voice-bridge")
 const LOG_FILE = path.join(LOG_DIR, "bridge.log");
 const LOG_MAX_BYTES = 2 * 1024 * 1024;
 const SAFETY_ID = crypto.createHash("sha256").update(`${process.env.USER || "local"}:codex-voice-bridge`).digest("hex");
-const SHORTCUT = process.env.CODEX_VOICE_SHORTCUT || "CommandOrControl+Shift+Space";
+// Trim CODEX_VOICE_SHORTCUT at the source: a whitespace-padded value (a shell
+// export with a trailing space, a launchd plist string with stray whitespace)
+// would otherwise make globalShortcut.register fail — reported only as a log
+// line, so the user silently loses the toggle shortcut — and the same padded
+// string would show in the UI config line. A whitespace-only value trims to ""
+// and falls back to the default exactly like an unset variable, the same
+// cosmetic-noise class of failure the WORKDIR/ALWAYS_ON_TOP trims prevent.
+const SHORTCUT = process.env.CODEX_VOICE_SHORTCUT?.trim() || "CommandOrControl+Shift+Space";
 // Whether the bridge window floats above every other window. Always-on-top
 // keeps the bridge visible while voice commands drive another app, but the
 // window then covers whatever the user is reading during idle stretches;
