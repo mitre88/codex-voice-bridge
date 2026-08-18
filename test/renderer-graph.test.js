@@ -519,3 +519,26 @@ test("log() serializes defensively so a non-serializable payload cannot loop the
     "log() must fall back to String(data) when JSON.stringify throws",
   );
 });
+
+test("enabling auto-run executes a pending action instead of letting its auto-reject timer fire", () => {
+  // When a tool call arrives while auto-run is OFF, setPendingAction arms an
+  // auto-reject timer. If the human then ticks the auto-run checkbox, the
+  // pending action must run immediately — otherwise the still-armed timer
+  // rejects it later even though the human just asked for automatic
+  // execution. The change listener must mirror the model path (execute the
+  // pending action when the checkbox is checked).
+  const renderer = readSource("renderer.js");
+  const listenerStart = renderer.indexOf('autoRunInput.addEventListener("change"');
+  assert.ok(listenerStart !== -1, "renderer.js must wire a change listener on the auto-run checkbox");
+  const listenerBody = renderer.slice(listenerStart, renderer.indexOf('navigator.mediaDevices?.addEventListener'));
+  assert.match(
+    listenerBody,
+    /autoRunInput\.checked && pendingAction/,
+    "the auto-run change listener must act on a pending action when the checkbox is checked",
+  );
+  assert.match(
+    listenerBody,
+    /executeAction\(pendingAction\)/,
+    "the auto-run change listener must execute the pending action (which clears the auto-reject timer)",
+  );
+});

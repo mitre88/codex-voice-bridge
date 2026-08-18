@@ -893,6 +893,14 @@ rejectCodexButton.addEventListener("click", () => {
   sendFunctionOutput(pendingAction.callId, { ok: false, stderr: "The human rejected this local action request." });
   setPendingAction(null);
 });
+// Enabling auto-run must apply to a tool call already awaiting a human
+// decision: without this, the pending action keeps its auto-reject timer and
+// gets rejected later even though the human just asked for automatic
+// execution. Run it now, exactly like the model path does when a call arrives
+// with auto-run already checked (executeAction clears the pending timer).
+autoRunInput.addEventListener("change", () => {
+  if (autoRunInput.checked && pendingAction) executeAction(pendingAction);
+});
 navigator.mediaDevices?.addEventListener?.("devicechange", () => refreshMediaDevices(false).catch(() => {}));
 
 let codexOutputBuffer = "";
