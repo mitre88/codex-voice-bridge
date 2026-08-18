@@ -59,10 +59,16 @@ function loadDotEnv() {
 }
 loadDotEnv();
 
-const DEFAULT_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2";
-const DEFAULT_TRANSLATE_MODEL = process.env.OPENAI_REALTIME_TRANSLATE_MODEL || "gpt-realtime-translate";
-const DEFAULT_TRANSCRIBE_MODEL = process.env.OPENAI_REALTIME_TRANSCRIBE_MODEL || "gpt-realtime-whisper";
-const DEFAULT_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
+// Trim the model/voice env values at the source: a whitespace-padded value (a
+// shell export with a trailing space, a launchd plist string with stray
+// whitespace) would otherwise be sent to the OpenAI API as-is and rejected
+// with a 400 on every connect — the same cosmetic-noise class of failure the
+// WORKDIR/SHORTCUT/API-key trims prevent. A whitespace-only value trims to ""
+// and falls back to the default exactly like an unset variable.
+const DEFAULT_MODEL = process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-2";
+const DEFAULT_TRANSLATE_MODEL = process.env.OPENAI_REALTIME_TRANSLATE_MODEL?.trim() || "gpt-realtime-translate";
+const DEFAULT_TRANSCRIBE_MODEL = process.env.OPENAI_REALTIME_TRANSCRIBE_MODEL?.trim() || "gpt-realtime-whisper";
+const DEFAULT_VOICE = process.env.OPENAI_REALTIME_VOICE?.trim() || "marin";
 // Normalize the .env value at the source: a typo like "banana" would
 // otherwise surface in the UI select (no matching option) and reach the API
 // (forcing the reasoning-400 retry on every connect) instead of falling back
@@ -70,7 +76,7 @@ const DEFAULT_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
 // insensitive ("HIGH" and " High " both normalize to "high") and falls back
 // to "low" for any value outside minimal/low/medium/high/xhigh.
 const DEFAULT_REASONING_EFFORT = normalizeReasoningEffort(process.env.OPENAI_REALTIME_REASONING_EFFORT || "low");
-const DEFAULT_TARGET_LANGUAGE = process.env.OPENAI_REALTIME_TARGET_LANGUAGE || "es";
+const DEFAULT_TARGET_LANGUAGE = process.env.OPENAI_REALTIME_TARGET_LANGUAGE?.trim() || "es";
 // Fall back to the home directory when launched from Finder/Dock (cwd === "/").
 const processCwd = process.cwd();
 // Trim CODEX_VOICE_WORKDIR at the source: a whitespace-padded value (a shell

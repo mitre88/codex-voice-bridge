@@ -712,3 +712,35 @@ test("key-status does not report a whitespace-only OPENAI_API_KEY as a usable ke
     "key-status must not count a whitespace-only OPENAI_API_KEY as a usable key",
   );
 });
+
+test("model/voice/language defaults trim their env values so padded strings cannot 400 on every connect", () => {
+  // The WORKDIR/SHORTCUT/ALWAYS_ON_TOP/API-key trims normalize whitespace-
+  // padded env values at their sources, but the Realtime model, translate/
+  // transcribe models, voice, and target language were used raw: a shell
+  // export with a trailing space (e.g. `export OPENAI_REALTIME_VOICE="marin "`
+  // from a copy-paste, or a launchd plist string with stray whitespace) is
+  // sent to the OpenAI API exactly as-is, so every connect fails with a 400
+  // (unknown model/voice) that the user cannot diagnose from the .env they
+  // wrote. Each default must trim so a padded or whitespace-only value
+  // behaves exactly like the bare value or the built-in default.
+  const main = readSource("main.js");
+  const defaultsStart = main.indexOf("const DEFAULT_MODEL = ");
+  assert.ok(defaultsStart !== -1, "main.js must define DEFAULT_MODEL");
+  const defaultsBody = main.slice(defaultsStart, main.indexOf("const DEFAULT_REASONING_EFFORT"));
+  for (const [envVar, pattern] of [
+    ["OPENAI_REALTIME_MODEL", /process\.env\.OPENAI_REALTIME_MODEL\?\.trim\(\) \|\| "gpt-realtime-2"/],
+    ["OPENAI_REALTIME_TRANSLATE_MODEL", /process\.env\.OPENAI_REALTIME_TRANSLATE_MODEL\?\.trim\(\) \|\| "gpt-realtime-translate"/],
+    ["OPENAI_REALTIME_TRANSCRIBE_MODEL", /process\.env\.OPENAI_REALTIME_TRANSCRIBE_MODEL\?\.trim\(\) \|\| "gpt-realtime-whisper"/],
+    ["OPENAI_REALTIME_VOICE", /process\.env\.OPENAI_REALTIME_VOICE\?\.trim\(\) \|\| "marin"/],
+  ]) {
+    assert.match(defaultsBody, pattern, `DEFAULT_* must trim ${envVar} and fall back for a whitespace-only value`);
+  }
+  const langStart = main.indexOf("const DEFAULT_TARGET_LANGUAGE = ");
+  assert.ok(langStart !== -1, "main.js must define DEFAULT_TARGET_LANGUAGE");
+  const langBody = main.slice(langStart, main.indexOf("// Fall back to the home directory"));
+  assert.match(
+    langBody,
+    /process\.env\.OPENAI_REALTIME_TARGET_LANGUAGE\?\.trim\(\) \|\| "es"/,
+    "DEFAULT_TARGET_LANGUAGE must trim OPENAI_REALTIME_TARGET_LANGUAGE and fall back for a whitespace-only value",
+  );
+});
