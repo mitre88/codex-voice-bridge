@@ -91,6 +91,11 @@ const LOG_FILE = path.join(LOG_DIR, "bridge.log");
 const LOG_MAX_BYTES = 2 * 1024 * 1024;
 const SAFETY_ID = crypto.createHash("sha256").update(`${process.env.USER || "local"}:codex-voice-bridge`).digest("hex");
 const SHORTCUT = process.env.CODEX_VOICE_SHORTCUT || "CommandOrControl+Shift+Space";
+// Whether the bridge window floats above every other window. Always-on-top
+// keeps the bridge visible while voice commands drive another app, but the
+// window then covers whatever the user is reading during idle stretches;
+// CODEX_VOICE_ALWAYS_ON_TOP=0 opts out without changing the default.
+const ALWAYS_ON_TOP = process.env.CODEX_VOICE_ALWAYS_ON_TOP !== "0";
 
 // Read the version for the UI config line and support/debug reports. Never
 // block startup if package.json is missing or unreadable.
@@ -329,7 +334,7 @@ function createWindow() {
     width: 460,
     height: 720,
     show: true,
-    alwaysOnTop: true,
+    alwaysOnTop: ALWAYS_ON_TOP,
     title: "Codex Voice Bridge",
     backgroundColor: "#090a0a",
     webPreferences: {

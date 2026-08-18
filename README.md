@@ -94,6 +94,7 @@ export CODEX_VOICE_TIMEOUT_MS="120000"                       # codex CLI timeout
 export CODEX_VOICE_CUA_TIMEOUT_MS="60000"                    # cua-driver timeout
 export CODEX_VOICE_OPENAI_TIMEOUT_MS="60000"                 # OpenAI HTTP timeout
 export CODEX_VOICE_ACTION_TIMEOUT_MS="120000"                # auto-reject pending Run/Reject after N ms
+export CODEX_VOICE_ALWAYS_ON_TOP="1"                         # "0" = window does not float above other apps
 export CODEX_VOICE_ENV_FILE="/path/to/your/.env"             # load .env from a custom location (default: <cwd>/.env)
 ```
 
