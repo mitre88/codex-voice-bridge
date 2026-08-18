@@ -157,6 +157,12 @@ test("resolveAppIdentity maps common-app aliases to exact bundle ids", () => {
   assert.deepEqual(resolveAppIdentity({ app_name: "Mail" }), { bundle_id: "com.apple.mail" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Calendar" }), { bundle_id: "com.apple.iCal" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Messages" }), { bundle_id: "com.apple.MobileSMS" });
+  // "iMessage" is the spoken name for Messages; it must resolve like the
+  // "messages" alias instead of falling back to a name lookup that misses.
+  assert.deepEqual(resolveAppIdentity({ app_name: "iMessage" }), { bundle_id: "com.apple.MobileSMS" });
+  // "iTunes" no longer exists as an app; the legacy spoken name maps to Music.
+  assert.deepEqual(resolveAppIdentity({ app_name: "iTunes" }), { bundle_id: "com.apple.Music" });
+  assert.deepEqual(resolveAppIdentity({ app_name: "Dropbox" }), { bundle_id: "com.getdropbox.dropbox" });
   assert.deepEqual(resolveAppIdentity({ app_name: "System Settings" }), { bundle_id: "com.apple.systempreferences" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Slack" }), { bundle_id: "com.tinyspeck.slackmacgap" });
   assert.deepEqual(resolveAppIdentity({ app_name: "Spotify" }), { bundle_id: "com.spotify.client" });

@@ -40,7 +40,15 @@ export const APP_BUNDLE_ALIASES = new Map([
   ["keynote", "com.apple.Keynote"],
   ["mail", "com.apple.mail"],
   ["messages", "com.apple.MobileSMS"],
+  // "imessage" is what a voice user says aloud, but it is neither the display
+  // name ("Messages") nor the bundle id ("com.apple.MobileSMS"), so a
+  // name-based lookup would miss it — same bundle id as the "messages" alias.
+  ["imessage", "com.apple.MobileSMS"],
   ["music", "com.apple.Music"],
+  // "itunes" no longer exists as an app (replaced by Music), but a voice user
+  // describing "open itunes" overwhelmingly means the Music app — the same
+  // legacy-name mapping "quicktime" -> QuickTimePlayerX already does.
+  ["itunes", "com.apple.Music"],
   // More apps a voice user is likely to name whose display name differs from
   // the bundle id (App Store, Activity Monitor, Podcasts) or that are common
   // enough to deserve a stable alias (Maps, VLC, Ghostty, 1Password, Todoist,
@@ -66,6 +74,10 @@ export const APP_BUNDLE_ALIASES = new Map([
   ["reminders", "com.apple.reminders"],
   ["slack", "com.tinyspeck.slackmacgap"],
   ["signal", "org.whispersystems.signal"],
+  // Proper-noun brand with an opaque bundle id; a voice user saying "open
+  // dropbox" means the app, and the word never appears in model reason text
+  // for any other purpose (same precedent as slack/spotify/signal).
+  ["dropbox", "com.getdropbox.dropbox"],
   ["spotify", "com.spotify.client"],
   ["steam", "com.valvesoftware.steam"],
   ["system preferences", "com.apple.systempreferences"],
