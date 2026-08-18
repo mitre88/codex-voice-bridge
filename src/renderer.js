@@ -581,6 +581,16 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
         log(`${label}: dropped malformed Realtime event.`, String(error));
         return;
       }
+      // JSON.parse can succeed with a non-object: "null", a bare string, a
+      // number, or an array all parse cleanly. Reading .type off null would
+      // throw inside this async handler (an unhandled rejection that skips
+      // the transcript/tool handling for the message), and a string/number/
+      // array is not a Realtime event either — drop the whole message with a
+      // log, mirroring the malformed-JSON branch above.
+      if (event === null || typeof event !== "object" || Array.isArray(event)) {
+        log(`${label}: dropped non-object Realtime event.`, String(message.data));
+        return;
+      }
       if (event.type?.includes("error")) log(`${label}: Realtime error`, event);
       handleTranscriptEvent(event, transcriptTargets);
       if (enableTools) await handleToolEvent(event);

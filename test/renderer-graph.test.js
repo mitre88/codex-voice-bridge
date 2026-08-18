@@ -406,6 +406,35 @@ test("captions are capped so a long session cannot grow the DOM without bound", 
   );
 });
 
+test("connectPeerSession drops non-object Realtime events instead of throwing in the message handler", () => {
+  // A well-formed JSON payload is not necessarily an object: "null", a bare
+  // string, a number, or an array all parse successfully. The data-channel
+  // message handler used to read event.type straight off the parsed value,
+  // so a JSON null from the server threw a raw TypeError inside the async
+  // handler — an unhandled rejection that skipped the transcript/tool
+  // handling for the message entirely. Non-object events must be dropped
+  // with a log (mirroring the malformed-JSON branch just above) before any
+  // field access.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("async function connectPeerSession");
+  assert.ok(fnStart !== -1, "renderer.js must define connectPeerSession");
+  const fnBody = fnStart === -1 ? "" : renderer.slice(fnStart, renderer.indexOf("async function connectSingleRealtime"));
+  assert.match(
+    fnBody,
+    /event === null \|\| typeof event !== "object"/,
+    "the message handler must reject null and other non-object events before reading event.type",
+  );
+  assert.match(
+    fnBody,
+    /Array\.isArray\(event\)/,
+    "the message handler must reject array events (a JSON array parses but is not a valid Realtime event)",
+  );
+  assert.ok(
+    fnBody.indexOf("dropped non-object Realtime event") > fnBody.indexOf("JSON.parse(message.data)"),
+    "the non-object drop must log a message, mirroring the malformed-JSON branch",
+  );
+});
+
 test("connectPeerSession fetches the token inside the try so a failed fetch cannot leave the mic hot", () => {
   // connectPeerSession used to await createClientSecret BEFORE its try block.
   // If that fetch threw (bad key, network, quota), the catch that closes the
