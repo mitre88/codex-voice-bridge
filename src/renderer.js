@@ -77,6 +77,10 @@ let outputCaption = "";
 let baseConfigText = "";
 let lastMediaDevices = [];
 let warnedMissingVirtualAudio = false;
+// Set while the last refresh had to fall back to the default because a
+// previously selected device disappeared; cleared by the first refresh that
+// finds every selection intact again (see refreshMediaDevices).
+let warnedDeviceFallback = false;
 
 // Every control captured by getVoiceOptions() at connect time. Changing any
 // of them mid-session has no effect on the running Realtime session and
@@ -499,12 +503,53 @@ async function refreshMediaDevices(promptForLabels = false) {
   }
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
+    // Capture the previous selections BEFORE the setSelectOptions calls below
+    // replace the options: a device that vanished (unplugged, renamed with a
+    // new id, permission revoked) silently falls back to the default option,
+    // and without the old values that fallback is undetectable afterwards.
+    const previousDevices = lastMediaDevices;
+    const previousSelections = [
+      ["microphone", myMicDeviceInput],
+      ["interview input", interviewerAudioDeviceInput],
+      ["Spanish output", spanishOutputDeviceInput],
+      ["English output", englishOutputDeviceInput],
+    ].map(([label, select]) => [label, select, select.value]);
+    const previousLabels = new Map(previousDevices.map((device) => [device.deviceId, device.label]));
     lastMediaDevices = devices;
     setSelectOptions(myMicDeviceInput, devices.filter((device) => device.kind === "audioinput"), "Default microphone");
     setSelectOptions(interviewerAudioDeviceInput, devices.filter((device) => device.kind === "audioinput"), "Default input");
     setSelectOptions(spanishOutputDeviceInput, devices.filter((device) => device.kind === "audiooutput"), "Default output");
     setSelectOptions(englishOutputDeviceInput, devices.filter((device) => device.kind === "audiooutput"), "Default output");
     updateInterviewAudioWarning(devices);
+    // A selected device that disappeared (unplugged, renamed, permission
+    // revoked) falls back to the default SILENTLY — and in interview mode
+    // that can route the call to the wrong speaker or capture the wrong mic
+    // with no visible sign. Surface it once while the situation persists
+    // (debug log plus the status line), and clear the warning on the first
+    // refresh that finds every selection intact again. Placed after
+    // updateInterviewAudioWarning so the more specific fallback warning wins
+    // over the virtual-audio hint while both apply.
+    const lostSelections = previousSelections.filter(([, select, oldValue]) => {
+      return oldValue !== "" && ![...select.options].some((option) => option.value === oldValue);
+    });
+    if (lostSelections.length > 0) {
+      if (!warnedDeviceFallback) {
+        warnedDeviceFallback = true;
+        const detail = lostSelections
+          .map(([label, , oldValue]) => `${label} (${previousLabels.get(oldValue) || "device no longer listed"})`)
+          .join(", ");
+        log(`Selected audio device(s) are no longer available and fell back to the default: ${detail}. Reconnect the device or pick it again.`);
+      }
+      configEl.textContent = `Device fallback: ${lostSelections.map(([label]) => label).join(", ")} — using the default.`;
+      configEl.classList.add("is-warning");
+    } else if (warnedDeviceFallback) {
+      warnedDeviceFallback = false;
+      if (voiceModeInput.value === "interview") updateInterviewAudioWarning(devices);
+      else {
+        configEl.textContent = baseConfigText;
+        configEl.classList.remove("is-warning");
+      }
+    }
   } finally {
     permissionStream?.getTracks().forEach((track) => track.stop());
   }
