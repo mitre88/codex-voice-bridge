@@ -689,6 +689,22 @@ function runCuaDriver(input = {}) {
   if (requiredArgsError) {
     return Promise.resolve({ ok: false, code: -5, stdout: "", stderr: requiredArgsError });
   }
+  // type_text_chars reaches the same cua-driver machinery as the dedicated
+  // type_text_in_front_app tool, so it must get the same per-character delay
+  // scaling: the model can call run_cua_driver directly with tool_name
+  // "type_text_chars", and without a delay_ms the driver types at its default
+  // pace — a text that passes the typeability guard above (e.g. 30k chars,
+  // well under the typing budget) would then take minutes and blow the driver
+  // timeout with an opaque error the model cannot distinguish from a real
+  // hang. The guard already guarantees the text fits at the 1ms/char floor,
+  // so injecting the same scaled delay typeTextInFrontApp computes makes the
+  // run finish inside the timeout. A model-supplied delay_ms is respected
+  // as-is (the model may deliberately want a slower pace); only a missing or
+  // non-numeric value gets the scaled default. The budget tracks the
+  // configured driver timeout like every other typing guard in this file.
+  if (toolName === "type_text_chars" && !(Number.isFinite(normalizedArgs.delay_ms) && normalizedArgs.delay_ms > 0)) {
+    normalizedArgs.delay_ms = typeDelayMs(normalizedArgs.text.length, 20, Math.floor(CUA_TIMEOUT_MS * 0.8));
+  }
   // launch_app reaches the same local-app machinery as the open_app path, so
   // it must obey the same gates: a model-supplied file:// or custom-scheme URL
   // (or an unsafe app identity) must not slip past the checks open_app applies.

@@ -563,6 +563,37 @@ test("runCuaDriver validates required press_key/type_text_chars args before spaw
   );
 });
 
+test("runCuaDriver scales delay_ms for direct type_text_chars calls like the dedicated tool", () => {
+  // The dedicated type_text_in_front_app tool computes a per-character delay
+  // scaled to the text length (typeDelayMs) so long texts finish inside the
+  // driver timeout; a direct run_cua_driver call with tool_name
+  // "type_text_chars" reaches the same cua-driver machinery but, without the
+  // injection, types at the driver's default pace — a text that passes the
+  // typeability guard (e.g. 30k chars, well under the typing budget) would
+  // then take minutes and blow the timeout with an opaque error the model
+  // cannot distinguish from a real hang. The delay must be injected on the
+  // normalized args with the same budget math (CUA_TIMEOUT_MS * 0.8), only
+  // when the model did not supply a usable delay_ms.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("function runCuaDriver");
+  assert.ok(fnStart !== -1, "main.js must define runCuaDriver");
+  const fnBody = main.slice(fnStart, main.indexOf("async function runMacAction"));
+  assert.match(
+    fnBody,
+    /toolName === "type_text_chars" && !\(Number\.isFinite\(normalizedArgs\.delay_ms\) && normalizedArgs\.delay_ms > 0\)/,
+    "runCuaDriver must inject delay_ms for type_text_chars only when the model did not supply a usable one",
+  );
+  assert.match(
+    fnBody,
+    /normalizedArgs\.delay_ms = typeDelayMs\(normalizedArgs\.text\.length, 20, Math\.floor\(CUA_TIMEOUT_MS \* 0\.8\)\)/,
+    "runCuaDriver must scale delay_ms with the same budget math as typeTextInFrontApp",
+  );
+  assert.ok(
+    fnBody.indexOf("normalizedArgs.delay_ms = typeDelayMs") < fnBody.indexOf("runProcess(\"cua-driver\""),
+    "the delay injection must happen before spawning cua-driver",
+  );
+});
+
 test("app:config reports the resolved workdir, not the raw env value", () => {
   // The UI shows this path, so it must be the same directory Codex actually
   // operates on. The raw DEFAULT_WORKDIR may be relative, a symlink, or not
