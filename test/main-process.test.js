@@ -235,6 +235,41 @@ test("type/press tools surface the cua-driver failure instead of a generic no-ac
   }
 });
 
+test("getActiveAppFromCua distinguishes a malformed list_apps payload from a genuine no-active-app result", () => {
+  // A parseable-but-wrong list_apps payload (no apps array, non-array apps,
+  // empty stdout) used to collapse into the generic "No active app pid
+  // found." — hiding a real driver problem (crash mid-print, version
+  // mismatch) so the model could not self-correct, the same misleading
+  // collapse the list_apps-failure branch avoids. Only a valid apps array
+  // with no active entry may mean "no active app"; everything else must
+  // carry the driver problem through as an error, and malformed entries
+  // must be skipped instead of throwing inside find.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("async function getActiveAppFromCua");
+  assert.ok(fnStart !== -1, "main.js must define getActiveAppFromCua");
+  const fnBody = main.slice(fnStart, main.indexOf("function activateApp"));
+  assert.match(
+    fnBody,
+    /Array\.isArray\(parsed\.apps\)/,
+    "getActiveAppFromCua must verify the payload carries an apps array",
+  );
+  assert.match(
+    fnBody,
+    /pid: null, error: "[^"]*unexpected payload/,
+    "getActiveAppFromCua must surface an unexpected-payload error instead of collapsing to the generic message",
+  );
+  assert.match(
+    fnBody,
+    /appInfo && typeof appInfo === "object" && appInfo\.active/,
+    "getActiveAppFromCua must skip malformed entries instead of throwing inside find",
+  );
+  assert.match(
+    fnBody,
+    /pid: null, error: "[^"]*unreadable payload/,
+    "getActiveAppFromCua must surface an unreadable-payload error instead of returning bare null",
+  );
+});
+
 test("pressKeyInFrontApp normalizes modifiers so a bare string is never silently dropped", () => {
   // cua-driver's press_key expects a modifiers array of strings; a malformed
   // model call carrying non-string entries (e.g. modifiers: ["cmd", 42] or

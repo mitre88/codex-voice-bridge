@@ -920,9 +920,24 @@ async function getActiveAppFromCua() {
   // the whole stdout would fail and make type/press tools report "No active
   // app" for a valid response.
   try {
-    return extractFirstJsonObject(result.stdout)?.apps?.find((appInfo) => appInfo.active) || null;
+    const parsed = extractFirstJsonObject(result.stdout);
+    // The driver responded but the payload is not the expected shape (a
+    // crash mid-print, a version mismatch, an empty stdout, a proxied
+    // response): collapsing that into the generic "No active app pid found."
+    // would hide a real driver problem and leave the model unable to
+    // self-correct — the same misleading-collapse class the list_apps
+    // failure branch above exists to prevent. Only a valid apps array with
+    // no active entry means "no active app": that one still returns null so
+    // callers report the accurate generic message.
+    if (!parsed || !Array.isArray(parsed.apps)) {
+      return { pid: null, error: "cua-driver list_apps returned an unexpected payload (no apps list)." };
+    }
+    // Guard each entry too: a malformed apps array (a null or non-object
+    // entry) would otherwise throw inside .find and collapse into the same
+    // misleading generic message via the catch below.
+    return parsed.apps.find((appInfo) => appInfo && typeof appInfo === "object" && appInfo.active) || null;
   } catch {
-    return null;
+    return { pid: null, error: "cua-driver list_apps returned an unreadable payload." };
   }
 }
 
