@@ -369,7 +369,18 @@ function toggleWindow() {
 }
 
 async function createRealtimeClientSecret(options = {}) {
-  const apiKey = runtimeApiKey || (await readKeychainApiKey()) || process.env.OPENAI_API_KEY;
+  // The runtime key and the Keychain value are already trimmed at their
+  // sources (set-api-key trims, security -w output is trimmed), but an
+  // OPENAI_API_KEY set in the shell very plausibly carries stray whitespace
+  // (a trailing newline from `export OPENAI_API_KEY=$(cat key.txt)`, a
+  // copy-paste with a surrounding blank line). Handed raw to the
+  // Authorization header, that whitespace makes OpenAI reject a perfectly
+  // good key with a 401. Trim the resolved value once: the trim is a no-op
+  // for the runtime/Keychain paths, and isPlausibleApiKey requires \S+ (no
+  // whitespace), so it can only ever normalize the env path — never weaken a
+  // valid key. A whitespace-only env key also becomes "" here, surfacing the
+  // clean "Add an OpenAI API key..." message instead of a confusing 401.
+  const apiKey = (runtimeApiKey || (await readKeychainApiKey()) || process.env.OPENAI_API_KEY || "").trim();
   if (!apiKey) throw new Error("Add an OpenAI API key in the app or set OPENAI_API_KEY before starting.");
 
   const mode = ["assistant", "translate", "transcribe"].includes(options.mode) ? options.mode : "assistant";
@@ -1084,7 +1095,11 @@ ipcMain.handle("realtime:set-api-key", guard(async (_event, apiKey) => {
   return { ok: true, saved: saved.ok, error: saved.stderr };
 }));
 ipcMain.handle("realtime:key-status", guard(async () => ({
-  hasEnvKey: Boolean(process.env.OPENAI_API_KEY),
+  // A whitespace-only OPENAI_API_KEY is not a usable key (createRealtimeClientSecret
+  // trims and would see ""), so it must not count as a key here either —
+  // otherwise the input field stays hidden behind an env key that can never
+  // authenticate and the user has no way to enter a real one.
+  hasEnvKey: Boolean(process.env.OPENAI_API_KEY?.trim()),
   hasSavedKey: Boolean(await readKeychainApiKey()),
   hasRuntimeKey: Boolean(runtimeApiKey),
 })));

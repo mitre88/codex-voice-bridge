@@ -582,3 +582,40 @@ test("app:config reports the resolved workdir, not the raw env value", () => {
     "app:config must report the resolved workdir",
   );
 });
+
+test("createRealtimeClientSecret trims the resolved API key so a whitespace-padded OPENAI_API_KEY cannot 401", () => {
+  // The runtime key and the Keychain value are trimmed at their sources
+  // (set-api-key trims, security -w output is trimmed), but an OPENAI_API_KEY
+  // set in the shell very plausibly carries stray whitespace (a trailing
+  // newline from `export OPENAI_API_KEY=$(cat key.txt)`, a copy-paste with a
+  // surrounding blank line). Handed raw to the Authorization header, that
+  // whitespace makes OpenAI reject a perfectly good key with a confusing 401
+  // — and a whitespace-only env key would slip past the truthiness check and
+  // fail later with that same 401 instead of the clean "Add an OpenAI API
+  // key..." message. The resolved key must be trimmed once at the source.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("async function createRealtimeClientSecret");
+  assert.ok(fnStart !== -1, "main.js must define createRealtimeClientSecret");
+  const fnBody = main.slice(fnStart, main.indexOf("async function createAssistantClientSecret"));
+  assert.match(
+    fnBody,
+    /\(runtimeApiKey \|\| \(await readKeychainApiKey\(\)\) \|\| process\.env\.OPENAI_API_KEY \|\| ""\)\.trim\(\)/,
+    "createRealtimeClientSecret must trim the resolved API key so whitespace-padded env keys are normalized",
+  );
+});
+
+test("key-status does not report a whitespace-only OPENAI_API_KEY as a usable key", () => {
+  // hasEnvKey hides the API key input field: a whitespace-only env var (the
+  // same stray-whitespace class the trim fix addresses) would otherwise keep
+  // the field hidden behind an env key that can never authenticate — the user
+  // would see "Add an OpenAI API key" with no way to add one.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf('ipcMain.handle("realtime:key-status"');
+  assert.ok(fnStart !== -1, "main.js must define the realtime:key-status handler");
+  const fnBody = main.slice(fnStart, main.indexOf('ipcMain.handle("codex:run"'));
+  assert.match(
+    fnBody,
+    /hasEnvKey: Boolean\(process\.env\.OPENAI_API_KEY\?\.trim\(\)\)/,
+    "key-status must not count a whitespace-only OPENAI_API_KEY as a usable key",
+  );
+});
