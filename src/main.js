@@ -842,7 +842,15 @@ async function pressKeyInFrontApp(input = {}) {
   // gate still runs on the original key — always at least as long as the
   // pressed key — so the split cannot bypass it.
   const keyCombo = key.split("+").map((part) => part.trim()).filter((part) => part.length > 0);
-  const pressedKey = keyCombo.length > 1 ? keyCombo[keyCombo.length - 1] : key;
+  // A stray leading/trailing "+" ("cmd+", "+p") splits to a single
+  // normalized part: that part IS the key — the raw key with the stray plus
+  // must not reach cua-driver and fail opaquely, the same cosmetic-noise
+  // class the split exists to clean. Plain single keys ("return") produce
+  // the same single part and are unchanged. A key made entirely of "+"
+  // normalizes to "" so the downstream required-arg guard rejects it with a
+  // clean message (mirrors normalizeCuaArgs).
+  const pressedKey =
+    keyCombo.length > 1 ? keyCombo[keyCombo.length - 1] : keyCombo.length === 1 ? keyCombo[0] : "";
   const keyLengthError = requireMaxLength(key, "key", 100);
   if (keyLengthError) return { ok: false, code: -6, stdout: "", stderr: keyLengthError };
   const active = await getActiveAppFromCua();

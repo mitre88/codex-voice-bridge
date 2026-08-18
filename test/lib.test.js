@@ -284,6 +284,37 @@ test("normalizeCuaArgs normalizes press_key key/modifiers like the dedicated too
     key: "p",
     modifiers: ["cmd", "shift"],
   });
+  // A stray leading/trailing "+" ("cmd+", "+p") is the same cosmetic noise
+  // as a whole combo: the split yields one normalized part, and that part is
+  // the key — the raw key with the stray plus would reach cua-driver and
+  // fail with an opaque error the model cannot self-correct from. Plain
+  // single keys ("return") produce the same single part and are unchanged.
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "cmd+" }), {
+    pid: 42,
+    key: "cmd",
+    modifiers: [],
+  });
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "+p" }), {
+    pid: 42,
+    key: "p",
+    modifiers: [],
+  });
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "CMD +" }), {
+    pid: 42,
+    key: "cmd",
+    modifiers: [],
+  });
+  // A key made entirely of "+" normalizes to "" so the required-arg guard
+  // rejects it with a clean message instead of the driver failing opaquely.
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "+" }), {
+    pid: 42,
+    key: "",
+    modifiers: [],
+  });
+  assert.equal(
+    validateCuaDriverRequiredArgs("press_key", normalizeCuaArgs("press_key", { key: "+" })),
+    "key must be a non-empty string.",
+  );
   // Non-string keys stay untouched (they fail in the driver like today), a
   // missing modifiers becomes the explicit empty array (same shape the
   // dedicated tool always sends), and other tools are not affected.

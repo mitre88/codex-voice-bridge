@@ -366,6 +366,11 @@ test("pressKeyInFrontApp splits a '+'-joined combo out of the key field", () => 
   );
   assert.match(
     fnBody,
+    /keyCombo\.length === 1 \? keyCombo\[0\] : ""/,
+    "pressKeyInFrontApp must normalize a stray leading/trailing '+' out of the key",
+  );
+  assert.match(
+    fnBody,
     /keyCombo\.slice\(0, -1\)/,
     "pressKeyInFrontApp must feed the preceding combo parts into the modifiers",
   );

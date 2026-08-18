@@ -317,6 +317,18 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
       if (comboParts.length > 1) {
         args.key = comboParts[comboParts.length - 1];
         comboModifiers = comboParts.slice(0, -1);
+      } else if (comboParts.length === 1) {
+        // A stray leading/trailing "+" ("cmd+", "+p", "cmd +") splits to a
+        // single normalized part: that part IS the key, and the raw key with
+        // the stray plus must not reach cua-driver to fail opaquely — the
+        // same cosmetic-noise class the split exists to clean. Plain single
+        // keys ("return") produce the same single part and are unchanged.
+        args.key = comboParts[0];
+      } else {
+        // The key was entirely "+" characters ("+", "++"): normalize it to ""
+        // so the downstream required-arg guard rejects it with a clean,
+        // self-correctable message instead of the driver failing opaquely.
+        args.key = "";
       }
     }
     // Same array normalization as pressKeyInFrontApp: a bare string must
