@@ -847,15 +847,32 @@ async function pressKeyInFrontApp(input = {}) {
   // gate still runs on the original key — always at least as long as the
   // pressed key — so the split cannot bypass it.
   const keyCombo = key.split("+").map((part) => part.trim()).filter((part) => part.length > 0);
-  // A stray leading/trailing "+" ("cmd+", "+p") splits to a single
-  // normalized part: that part IS the key — the raw key with the stray plus
-  // must not reach cua-driver and fail opaquely, the same cosmetic-noise
-  // class the split exists to clean. Plain single keys ("return") produce
-  // the same single part and are unchanged. A key made entirely of "+"
-  // normalizes to "" so the downstream required-arg guard rejects it with a
-  // clean message (mirrors normalizeCuaArgs).
-  const pressedKey =
-    keyCombo.length > 1 ? keyCombo[keyCombo.length - 1] : keyCombo.length === 1 ? keyCombo[0] : "";
+  // "+" is a real key name — the plus key, e.g. Cmd+Plus to zoom in — but
+  // the combo split above treats "+" as the separator, so a model wanting
+  // the plus key ("cmd++", "cmd + +") would otherwise split to a single
+  // "cmd" part and silently degrade to a bare Cmd press (reported as
+  // success, wrong action). Only a SECOND "+" marks a real plus key: the
+  // string is exactly "+", or the final "+" is preceded by a non-"+",
+  // non-space character. A single trailing "+" ("cmd+", "+p") stays stray
+  // cosmetic noise — that part IS the key — and all-plus strings ("++")
+  // keep normalizing to "" so the required-arg guard rejects them with a
+  // clean message (mirrors normalizeCuaArgs). When the plus key is
+  // detected, the final "+" IS the key: re-split the prefix so the
+  // preceding parts join the modifiers pipeline ("cmd+" -> "cmd").
+  const compactKey = key.replace(/\s+/g, "");
+  const isPlusKey =
+    compactKey === "+" ||
+    (compactKey.length >= 3 && compactKey.endsWith("++") && compactKey[compactKey.length - 3] !== "+");
+  const pressedKey = isPlusKey
+    ? "+"
+    : keyCombo.length > 1
+      ? keyCombo[keyCombo.length - 1]
+      : keyCombo.length === 1
+        ? keyCombo[0]
+        : "";
+  const comboModifiers = isPlusKey
+    ? key.slice(0, -1).split("+").map((part) => part.trim()).filter((part) => part.length > 0)
+    : keyCombo.slice(0, -1);
   const keyLengthError = requireMaxLength(key, "key", 100);
   if (keyLengthError) return { ok: false, code: -6, stdout: "", stderr: keyLengthError };
   const active = await getActiveAppFromCua();
@@ -873,7 +890,7 @@ async function pressKeyInFrontApp(input = {}) {
   // " Command ") so the driver receives the exact form it expects, and
   // non-string entries are dropped.
   const rawModifiers = [
-    ...(keyCombo.length > 1 ? keyCombo.slice(0, -1) : []),
+    ...comboModifiers,
     ...(Array.isArray(input.modifiers)
       ? input.modifiers
       : typeof input.modifiers === "string"

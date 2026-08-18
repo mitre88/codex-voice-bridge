@@ -401,7 +401,7 @@ test("pressKeyInFrontApp splits a '+'-joined combo out of the key field", () => 
   );
   assert.match(
     fnBody,
-    /keyCombo\.length === 1 \? keyCombo\[0\] : ""/,
+    /keyCombo\.length === 1\s*\?\s*keyCombo\[0\]\s*:\s*""/,
     "pressKeyInFrontApp must normalize a stray leading/trailing '+' out of the key",
   );
   assert.match(
@@ -413,6 +413,11 @@ test("pressKeyInFrontApp splits a '+'-joined combo out of the key field", () => 
     fnBody,
     /requireMaxLength\(key, "key", 100\)/,
     "pressKeyInFrontApp must keep the length gate on the original key so the split cannot bypass it",
+  );
+  assert.match(
+    fnBody,
+    /compactKey === "\+"\s*\|\|\s*\(compactKey\.length >= 3 && compactKey\.endsWith\("\+\+"\)/,
+    "pressKeyInFrontApp must treat a lone '+' / 'cmd++' as the plus key instead of degrading the combo to a bare modifier press",
   );
   assert.doesNotMatch(
     fnBody,

@@ -313,8 +313,29 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
     // args still pass through unchanged.
     let comboModifiers = [];
     if (typeof args.key === "string") {
-      const comboParts = args.key.split("+").map((part) => part.trim()).filter((part) => part.length > 0);
-      if (comboParts.length > 1) {
+      // "+" is a real key name — the plus key, e.g. Cmd+Plus to zoom in —
+      // but the split below treats "+" as the combo separator, so a model
+      // wanting the plus key ("cmd++", "cmd + +") would otherwise split to a
+      // single "cmd" part and silently degrade to a bare Cmd press (reported
+      // as success, wrong action). Only a SECOND "+" marks a real plus key:
+      // the string is exactly "+", or the final "+" is preceded by a
+      // non-"+", non-space character. A single trailing "+" ("cmd+", "+p")
+      // stays stray cosmetic noise, and all-plus strings ("++") keep
+      // normalizing to "" for the required-arg guard to reject. When the
+      // plus key is detected, the final "+" IS the key: strip it so the
+      // split below sees only the modifier combo ("cmd+" -> ["cmd"] ->
+      // modifier "cmd"). Mirrors pressKeyInFrontApp; idempotent, so the
+      // dedicated tool's already-normalized args pass through unchanged.
+      const compactKey = args.key.replace(/\s+/g, "");
+      const isPlusKey =
+        compactKey === "+" ||
+        (compactKey.length >= 3 && compactKey.endsWith("++") && compactKey[compactKey.length - 3] !== "+");
+      const comboSource = isPlusKey ? args.key.slice(0, -1) : args.key;
+      const comboParts = comboSource.split("+").map((part) => part.trim()).filter((part) => part.length > 0);
+      if (isPlusKey) {
+        args.key = "+";
+        comboModifiers = comboParts;
+      } else if (comboParts.length > 1) {
         args.key = comboParts[comboParts.length - 1];
         comboModifiers = comboParts.slice(0, -1);
       } else if (comboParts.length === 1) {
@@ -325,8 +346,8 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
         // keys ("return") produce the same single part and are unchanged.
         args.key = comboParts[0];
       } else {
-        // The key was entirely "+" characters ("+", "++"): normalize it to ""
-        // so the downstream required-arg guard rejects it with a clean,
+        // The key was entirely "+" characters ("++", "+++"): normalize it to
+        // "" so the downstream required-arg guard rejects it with a clean,
         // self-correctable message instead of the driver failing opaquely.
         args.key = "";
       }

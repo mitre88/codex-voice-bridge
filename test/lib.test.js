@@ -304,17 +304,50 @@ test("normalizeCuaArgs normalizes press_key key/modifiers like the dedicated too
     key: "cmd",
     modifiers: [],
   });
-  // A key made entirely of "+" normalizes to "" so the required-arg guard
-  // rejects it with a clean message instead of the driver failing opaquely.
+  // "+" is a real key name — the plus key, e.g. Cmd+Plus to zoom in — so a
+  // lone "+" is a valid single-key press, not stray noise: it must reach the
+  // driver as the "+" key, and the required-arg guard must accept it.
   assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "+" }), {
     pid: 42,
-    key: "",
+    key: "+",
     modifiers: [],
   });
   assert.equal(
     validateCuaDriverRequiredArgs("press_key", normalizeCuaArgs("press_key", { key: "+" })),
-    "key must be a non-empty string.",
+    null,
   );
+  // A model wanting the plus key with a modifier writes the whole shortcut
+  // in the key ("cmd++", "cmd + +"): the final "+" IS the key and the
+  // preceding parts become modifiers. Without this the combo would split to
+  // a single "cmd" part and silently press a bare Cmd (reported as success,
+  // wrong action). A single trailing "+" ("cmd+") is still stray noise, and
+  // all-plus strings ("++") still normalize to "" for the guard to reject.
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "cmd++" }), {
+    pid: 42,
+    key: "+",
+    modifiers: ["cmd"],
+  });
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "cmd + +" }), {
+    pid: 42,
+    key: "+",
+    modifiers: ["cmd"],
+  });
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "cmd++", modifiers: ["cmd"] }), {
+    pid: 42,
+    key: "+",
+    modifiers: ["cmd"],
+  });
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: 42, key: "++" }), {
+    pid: 42,
+    key: "",
+    modifiers: [],
+  });
+  // The plus-key normalization is idempotent too: re-normalizing the
+  // normalized result is a no-op.
+  assert.deepEqual(normalizeCuaArgs("press_key", normalizeCuaArgs("press_key", { key: "cmd++" })), {
+    key: "+",
+    modifiers: ["cmd"],
+  });
   // Non-string keys stay untouched (they fail in the driver like today), a
   // missing modifiers becomes the explicit empty array (same shape the
   // dedicated tool always sends), and other tools are not affected.
