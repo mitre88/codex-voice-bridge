@@ -102,8 +102,12 @@ const SHORTCUT = process.env.CODEX_VOICE_SHORTCUT || "CommandOrControl+Shift+Spa
 // Whether the bridge window floats above every other window. Always-on-top
 // keeps the bridge visible while voice commands drive another app, but the
 // window then covers whatever the user is reading during idle stretches;
-// CODEX_VOICE_ALWAYS_ON_TOP=0 opts out without changing the default.
-const ALWAYS_ON_TOP = process.env.CODEX_VOICE_ALWAYS_ON_TOP !== "0";
+// CODEX_VOICE_ALWAYS_ON_TOP=0 opts out without changing the default. Trim at
+// the source: a whitespace-padded value (shell export with a trailing space,
+// launchd plist string with stray whitespace) would otherwise silently keep
+// always-on-top enabled — the opposite of the opt-out the user asked for —
+// the same cosmetic-noise class of failure the WORKDIR trim prevents.
+const ALWAYS_ON_TOP = process.env.CODEX_VOICE_ALWAYS_ON_TOP?.trim() !== "0";
 
 // Read the version for the UI config line and support/debug reports. Never
 // block startup if package.json is missing or unreadable.

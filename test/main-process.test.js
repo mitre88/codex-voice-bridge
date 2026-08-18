@@ -636,6 +636,25 @@ test("DEFAULT_WORKDIR trims CODEX_VOICE_WORKDIR so a whitespace-padded value can
   );
 });
 
+test("ALWAYS_ON_TOP trims CODEX_VOICE_ALWAYS_ON_TOP so a whitespace-padded 0 cannot keep the window floating", () => {
+  // The WORKDIR/API-key trims normalize whitespace-padded env values at their
+  // sources, but the always-on-top opt-out compared the raw value: a shell
+  // export with a trailing space (e.g. `export CODEX_VOICE_ALWAYS_ON_TOP="0 "`
+  // from a copy-paste, or a launchd plist string with stray whitespace) makes
+  // the raw value !== "0", so the window silently stays always-on-top — the
+  // opposite of the opt-out the user asked for. The comparison must trim so a
+  // whitespace-only or padded value behaves exactly like the bare "0".
+  const main = readSource("main.js");
+  const topStart = main.indexOf("const ALWAYS_ON_TOP = ");
+  assert.ok(topStart !== -1, "main.js must define ALWAYS_ON_TOP");
+  const topBody = main.slice(topStart, main.indexOf("// Read the version"));
+  assert.match(
+    topBody,
+    /process\.env\.CODEX_VOICE_ALWAYS_ON_TOP\?\.trim\(\) !== "0"/,
+    "ALWAYS_ON_TOP must trim CODEX_VOICE_ALWAYS_ON_TOP before comparing to \"0\"",
+  );
+});
+
 test("createRealtimeClientSecret trims the resolved API key so a whitespace-padded OPENAI_API_KEY cannot 401", () => {
   // The runtime key and the Keychain value are trimmed at their sources
   // (set-api-key trims, security -w output is trimmed), but an OPENAI_API_KEY
