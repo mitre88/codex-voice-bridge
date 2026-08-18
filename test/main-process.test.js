@@ -744,3 +744,25 @@ test("model/voice/language defaults trim their env values so padded strings cann
     "DEFAULT_TARGET_LANGUAGE must trim OPENAI_REALTIME_TARGET_LANGUAGE and fall back for a whitespace-only value",
   );
 });
+
+test("loadDotEnv trims CODEX_VOICE_ENV_FILE so a whitespace-padded path cannot silently skip the custom .env", () => {
+  // The WORKDIR/SHORTCUT/ALWAYS_ON_TOP/API-key trims normalize whitespace-
+  // padded env values at their sources, but the custom .env path was used
+  // raw: a shell export with a trailing space (e.g. `export
+  // CODEX_VOICE_ENV_FILE="/path/to/.env "` from a copy-paste, or a launchd
+  // plist string with stray whitespace) would make fs.existsSync fail and the
+  // file be silently skipped — the user's overrides never load, with no
+  // error, and the app falls back to <cwd>/.env. The value must be trimmed so
+  // a padded path loads the intended file and a whitespace-only value falls
+  // back to <cwd>/.env exactly like an unset variable (the trimmed empty
+  // string is dropped by filter(Boolean)).
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("function loadDotEnv()");
+  assert.ok(fnStart !== -1, "main.js must define loadDotEnv");
+  const fnBody = main.slice(fnStart, main.indexOf("loadDotEnv();"));
+  assert.match(
+    fnBody,
+    /process\.env\.CODEX_VOICE_ENV_FILE\?\.trim\(\)/,
+    "loadDotEnv must trim CODEX_VOICE_ENV_FILE so a whitespace-padded path cannot silently skip the custom .env",
+  );
+});

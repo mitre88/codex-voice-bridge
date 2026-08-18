@@ -41,7 +41,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // read. Variables already present in the environment are never overridden.
 // This must run before DEFAULT_MODEL/DEFAULT_WORKDIR/... are evaluated.
 function loadDotEnv() {
-  const candidates = [process.env.CODEX_VOICE_ENV_FILE, path.join(process.cwd(), ".env")].filter(Boolean);
+  // Trim CODEX_VOICE_ENV_FILE at the source: a whitespace-padded value (a
+  // shell export with a trailing space, a launchd plist string with stray
+  // whitespace) would otherwise make existsSync fail and the custom .env be
+  // silently skipped — the user's overrides never load, with no error — the
+  // same cosmetic-noise class of failure the WORKDIR/SHORTCUT trims prevent.
+  // A whitespace-only value trims to "" and falls back to <cwd>/.env exactly
+  // like an unset variable (the empty string is dropped by filter(Boolean)).
+  const candidates = [process.env.CODEX_VOICE_ENV_FILE?.trim(), path.join(process.cwd(), ".env")].filter(Boolean);
   for (const file of candidates) {
     try {
       if (!fs.existsSync(file)) continue;
