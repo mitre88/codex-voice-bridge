@@ -66,8 +66,9 @@ const DEFAULT_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
 // Normalize the .env value at the source: a typo like "banana" would
 // otherwise surface in the UI select (no matching option) and reach the API
 // (forcing the reasoning-400 retry on every connect) instead of falling back
-// to a valid effort. normalizeReasoningEffort falls back to "low" for any
-// value outside minimal/low/medium/high/xhigh.
+// to a valid effort. normalizeReasoningEffort is case- and whitespace-
+// insensitive ("HIGH" and " High " both normalize to "high") and falls back
+// to "low" for any value outside minimal/low/medium/high/xhigh.
 const DEFAULT_REASONING_EFFORT = normalizeReasoningEffort(process.env.OPENAI_REALTIME_REASONING_EFFORT || "low");
 const DEFAULT_TARGET_LANGUAGE = process.env.OPENAI_REALTIME_TARGET_LANGUAGE || "es";
 // Fall back to the home directory when launched from Finder/Dock (cwd === "/").

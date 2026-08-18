@@ -169,7 +169,16 @@ export const APP_BUNDLE_ALIASES = new Map([
 ]);
 
 export function normalizeReasoningEffort(value, fallback = "low") {
-  return ["minimal", "low", "medium", "high", "xhigh"].includes(value) ? value : fallback;
+  // .env files conventionally use UPPERCASE values (the file is uppercase
+  // keys throughout) and shell exports often carry stray whitespace; without
+  // normalizing here, "HIGH" or " High " would silently fall back to "low"
+  // and the model would run at low reasoning despite the user asking for
+  // high. Normalize case and padding before the known-value check; the
+  // fallback still guards every other value, and a non-string value (e.g. a
+  // programmatic 42) keeps the previous fallback behavior instead of
+  // throwing on .trim().
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : value;
+  return ["minimal", "low", "medium", "high", "xhigh"].includes(normalized) ? normalized : fallback;
 }
 
 export function normalizeTone(value) {

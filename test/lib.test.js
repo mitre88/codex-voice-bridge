@@ -44,6 +44,15 @@ test("normalizeReasoningEffort accepts known values and falls back", () => {
   assert.equal(normalizeReasoningEffort("bogus", "medium"), "medium");
 });
 
+test("normalizeReasoningEffort normalizes case and whitespace (.env style)", () => {
+  assert.equal(normalizeReasoningEffort("HIGH"), "high");
+  assert.equal(normalizeReasoningEffort(" High "), "high");
+  assert.equal(normalizeReasoningEffort("XHigh"), "xhigh");
+  assert.equal(normalizeReasoningEffort("MEDIUM"), "medium");
+  // A non-string value must keep falling back instead of throwing on .trim().
+  assert.equal(normalizeReasoningEffort(42), "low");
+});
+
 test("normalizeTone maps known tones and defaults to calm", () => {
   assert.match(normalizeTone("direct"), /direct/);
   assert.match(normalizeTone("energetic"), /upbeat/);
