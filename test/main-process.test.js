@@ -676,6 +676,30 @@ test("SHORTCUT trims CODEX_VOICE_SHORTCUT so a whitespace-padded value cannot si
   );
 });
 
+test("globalShortcut.register is guarded so an invalid CODEX_VOICE_SHORTCUT cannot abort startup", () => {
+  // The trim guards make a whitespace-padded shortcut behave like the
+  // default, but globalShortcut.register THROWS (it does not return false)
+  // for a syntactically invalid accelerator — e.g. a trailing "+" or a stray
+  // token from a copy-paste (`export CODEX_VOICE_SHORTCUT="Space+"`). That
+  // throw happens inside app.whenReady().then(...), so uncaught it would
+  // abort the startup handler: the window opens, but the toggle shortcut is
+  // silently dead and only the unhandledRejection log shows why. The register
+  // call must be wrapped in try/catch so a bad value degrades to a log line
+  // and the rest of startup continues.
+  const main = readSource("main.js");
+  const registerStart = main.indexOf("globalShortcut.register(SHORTCUT, toggleWindow)");
+  assert.ok(registerStart !== -1, "main.js must call globalShortcut.register(SHORTCUT, toggleWindow)");
+  const before = main.slice(Math.max(0, registerStart - 400), registerStart);
+  assert.match(before, /try\s*{/, "globalShortcut.register must be inside a try block");
+  const after = main.slice(registerStart, registerStart + 400);
+  assert.match(after, /catch\s*\(error\)/, "globalShortcut.register must be followed by a catch");
+  assert.match(
+    after,
+    /writeLog\("globalShortcut register threw"/,
+    "the catch must log the invalid shortcut so the failure is diagnosable",
+  );
+});
+
 test("createRealtimeClientSecret trims the resolved API key so a whitespace-padded OPENAI_API_KEY cannot 401", () => {
   // The runtime key and the Keychain value are trimmed at their sources
   // (set-api-key trims, security -w output is trimmed), but an OPENAI_API_KEY

@@ -1105,8 +1105,19 @@ if (!app.requestSingleInstanceLock()) {
       { useSystemPicker: true },
     );
     createWindow();
-    const registered = globalShortcut.register(SHORTCUT, toggleWindow);
-    if (!registered) writeLog("globalShortcut register failed", { shortcut: SHORTCUT });
+    // globalShortcut.register THROWS (it does not return false) when the
+    // accelerator string does not parse — e.g. CODEX_VOICE_SHORTCUT with a
+    // trailing "+" or a stray token from a copy-paste — and an uncaught throw
+    // inside whenReady would abort the startup handler, leaving the app
+    // running with no toggle shortcut and no visible error. Catch it, log the
+    // offending value, and keep going: the window still opens and every other
+    // feature still works.
+    try {
+      const registered = globalShortcut.register(SHORTCUT, toggleWindow);
+      if (!registered) writeLog("globalShortcut register failed", { shortcut: SHORTCUT });
+    } catch (error) {
+      writeLog("globalShortcut register threw", { shortcut: SHORTCUT, error: String(error) });
+    }
   });
 }
 
