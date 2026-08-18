@@ -72,8 +72,15 @@ const DEFAULT_REASONING_EFFORT = normalizeReasoningEffort(process.env.OPENAI_REA
 const DEFAULT_TARGET_LANGUAGE = process.env.OPENAI_REALTIME_TARGET_LANGUAGE || "es";
 // Fall back to the home directory when launched from Finder/Dock (cwd === "/").
 const processCwd = process.cwd();
+// Trim CODEX_VOICE_WORKDIR at the source: a whitespace-padded value (a shell
+// export with a trailing space, a launchd plist string with stray whitespace)
+// would otherwise keep the padding through path.resolve and make every codex
+// run fail with "The working directory does not exist" for a perfectly valid
+// directory — the same cosmetic-noise class of failure the resolved API key
+// trim prevents. A whitespace-only value trims to "" and falls back to the
+// launch cwd/home exactly like an unset variable.
 const DEFAULT_WORKDIR = path.resolve(
-  process.env.CODEX_VOICE_WORKDIR || (processCwd === path.parse(processCwd).root ? os.homedir() : processCwd),
+  process.env.CODEX_VOICE_WORKDIR?.trim() || (processCwd === path.parse(processCwd).root ? os.homedir() : processCwd),
 );
 const CODEX_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_TIMEOUT_MS, 120000);
 const CUA_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_CUA_TIMEOUT_MS, 60000);

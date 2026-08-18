@@ -614,6 +614,28 @@ test("app:config reports the resolved workdir, not the raw env value", () => {
   );
 });
 
+test("DEFAULT_WORKDIR trims CODEX_VOICE_WORKDIR so a whitespace-padded value cannot break every codex run", () => {
+  // The resolved API key is trimmed at its source for the same reason, but
+  // CODEX_VOICE_WORKDIR was used raw: a shell export with a trailing space
+  // (e.g. `export CODEX_VOICE_WORKDIR="/path/to/ws "` from a copy-paste, or
+  // a launchd plist string with stray whitespace) keeps the padding through
+  // path.resolve, so spawn("codex", ..., { cwd }) fails with ENOENT and the
+  // run surfaces the misleading "The working directory does not exist" for a
+  // perfectly valid directory — the exact failure the ENOENT handler exists
+  // to diagnose, triggered by cosmetic noise instead of a real missing path.
+  // The trim must keep the cwd/home fallback for a whitespace-only value so
+  // it behaves exactly like an unset variable.
+  const main = readSource("main.js");
+  const workdirStart = main.indexOf("const DEFAULT_WORKDIR = path.resolve(");
+  assert.ok(workdirStart !== -1, "main.js must define DEFAULT_WORKDIR");
+  const workdirBody = main.slice(workdirStart, main.indexOf("const CODEX_TIMEOUT_MS"));
+  assert.match(
+    workdirBody,
+    /process\.env\.CODEX_VOICE_WORKDIR\?\.trim\(\) \|\| \(processCwd === path\.parse\(processCwd\)\.root \? os\.homedir\(\) : processCwd\)/,
+    "DEFAULT_WORKDIR must trim CODEX_VOICE_WORKDIR and fall back for a whitespace-only value",
+  );
+});
+
 test("createRealtimeClientSecret trims the resolved API key so a whitespace-padded OPENAI_API_KEY cannot 401", () => {
   // The runtime key and the Keychain value are trimmed at their sources
   // (set-api-key trims, security -w output is trimmed), but an OPENAI_API_KEY
