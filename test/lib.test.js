@@ -364,6 +364,43 @@ test("validateCuaDriverRequiredArgs runs on normalized args", () => {
   );
 });
 
+test("validateCuaDriverRequiredArgs caps oversized press_key keys like the dedicated tool", () => {
+  // pressKeyInFrontApp rejects a key longer than 100 bytes up front; the
+  // run_cua_driver path must mirror that so a model-generated megabyte key
+  // never reaches cua-driver raw (the json_args byte cap alone allows up to
+  // 200KB). A real key name is always short, so the cap cannot reject
+  // anything legitimate.
+  assert.equal(
+    validateCuaDriverRequiredArgs("press_key", { key: "x".repeat(101) }),
+    "key exceeds the maximum length of 100 bytes.",
+  );
+  assert.equal(
+    validateCuaDriverRequiredArgs("press_key", { key: "é".repeat(51) }), // 102 UTF-8 bytes
+    "key exceeds the maximum length of 100 bytes.",
+  );
+  assert.equal(validateCuaDriverRequiredArgs("press_key", { key: "x".repeat(100) }), null);
+});
+
+test("validateCuaDriverRequiredArgs rejects type_text_chars text that cannot fit the typing budget", () => {
+  // typeTextInFrontApp rejects a text longer than the typing budget up front
+  // (at the 1ms/char floor it can never finish inside the driver timeout);
+  // the run_cua_driver path must mirror that so a 100k-char text — well
+  // under the 200KB json_args byte cap — is refused cleanly instead of
+  // launching a run doomed to time out. The budget follows the caller's
+  // configured driver timeout, same as the dedicated tool.
+  assert.equal(
+    validateCuaDriverRequiredArgs("type_text_chars", { text: "a".repeat(48001) }),
+    "text is too long to type within the driver timeout (max 48000 characters). Split it into smaller chunks and retry.",
+  );
+  // A shorter configured timeout shrinks the budget accordingly.
+  assert.equal(
+    validateCuaDriverRequiredArgs("type_text_chars", { text: "a".repeat(40001) }, 40000),
+    "text is too long to type within the driver timeout (max 40000 characters). Split it into smaller chunks and retry.",
+  );
+  assert.equal(validateCuaDriverRequiredArgs("type_text_chars", { text: "a".repeat(48000) }), null);
+  assert.equal(validateCuaDriverRequiredArgs("type_text_chars", { text: "a".repeat(40000) }, 40000), null);
+});
+
 test("normalizeCuaArgs matches aliases on word boundaries, not substrings", () => {
   // "keynotes" contains "notes" and "previewing" contains "preview": a raw
   // substring match would launch the wrong app for these reasons.

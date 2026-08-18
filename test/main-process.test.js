@@ -509,7 +509,7 @@ test("runCuaDriver validates required press_key/type_text_chars args before spaw
   const fnBody = main.slice(fnStart, main.indexOf("async function runMacAction"));
   assert.match(
     fnBody,
-    /validateCuaDriverRequiredArgs\(toolName, normalizedArgs\)/,
+    /validateCuaDriverRequiredArgs\(toolName, normalizedArgs(?:, Math\.floor\(CUA_TIMEOUT_MS \* 0\.8\))?\)/,
     "runCuaDriver must validate press_key/type_text_chars required args on the normalized args",
   );
   assert.match(

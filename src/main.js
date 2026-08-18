@@ -669,7 +669,12 @@ function runCuaDriver(input = {}) {
   // cannot self-correct from — the same class of failure the dedicated
   // type_text_in_front_app/press_key_in_front_app guards prevent. Runs on
   // the NORMALIZED args so a whitespace-only key that trims to "" fails here.
-  const requiredArgsError = validateCuaDriverRequiredArgs(toolName, normalizedArgs);
+  // The typing budget must track the configured driver timeout, not the 48s
+  // default: with a shorter CODEX_VOICE_CUA_TIMEOUT_MS, the default budget
+  // would let a text through that cannot fit the actual timeout and fail
+  // with a driver timeout — the exact failure the guard exists to prevent
+  // (same headroom math as typeTextInFrontApp).
+  const requiredArgsError = validateCuaDriverRequiredArgs(toolName, normalizedArgs, Math.floor(CUA_TIMEOUT_MS * 0.8));
   if (requiredArgsError) {
     return Promise.resolve({ ok: false, code: -5, stdout: "", stderr: requiredArgsError });
   }

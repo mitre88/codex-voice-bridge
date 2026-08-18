@@ -467,13 +467,36 @@ export function isSafeCuaLaunchArgs(args = {}) {
 // type_text_in_front_app/press_key_in_front_app requireNonEmptyString guards
 // exist to prevent). Callers run this on the NORMALIZED args, so a
 // whitespace-only key ("  " trims to "") fails here instead of reaching the
-// driver raw. Other tools have no required fields this bridge knows of:
-// missing identities/URLs are the launch_app gate's problem, and everything
-// else is cua-driver's problem. Returns null when valid, or a short
-// human-readable error message.
-export function validateCuaDriverRequiredArgs(toolName, args = {}) {
-  if (toolName === "press_key") return requireNonEmptyString(args.key, "key");
-  if (toolName === "type_text_chars") return requireNonEmptyString(args.text, "text");
+// driver raw. The dedicated tools' other guards are mirrored here too: the
+// same oversized key/text that pressKeyInFrontApp/typeTextInFrontApp reject
+// up front must not reach the driver raw through run_cua_driver (the
+// json_args byte cap alone does not catch a 100k-char text — well under
+// 200KB — that is guaranteed to blow the driver timeout at the 1ms/char
+// floor, or a 5KB key that is never a real key name). typingBudgetMs follows
+// the caller's configured driver timeout, same as typeTextInFrontApp. Other
+// tools have no required fields this bridge knows of: missing
+// identities/URLs are the launch_app gate's problem, and everything else is
+// cua-driver's problem. Returns null when valid, or a short human-readable
+// error message.
+export function validateCuaDriverRequiredArgs(toolName, args = {}, typingBudgetMs = 48000) {
+  if (toolName === "press_key") {
+    const keyError = requireNonEmptyString(args.key, "key");
+    if (keyError) return keyError;
+    // Mirror pressKeyInFrontApp's 100-byte key cap: a real key name is
+    // always short, and a model-generated megabyte key would otherwise reach
+    // cua-driver raw and fail with an opaque error the model cannot
+    // self-correct from.
+    return requireMaxLength(args.key, "key", 100);
+  }
+  if (toolName === "type_text_chars") {
+    const textError = requireNonEmptyString(args.text, "text");
+    if (textError) return textError;
+    // Mirror typeTextInFrontApp's typeability guard: at the 1ms/char floor a
+    // text longer than the typing budget can never finish inside the driver
+    // timeout, so reject it cleanly instead of launching a doomed run that
+    // fails with a timeout the model cannot distinguish from a real hang.
+    return requireTypeableLength(args.text.length, typingBudgetMs);
+  }
   return null;
 }
 
