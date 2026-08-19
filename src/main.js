@@ -115,11 +115,21 @@ const ACTION_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_ACTION_TIMEOUT_M
 // we drop the excess; a runaway command must not grow the main process forever.
 const MAX_PROCESS_OUTPUT_CHARS = 1024 * 1024;
 const KEYCHAIN_SERVICE = "codex-voice-bridge.openai-api-key";
-const KEYCHAIN_ACCOUNT = process.env.USER || "local";
+// Trim USER at the source, same as the WORKDIR/SHORTCUT/ALWAYS_ON_TOP/ENV_FILE
+// trims: a whitespace-padded value (a launchd plist string with stray
+// whitespace, a shell export with a trailing space) would otherwise flow into
+// the Keychain account name and the safety identifier. The account is what
+// saveApiKey() writes and readApiKey() looks up — a padded account saved from
+// one launch context (Terminal) would not match the account read from another
+// (launchd), so the stored key would silently stop resolving. A
+// whitespace-only value trims to "" and falls back to "local" exactly like an
+// unset variable.
+const USER = process.env.USER?.trim() || "local";
+const KEYCHAIN_ACCOUNT = USER;
 const LOG_DIR = path.join(os.homedir(), "Library", "Logs", "codex-voice-bridge");
 const LOG_FILE = path.join(LOG_DIR, "bridge.log");
 const LOG_MAX_BYTES = 2 * 1024 * 1024;
-const SAFETY_ID = crypto.createHash("sha256").update(`${process.env.USER || "local"}:codex-voice-bridge`).digest("hex");
+const SAFETY_ID = crypto.createHash("sha256").update(`${USER}:codex-voice-bridge`).digest("hex");
 // Trim CODEX_VOICE_SHORTCUT at the source: a whitespace-padded value (a shell
 // export with a trailing space, a launchd plist string with stray whitespace)
 // would otherwise make globalShortcut.register fail — reported only as a log
