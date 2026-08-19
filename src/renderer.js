@@ -959,6 +959,7 @@ function flushCodexOutput() {
 try {
   getBridge().config().then((config) => {
     if (config.reasoningEffort) reasoningInput.value = config.reasoningEffort;
+    if (config.tone) toneInput.value = config.tone;
     if (config.targetLanguage) targetLanguageInput.value = config.targetLanguage;
     if (config.actionTimeoutMs) actionTimeoutMs = config.actionTimeoutMs;
     if (config.openaiTimeoutMs) openaiCallTimeoutMs = config.openaiTimeoutMs;

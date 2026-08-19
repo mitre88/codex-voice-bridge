@@ -181,23 +181,29 @@ export function normalizeReasoningEffort(value, fallback = "low") {
   return ["minimal", "low", "medium", "high", "xhigh"].includes(normalized) ? normalized : fallback;
 }
 
-export function normalizeTone(value) {
-  // Mirror normalizeReasoningEffort: .env files conventionally use UPPERCASE
-  // values and shell exports often carry stray whitespace, so "CALM" or
-  // " Calm " would otherwise silently fall back to the default tone and the
-  // model would speak with the wrong persona despite the user asking for
-  // another one. Normalize case and padding before the known-value check;
-  // the fallback still guards every other value, and a non-string value
-  // (e.g. a programmatic 42) keeps the previous fallback behavior instead
-  // of throwing on .trim().
+const TONE_PROMPTS = {
+  calm: "calm, warm, focused, and concise",
+  direct: "direct, practical, and concise",
+  energetic: "upbeat, clear, and action-oriented",
+};
+
+// Mirror normalizeReasoningEffort: .env files conventionally use UPPERCASE
+// values and shell exports often carry stray whitespace, so "CALM" or
+// " Calm " would otherwise silently fall back to the default tone and the
+// model would speak with the wrong persona despite the user asking for
+// another one. Normalize case and padding before the known-value check;
+// the fallback still guards every other value, and a non-string value
+// (e.g. a programmatic 42) keeps the previous fallback behavior instead
+// of throwing on .trim(). Returns the canonical tone KEY ("calm" | "direct"
+// | "energetic") so callers can persist/select the tone (e.g. the renderer's
+// tone dropdown) without re-deriving it from a prompt phrase.
+export function normalizeToneKey(value, fallback = "calm") {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : value;
-  return (
-    {
-      calm: "calm, warm, focused, and concise",
-      direct: "direct, practical, and concise",
-      energetic: "upbeat, clear, and action-oriented",
-    }[normalized] || "calm, warm, focused, and concise"
-  );
+  return Object.hasOwn(TONE_PROMPTS, normalized) ? normalized : fallback;
+}
+
+export function normalizeTone(value) {
+  return TONE_PROMPTS[normalizeToneKey(value)];
 }
 
 // AppleScript string literals escape a quote by doubling it. A backslash is

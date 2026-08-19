@@ -22,6 +22,7 @@ import {
   normalizeCuaArgs,
   normalizeReasoningEffort,
   normalizeTone,
+  normalizeToneKey,
   parseEnvFile,
   redactSecrets,
   requireMaxLength,
@@ -65,6 +66,34 @@ test("normalizeTone normalizes case and whitespace like normalizeReasoningEffort
   assert.match(normalizeTone("ENERGETIC\n"), /upbeat/);
   // A non-string value must keep falling back instead of throwing on .trim().
   assert.match(normalizeTone(42), /calm/);
+});
+
+test("normalizeToneKey returns canonical keys and defaults to calm", () => {
+  assert.equal(normalizeToneKey("calm"), "calm");
+  assert.equal(normalizeToneKey("direct"), "direct");
+  assert.equal(normalizeToneKey("energetic"), "energetic");
+  assert.equal(normalizeToneKey("unknown"), "calm");
+  assert.equal(normalizeToneKey(""), "calm");
+  assert.equal(normalizeToneKey(42), "calm");
+  // A caller-supplied fallback is honored for invalid values.
+  assert.equal(normalizeToneKey("bogus", "direct"), "direct");
+});
+
+test("normalizeToneKey normalizes case and whitespace like normalizeTone", () => {
+  assert.equal(normalizeToneKey("CALM"), "calm");
+  assert.equal(normalizeToneKey(" Direct "), "direct");
+  assert.equal(normalizeToneKey("ENERGETIC\n"), "energetic");
+});
+
+test("normalizeTone stays consistent with normalizeToneKey", () => {
+  // normalizeToneKey accepts keys, so a key normalized then rendered must
+  // produce that tone's prompt (the reverse direction is not a round trip:
+  // normalizeTone returns a prompt phrase, not a key).
+  assert.match(normalizeTone(normalizeToneKey("direct")), /direct/);
+  assert.match(normalizeTone(normalizeToneKey("ENERGETIC")), /upbeat/);
+  // normalizeToneKey is idempotent: a normalized key re-normalizes to itself.
+  assert.equal(normalizeToneKey(normalizeToneKey("calm")), "calm");
+  assert.equal(normalizeToneKey(normalizeToneKey("unknown")), "calm");
 });
 
 test("escapeAppleScript doubles quotes the AppleScript way", () => {

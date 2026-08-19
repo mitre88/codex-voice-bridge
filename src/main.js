@@ -20,6 +20,7 @@ import {
   normalizeCuaArgs,
   normalizeReasoningEffort,
   normalizeTone,
+  normalizeToneKey,
   parseEnvFile,
   redactSecrets,
   requireMaxLength,
@@ -83,6 +84,14 @@ const DEFAULT_VOICE = process.env.OPENAI_REALTIME_VOICE?.trim() || "marin";
 // insensitive ("HIGH" and " High " both normalize to "high") and falls back
 // to "low" for any value outside minimal/low/medium/high/xhigh.
 const DEFAULT_REASONING_EFFORT = normalizeReasoningEffort(process.env.OPENAI_REALTIME_REASONING_EFFORT || "low");
+// Mirror the reasoning-effort env var: the tone dropdown always defaulted to
+// "calm", so a user who configured OPENAI_REALTIME_TONE in .env (or exported
+// it for a launchd run) had to re-pick the tone in the UI on every launch —
+// or silently got calm. normalizeToneKey is case- and whitespace-insensitive
+// and falls back to "calm" for any invalid value, exactly like the reasoning
+// effort fallback, so a padded or mistyped value can never produce an
+// unknown tone key in the UI.
+const DEFAULT_TONE = normalizeToneKey(process.env.OPENAI_REALTIME_TONE || "calm");
 const DEFAULT_TARGET_LANGUAGE = process.env.OPENAI_REALTIME_TARGET_LANGUAGE?.trim() || "es";
 // Fall back to the home directory when launched from Finder/Dock (cwd === "/").
 const processCwd = process.cwd();
@@ -1181,6 +1190,7 @@ ipcMain.handle("app:config", guard(() => ({
   translateModel: DEFAULT_TRANSLATE_MODEL,
   transcribeModel: DEFAULT_TRANSCRIBE_MODEL,
   voice: DEFAULT_VOICE,
+  tone: DEFAULT_TONE,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   targetLanguage: DEFAULT_TARGET_LANGUAGE,
   // Resolve the workdir exactly like runCodex does: the raw env value may be

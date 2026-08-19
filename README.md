@@ -86,6 +86,7 @@ export OPENAI_REALTIME_MODEL="gpt-realtime-2"               # assistant model
 export OPENAI_REALTIME_TRANSLATE_MODEL="gpt-realtime-translate"
 export OPENAI_REALTIME_TRANSCRIBE_MODEL="gpt-realtime-whisper"
 export OPENAI_REALTIME_VOICE="marin"                        # assistant voice
+export OPENAI_REALTIME_TONE="calm"                          # calm | direct | energetic
 export OPENAI_REALTIME_REASONING_EFFORT="low"               # low | minimal | medium | high | xhigh
 export OPENAI_REALTIME_TARGET_LANGUAGE="es"                 # es en fr de pt ja ko zh
 export CODEX_VOICE_WORKDIR="/path/to/your/workspace"
