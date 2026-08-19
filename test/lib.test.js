@@ -21,6 +21,7 @@ import {
   isSdpAnswer,
   normalizeCuaArgs,
   normalizeReasoningEffort,
+  normalizeTargetLanguage,
   normalizeTone,
   normalizeToneKey,
   parseEnvFile,
@@ -94,6 +95,34 @@ test("normalizeTone stays consistent with normalizeToneKey", () => {
   // normalizeToneKey is idempotent: a normalized key re-normalizes to itself.
   assert.equal(normalizeToneKey(normalizeToneKey("calm")), "calm");
   assert.equal(normalizeToneKey(normalizeToneKey("unknown")), "calm");
+});
+
+test("normalizeTargetLanguage returns canonical codes and defaults to es", () => {
+  assert.equal(normalizeTargetLanguage("es"), "es");
+  assert.equal(normalizeTargetLanguage("en"), "en");
+  assert.equal(normalizeTargetLanguage("fr"), "fr");
+  assert.equal(normalizeTargetLanguage("de"), "de");
+  assert.equal(normalizeTargetLanguage("pt"), "pt");
+  assert.equal(normalizeTargetLanguage("ja"), "ja");
+  assert.equal(normalizeTargetLanguage("ko"), "ko");
+  assert.equal(normalizeTargetLanguage("zh"), "zh");
+  // Any value outside the renderer's language list falls back, not 400s.
+  assert.equal(normalizeTargetLanguage("spanish"), "es");
+  assert.equal(normalizeTargetLanguage(""), "es");
+  assert.equal(normalizeTargetLanguage(42), "es");
+  // A caller-supplied fallback is honored for invalid values.
+  assert.equal(normalizeTargetLanguage("bogus", "en"), "en");
+});
+
+test("normalizeTargetLanguage normalizes case and whitespace (.env style)", () => {
+  assert.equal(normalizeTargetLanguage("ES"), "es");
+  assert.equal(normalizeTargetLanguage(" Es "), "es");
+  assert.equal(normalizeTargetLanguage("FRENCH\n"), "es");
+  assert.equal(normalizeTargetLanguage("EN"), "en");
+  // A non-string value must keep falling back instead of throwing on .trim().
+  assert.equal(normalizeTargetLanguage(null), "es");
+  // normalizeTargetLanguage is idempotent: a normalized code re-normalizes.
+  assert.equal(normalizeTargetLanguage(normalizeTargetLanguage("KO")), "ko");
 });
 
 test("escapeAppleScript doubles quotes the AppleScript way", () => {

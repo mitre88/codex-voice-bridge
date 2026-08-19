@@ -19,6 +19,7 @@ import {
   isSafeLaunchUrl,
   normalizeCuaArgs,
   normalizeReasoningEffort,
+  normalizeTargetLanguage,
   normalizeTone,
   normalizeToneKey,
   parseEnvFile,
@@ -92,7 +93,17 @@ const DEFAULT_REASONING_EFFORT = normalizeReasoningEffort(process.env.OPENAI_REA
 // effort fallback, so a padded or mistyped value can never produce an
 // unknown tone key in the UI.
 const DEFAULT_TONE = normalizeToneKey(process.env.OPENAI_REALTIME_TONE || "calm");
-const DEFAULT_TARGET_LANGUAGE = process.env.OPENAI_REALTIME_TARGET_LANGUAGE?.trim() || "es";
+// Mirror the reasoning-effort/tone env vars: the target-language select
+// always defaulted to "es", so a user who configured
+// OPENAI_REALTIME_TARGET_LANGUAGE in .env (or exported it for a launchd run)
+// with an uppercase or padded value ("ES", " Es ") had it sent to the API
+// raw — an unknown language 400s every translate-mode connect and shows no
+// matching option in the UI select. normalizeTargetLanguage is case- and
+// whitespace-insensitive and falls back to "es" for any value outside the
+// renderer's language list, exactly like the tone/effort fallbacks, so a
+// padded or mistyped value can never produce an unknown language in the UI
+// or at the API.
+const DEFAULT_TARGET_LANGUAGE = normalizeTargetLanguage(process.env.OPENAI_REALTIME_TARGET_LANGUAGE || "es");
 // Fall back to the home directory when launched from Finder/Dock (cwd === "/").
 const processCwd = process.cwd();
 // Trim CODEX_VOICE_WORKDIR at the source: a whitespace-padded value (a shell

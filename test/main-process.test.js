@@ -764,8 +764,8 @@ test("model/voice/language defaults trim their env values so padded strings cann
   const langBody = main.slice(langStart, main.indexOf("// Fall back to the home directory"));
   assert.match(
     langBody,
-    /process\.env\.OPENAI_REALTIME_TARGET_LANGUAGE\?\.trim\(\) \|\| "es"/,
-    "DEFAULT_TARGET_LANGUAGE must trim OPENAI_REALTIME_TARGET_LANGUAGE and fall back for a whitespace-only value",
+    /normalizeTargetLanguage\(process\.env\.OPENAI_REALTIME_TARGET_LANGUAGE \|\| "es"\)/,
+    "DEFAULT_TARGET_LANGUAGE must normalize OPENAI_REALTIME_TARGET_LANGUAGE and fall back for an invalid/whitespace-only value",
   );
 });
 

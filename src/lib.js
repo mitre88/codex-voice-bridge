@@ -206,6 +206,26 @@ export function normalizeTone(value) {
   return TONE_PROMPTS[normalizeToneKey(value)];
 }
 
+// The language codes the renderer's "Translate to" select offers; the API
+// rejects anything outside this set, so an env value that is not one of them
+// must fall back instead of 400-ing every translate-mode connect.
+const TARGET_LANGUAGES = new Set(["es", "en", "fr", "de", "pt", "ja", "ko", "zh"]);
+
+// Mirror normalizeToneKey: .env files conventionally use UPPERCASE values
+// and shell exports often carry stray whitespace, so "ES" or " Es " would
+// otherwise reach the API as an unknown language and fail every translate
+// connect with a 400 the user cannot diagnose from the .env they wrote —
+// and the renderer's language select would show no matching option for the
+// raw value. Normalize case and padding before the known-value check; the
+// fallback still guards every other value, and a non-string value (e.g. a
+// programmatic 42) keeps the previous fallback behavior instead of throwing
+// on .trim(). Returns the canonical language code so callers can persist/
+// select it without re-deriving it.
+export function normalizeTargetLanguage(value, fallback = "es") {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : value;
+  return TARGET_LANGUAGES.has(normalized) ? normalized : fallback;
+}
+
 // AppleScript string literals escape a quote by doubling it. A backslash is
 // a literal, not an escape — JS-style \" closes the string and lets a
 // model-controlled app_name inject `do shell script`. Control characters
