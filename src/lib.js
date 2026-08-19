@@ -320,6 +320,21 @@ function getAliasPatterns(aliases) {
 
 export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliases = APP_BUNDLE_ALIASES) {
   const args = jsonArgs && typeof jsonArgs === "object" ? { ...jsonArgs } : {};
+  // press_key/type_text_chars address their target process by pid, and a
+  // model very plausibly emits it as a string ("123") instead of the number
+  // cua-driver's schema expects — a stringified pid would otherwise reach
+  // the driver raw and fail with an opaque error the model cannot
+  // self-correct from (the same cosmetic-noise class the key/modifiers
+  // normalization below handles). Normalize digits-only strings to a number
+  // (leading zeros included: "0123" is pid 123, and JSON numbers cannot
+  // carry them anyway); any other value is left untouched for
+  // validateCuaDriverRequiredArgs to reject with a clean message. Idempotent:
+  // an already-numeric pid passes through unchanged.
+  if (toolName === "press_key" || toolName === "type_text_chars") {
+    if (typeof args.pid === "string" && /^\d+$/.test(args.pid) && Number(args.pid) > 0) {
+      args.pid = Number(args.pid);
+    }
+  }
   // press_key reaches the same cua-driver machinery as the dedicated
   // press_key_in_front_app tool, so its args must be normalized identically:
   // the model can call run_cua_driver directly with tool_name "press_key",
@@ -536,6 +551,23 @@ export function isSafeCuaLaunchArgs(args = {}) {
 // cua-driver's problem. Returns null when valid, or a short human-readable
 // error message.
 export function validateCuaDriverRequiredArgs(toolName, args = {}, typingBudgetMs = 48000) {
+  // pid is how press_key/type_text_chars address their target process, but it
+  // is OPTIONAL: cua-driver falls back to the frontmost app when it is absent
+  // (the dedicated tools always resolve and send it). When present it must be
+  // a positive integer — a 0/negative/fractional pid or a non-numeric string
+  // would otherwise reach the driver raw and fail with an opaque error the
+  // model cannot self-correct from, the same class of failure the key/text
+  // guards exist to prevent. normalizeCuaArgs converts digit strings to
+  // numbers first, so a string here means a genuinely malformed value.
+  if (toolName === "press_key" || toolName === "type_text_chars") {
+    const pid = args.pid;
+    const pidIsValid =
+      pid === undefined ||
+      pid === null ||
+      (typeof pid === "number" && Number.isInteger(pid) && pid > 0) ||
+      (typeof pid === "string" && /^\d+$/.test(pid) && Number(pid) > 0);
+    if (!pidIsValid) return "pid must be a positive integer when provided.";
+  }
   if (toolName === "press_key") {
     const keyError = requireNonEmptyString(args.key, "key");
     if (keyError) return keyError;

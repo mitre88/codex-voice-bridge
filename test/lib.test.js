@@ -407,6 +407,78 @@ test("normalizeCuaArgs normalizes press_key key/modifiers like the dedicated too
   assert.deepEqual(normalizeCuaArgs("type_text_chars", { text: "Return" }), { text: "Return" });
 });
 
+test("normalizeCuaArgs converts stringified pids to numbers for press_key/type_text_chars", () => {
+  // A model very plausibly emits the pid as a string ("123") instead of the
+  // number cua-driver's schema expects; the stringified form would otherwise
+  // reach the driver raw and fail with an opaque error the model cannot
+  // self-correct from. Leading zeros normalize too ("0123" is pid 123).
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: "123", key: "return" }), {
+    pid: 123,
+    key: "return",
+    modifiers: [],
+  });
+  assert.deepEqual(normalizeCuaArgs("type_text_chars", { pid: "0123", text: "hola" }), {
+    pid: 123,
+    text: "hola",
+  });
+  // Already-numeric pids pass through unchanged (the dedicated tools' path).
+  assert.deepEqual(normalizeCuaArgs("type_text_chars", { pid: 42, text: "hola" }), { pid: 42, text: "hola" });
+  // Non-digit strings and non-positive values are left untouched: validation
+  // rejects them with a clean message instead of the driver failing opaquely.
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: "abc", key: "return" }), {
+    pid: "abc",
+    key: "return",
+    modifiers: [],
+  });
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: "0", key: "return" }), {
+    pid: "0",
+    key: "return",
+    modifiers: [],
+  });
+  assert.deepEqual(normalizeCuaArgs("press_key", { pid: "-5", key: "return" }), {
+    pid: "-5",
+    key: "return",
+    modifiers: [],
+  });
+  // Other tools are not affected.
+  assert.deepEqual(normalizeCuaArgs("launch_app", { name: "X", pid: "123" }), { name: "X", pid: "123" });
+});
+
+test("validateCuaDriverRequiredArgs rejects malformed pids but allows a missing one", () => {
+  // pid is optional: cua-driver falls back to the frontmost app when it is
+  // absent, and the dedicated tools always resolve and send it. A PRESENT
+  // pid must be a positive integer — a 0/negative/fractional pid or a
+  // non-numeric string would otherwise reach the driver raw and fail with an
+  // opaque error the model cannot self-correct from. Digit strings are
+  // accepted raw too (normalizeCuaArgs converts them to numbers first).
+  assert.equal(validateCuaDriverRequiredArgs("press_key", { key: "return" }), null);
+  assert.equal(validateCuaDriverRequiredArgs("type_text_chars", { text: "hola" }), null);
+  assert.equal(validateCuaDriverRequiredArgs("press_key", { key: "return", pid: 42 }), null);
+  assert.equal(validateCuaDriverRequiredArgs("type_text_chars", { text: "hola", pid: "123" }), null);
+  assert.equal(
+    validateCuaDriverRequiredArgs("press_key", { key: "return", pid: 0 }),
+    "pid must be a positive integer when provided.",
+  );
+  assert.equal(
+    validateCuaDriverRequiredArgs("press_key", { key: "return", pid: -1 }),
+    "pid must be a positive integer when provided.",
+  );
+  assert.equal(
+    validateCuaDriverRequiredArgs("press_key", { key: "return", pid: 1.5 }),
+    "pid must be a positive integer when provided.",
+  );
+  assert.equal(
+    validateCuaDriverRequiredArgs("type_text_chars", { text: "hola", pid: "abc" }),
+    "pid must be a positive integer when provided.",
+  );
+  assert.equal(
+    validateCuaDriverRequiredArgs("press_key", { key: "return", pid: "0" }),
+    "pid must be a positive integer when provided.",
+  );
+  // Other tools are not affected.
+  assert.equal(validateCuaDriverRequiredArgs("launch_app", { name: "X", pid: "abc" }), null);
+});
+
 test("validateCuaDriverRequiredArgs rejects missing/blank/non-string press_key key and type_text_chars text", () => {
   // The run_cua_driver schema only requires tool_name+json_args, so the model
   // can call press_key/type_text_chars directly with the required field
