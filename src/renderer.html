@@ -20,6 +20,11 @@
         <span id="status" class="status" aria-live="polite">Idle</span>
       </header>
 
+      <div id="errorBanner" class="error-banner" role="alert" hidden>
+        <span id="errorBannerText"></span>
+        <button id="errorBannerDismiss" class="banner-dismiss" type="button" aria-label="Dismiss error">&times;</button>
+      </div>
+
       <section class="voice-panel">
         <div class="orb-wrap" aria-hidden="true">
           <div class="orb"></div>
@@ -55,8 +60,8 @@
           <label class="field assistant-option">
             <span>Reasoning</span>
             <select id="reasoningEffort">
-              <option value="low">Low</option>
               <option value="minimal">Minimal</option>
+              <option value="low" selected>Low</option>
               <option value="medium">Medium</option>
               <option value="high">High</option>
               <option value="xhigh">X-High</option>
