@@ -121,7 +121,7 @@ test("writeLog swallows logging-path failures so error handlers cannot crash or 
   const fnBody = main.slice(fnStart, main.indexOf("function runProcess"));
   assert.match(
     fnBody,
-    /function writeLog\(message, data\) \{\n  try \{/,
+    /function writeLog\(message, data\) \{\n {2}try \{/,
     "writeLog must wrap its body in an outer try/catch",
   );
   assert.ok(
@@ -130,7 +130,7 @@ test("writeLog swallows logging-path failures so error handlers cannot crash or 
   );
   assert.match(
     fnBody,
-    /\n  \} catch \{\n    \/\/ Logging is best-effort/,
+    /\n {2}\} catch \{\n {4}\/\/ Logging is best-effort/,
     "writeLog must swallow logging failures silently",
   );
 });
@@ -554,7 +554,7 @@ test("runCuaDriver validates required press_key/type_text_chars args before spaw
   );
   assert.match(
     fnBody,
-    /requiredArgsError\) \{\n    return Promise\.resolve\(\{ ok: false, code: -5/,
+    /requiredArgsError\) \{\n {4}return Promise\.resolve\(\{ ok: false, code: -5/,
     "runCuaDriver must settle with a clean error when the required args are missing",
   );
   assert.ok(

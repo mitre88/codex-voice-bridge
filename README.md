@@ -155,7 +155,7 @@ npm run smoke:cua # CUA Driver connectivity check (requires CUA Driver)
 npm start
 ```
 
-CI on `main` runs `npm ci`, `npm run lint`, `npm test`, and `npm run check` on Node 20.
+CI on `main` runs `npm ci`, `npm run lint`, `npm test`, and `npm run check` on Node 20 and 22.
 
 ---
 

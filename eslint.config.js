@@ -2,7 +2,7 @@ import js from "@eslint/js";
 
 export default [
   {
-    ignores: ["node_modules/", "dist/", "out/", "test/"],
+    ignores: ["node_modules/", "dist/", "out/"],
   },
   {
     files: ["src/main.js", "src/lib.js"],
@@ -50,9 +50,32 @@ export default [
         console: "readonly",
         setTimeout: "readonly",
         clearTimeout: "readonly",
+        requestAnimationFrame: "readonly",
         fetch: "readonly",
         AbortSignal: "readonly",
         AbortController: "readonly",
+      },
+    },
+  },
+  {
+    files: ["test/**/*.js"],
+    ...js.configs.recommended,
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: "module",
+      globals: {
+        process: "readonly",
+        console: "readonly",
+        URL: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        fetch: "readonly",
+        AbortSignal: "readonly",
+        AbortController: "readonly",
+        Buffer: "readonly",
+        structuredClone: "readonly",
+        TextEncoder: "readonly",
+        TextDecoder: "readonly",
       },
     },
   },
