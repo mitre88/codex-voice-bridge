@@ -370,7 +370,16 @@ function runProcess(command, args, options = {}) {
   });
 }
 
+// Cache the Keychain key after the first successful read: without it every
+// connect (and every key-status IPC) spawns a `security` process — 50-150ms
+// of the Connect critical path spent re-reading a value that only changes
+// when the app itself saves it. Only a non-empty read is cached, so a key
+// added to the Keychain externally while the app runs is still picked up on
+// the next read; the save path refreshes the cache on success.
+let cachedKeychainApiKey = "";
+
 async function readKeychainApiKey() {
+  if (cachedKeychainApiKey) return cachedKeychainApiKey;
   const result = await runProcess("security", [
     "find-generic-password",
     "-s",
@@ -379,22 +388,31 @@ async function readKeychainApiKey() {
     KEYCHAIN_ACCOUNT,
     "-w",
   ]);
-  return result.ok ? result.stdout.trim() : "";
+  cachedKeychainApiKey = result.ok ? result.stdout.trim() : "";
+  return cachedKeychainApiKey;
 }
 
 // Pass the key via stdin so it never shows up in `ps` output.
-function saveKeychainApiKey(apiKey) {
-  return runProcess(
+async function saveKeychainApiKey(apiKey) {
+  const result = await runProcess(
     "security",
     ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w", "-U"],
     { stdin: apiKey },
   );
+  // Keep the cache in sync with what the Keychain now holds; a failed save
+  // leaves the cache untouched (the Keychain still has the previous value).
+  if (result.ok) cachedKeychainApiKey = apiKey;
+  return result;
 }
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 460,
     height: 720,
+    // Keep the window from being shrunk past the point where the mode grid
+    // and button row break; the CSS max-width handles oversized windows.
+    minWidth: 380,
+    minHeight: 600,
     show: true,
     alwaysOnTop: ALWAYS_ON_TOP,
     title: "Codex Voice Bridge",
