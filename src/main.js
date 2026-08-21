@@ -38,18 +38,24 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// NOTE ON ENV NORMALIZATION: every environment variable read below is
+// trimmed (and, where a known-value set exists, case-normalized with a safe
+// fallback) at the source. Shell exports and launchd plist strings routinely
+// carry stray whitespace or the wrong case, and an unnormalized value would
+// fail in the worst possible way for a config typo: a padded model/voice/
+// language 400s every connect, a padded WORKDIR fails every codex run, a
+// padded USER breaks the Keychain account match across launch contexts, a
+// padded SHORTCUT silently loses the toggle, and a padded ALWAYS_ON_TOP=0
+// keeps the opt-out enabled. A whitespace-only value trims to "" and falls
+// back exactly like an unset variable.
+
 // Optional .env support with zero dependencies: load <cwd>/.env — or the file
 // pointed to by CODEX_VOICE_ENV_FILE — before any configuration constant is
 // read. Variables already present in the environment are never overridden.
 // This must run before DEFAULT_MODEL/DEFAULT_WORKDIR/... are evaluated.
 function loadDotEnv() {
-  // Trim CODEX_VOICE_ENV_FILE at the source: a whitespace-padded value (a
-  // shell export with a trailing space, a launchd plist string with stray
-  // whitespace) would otherwise make existsSync fail and the custom .env be
-  // silently skipped — the user's overrides never load, with no error — the
-  // same cosmetic-noise class of failure the WORKDIR/SHORTCUT trims prevent.
-  // A whitespace-only value trims to "" and falls back to <cwd>/.env exactly
-  // like an unset variable (the empty string is dropped by filter(Boolean)).
+  // An untrimmed CODEX_VOICE_ENV_FILE would make existsSync miss the file and
+  // silently skip the user's overrides (see the env-normalization note above).
   const candidates = [process.env.CODEX_VOICE_ENV_FILE?.trim(), path.join(process.cwd(), ".env")].filter(Boolean);
   for (const file of candidates) {
     try {
@@ -68,51 +74,18 @@ function loadDotEnv() {
 }
 loadDotEnv();
 
-// Trim the model/voice env values at the source: a whitespace-padded value (a
-// shell export with a trailing space, a launchd plist string with stray
-// whitespace) would otherwise be sent to the OpenAI API as-is and rejected
-// with a 400 on every connect — the same cosmetic-noise class of failure the
-// WORKDIR/SHORTCUT/API-key trims prevent. A whitespace-only value trims to ""
-// and falls back to the default exactly like an unset variable.
 const DEFAULT_MODEL = process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-2";
 const DEFAULT_TRANSLATE_MODEL = process.env.OPENAI_REALTIME_TRANSLATE_MODEL?.trim() || "gpt-realtime-translate";
 const DEFAULT_TRANSCRIBE_MODEL = process.env.OPENAI_REALTIME_TRANSCRIBE_MODEL?.trim() || "gpt-realtime-whisper";
 const DEFAULT_VOICE = process.env.OPENAI_REALTIME_VOICE?.trim() || "marin";
-// Normalize the .env value at the source: a typo like "banana" would
-// otherwise surface in the UI select (no matching option) and reach the API
-// (forcing the reasoning-400 retry on every connect) instead of falling back
-// to a valid effort. normalizeReasoningEffort is case- and whitespace-
-// insensitive ("HIGH" and " High " both normalize to "high") and falls back
-// to "low" for any value outside minimal/low/medium/high/xhigh.
+// The normalize* helpers are case- and whitespace-insensitive and fall back
+// to a valid default for any value outside their known sets, so a .env typo
+// can never surface as an unknown option in the UI or a 400 at the API.
 const DEFAULT_REASONING_EFFORT = normalizeReasoningEffort(process.env.OPENAI_REALTIME_REASONING_EFFORT || "low");
-// Mirror the reasoning-effort env var: the tone dropdown always defaulted to
-// "calm", so a user who configured OPENAI_REALTIME_TONE in .env (or exported
-// it for a launchd run) had to re-pick the tone in the UI on every launch —
-// or silently got calm. normalizeToneKey is case- and whitespace-insensitive
-// and falls back to "calm" for any invalid value, exactly like the reasoning
-// effort fallback, so a padded or mistyped value can never produce an
-// unknown tone key in the UI.
 const DEFAULT_TONE = normalizeToneKey(process.env.OPENAI_REALTIME_TONE || "calm");
-// Mirror the reasoning-effort/tone env vars: the target-language select
-// always defaulted to "es", so a user who configured
-// OPENAI_REALTIME_TARGET_LANGUAGE in .env (or exported it for a launchd run)
-// with an uppercase or padded value ("ES", " Es ") had it sent to the API
-// raw — an unknown language 400s every translate-mode connect and shows no
-// matching option in the UI select. normalizeTargetLanguage is case- and
-// whitespace-insensitive and falls back to "es" for any value outside the
-// renderer's language list, exactly like the tone/effort fallbacks, so a
-// padded or mistyped value can never produce an unknown language in the UI
-// or at the API.
 const DEFAULT_TARGET_LANGUAGE = normalizeTargetLanguage(process.env.OPENAI_REALTIME_TARGET_LANGUAGE || "es");
 // Fall back to the home directory when launched from Finder/Dock (cwd === "/").
 const processCwd = process.cwd();
-// Trim CODEX_VOICE_WORKDIR at the source: a whitespace-padded value (a shell
-// export with a trailing space, a launchd plist string with stray whitespace)
-// would otherwise keep the padding through path.resolve and make every codex
-// run fail with "The working directory does not exist" for a perfectly valid
-// directory — the same cosmetic-noise class of failure the resolved API key
-// trim prevents. A whitespace-only value trims to "" and falls back to the
-// launch cwd/home exactly like an unset variable.
 const DEFAULT_WORKDIR = path.resolve(
   process.env.CODEX_VOICE_WORKDIR?.trim() || (processCwd === path.parse(processCwd).root ? os.homedir() : processCwd),
 );
@@ -126,37 +99,19 @@ const ACTION_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_ACTION_TIMEOUT_M
 // we drop the excess; a runaway command must not grow the main process forever.
 const MAX_PROCESS_OUTPUT_CHARS = 1024 * 1024;
 const KEYCHAIN_SERVICE = "codex-voice-bridge.openai-api-key";
-// Trim USER at the source, same as the WORKDIR/SHORTCUT/ALWAYS_ON_TOP/ENV_FILE
-// trims: a whitespace-padded value (a launchd plist string with stray
-// whitespace, a shell export with a trailing space) would otherwise flow into
-// the Keychain account name and the safety identifier. The account is what
-// saveApiKey() writes and readApiKey() looks up — a padded account saved from
-// one launch context (Terminal) would not match the account read from another
-// (launchd), so the stored key would silently stop resolving. A
-// whitespace-only value trims to "" and falls back to "local" exactly like an
-// unset variable.
+// USER flows into the Keychain account name and the safety identifier, so it
+// must resolve identically across launch contexts (Terminal vs launchd) or
+// the stored key silently stops matching.
 const USER = process.env.USER?.trim() || "local";
 const KEYCHAIN_ACCOUNT = USER;
 const LOG_DIR = path.join(os.homedir(), "Library", "Logs", "codex-voice-bridge");
 const LOG_FILE = path.join(LOG_DIR, "bridge.log");
 const LOG_MAX_BYTES = 2 * 1024 * 1024;
 const SAFETY_ID = crypto.createHash("sha256").update(`${USER}:codex-voice-bridge`).digest("hex");
-// Trim CODEX_VOICE_SHORTCUT at the source: a whitespace-padded value (a shell
-// export with a trailing space, a launchd plist string with stray whitespace)
-// would otherwise make globalShortcut.register fail — reported only as a log
-// line, so the user silently loses the toggle shortcut — and the same padded
-// string would show in the UI config line. A whitespace-only value trims to ""
-// and falls back to the default exactly like an unset variable, the same
-// cosmetic-noise class of failure the WORKDIR/ALWAYS_ON_TOP trims prevent.
 const SHORTCUT = process.env.CODEX_VOICE_SHORTCUT?.trim() || "CommandOrControl+Shift+Space";
 // Whether the bridge window floats above every other window. Always-on-top
-// keeps the bridge visible while voice commands drive another app, but the
-// window then covers whatever the user is reading during idle stretches;
-// CODEX_VOICE_ALWAYS_ON_TOP=0 opts out without changing the default. Trim at
-// the source: a whitespace-padded value (shell export with a trailing space,
-// launchd plist string with stray whitespace) would otherwise silently keep
-// always-on-top enabled — the opposite of the opt-out the user asked for —
-// the same cosmetic-noise class of failure the WORKDIR trim prevents.
+// keeps the bridge visible while voice commands drive another app;
+// CODEX_VOICE_ALWAYS_ON_TOP=0 opts out without changing the default.
 const ALWAYS_ON_TOP = process.env.CODEX_VOICE_ALWAYS_ON_TOP?.trim() !== "0";
 
 // Read the version for the UI config line and support/debug reports. Never
@@ -454,17 +409,11 @@ function toggleWindow() {
 }
 
 async function createRealtimeClientSecret(options = {}) {
-  // The runtime key and the Keychain value are already trimmed at their
-  // sources (set-api-key trims, security -w output is trimmed), but an
-  // OPENAI_API_KEY set in the shell very plausibly carries stray whitespace
-  // (a trailing newline from `export OPENAI_API_KEY=$(cat key.txt)`, a
-  // copy-paste with a surrounding blank line). Handed raw to the
-  // Authorization header, that whitespace makes OpenAI reject a perfectly
-  // good key with a 401. Trim the resolved value once: the trim is a no-op
-  // for the runtime/Keychain paths, and isPlausibleApiKey requires \S+ (no
-  // whitespace), so it can only ever normalize the env path — never weaken a
-  // valid key. A whitespace-only env key also becomes "" here, surfacing the
-  // clean "Add an OpenAI API key..." message instead of a confusing 401.
+  // Trim the resolved key once: a no-op for the runtime/Keychain paths
+  // (already trimmed at their sources), but an OPENAI_API_KEY from the shell
+  // often carries a stray newline that would 401 a perfectly good key. A
+  // whitespace-only env key becomes "" and surfaces the clean "Add an
+  // OpenAI API key..." message instead of a confusing 401.
   const apiKey = (runtimeApiKey || (await readKeychainApiKey()) || process.env.OPENAI_API_KEY || "").trim();
   if (!apiKey) throw new Error("Add an OpenAI API key in the app or set OPENAI_API_KEY before starting.");
 
@@ -680,32 +629,19 @@ function assistantTools() {
 // Keep the model inside the configured workspace (see resolveWorkdir in lib.js).
 
 function runCodex(input) {
-  // The model may omit the required prompt field (or send a non-string). A
-  // missing prompt would otherwise reach spawn() as the literal string
-  // "undefined" and trigger a pointless Codex run, so refuse it cleanly and
-  // let the model self-correct from the error message.
+  // Model-controlled prompt/cwd become argv entries (and spawn's cwd), so
+  // validate them up front — missing/non-string, oversized (macOS caps one
+  // argv entry at ~256 KiB; E2BIG), or containing null bytes (spawn throws a
+  // synchronous TypeError) — and settle with a clean, self-correctable error
+  // instead of an opaque spawn failure.
   const promptError = requireNonEmptyString(input?.prompt, "prompt");
   if (promptError) return Promise.resolve({ ok: false, code: -5, stdout: "", stderr: promptError });
-  // A single argv entry on macOS is capped (~256 KiB); an unbounded prompt
-  // would make spawn() fail with E2BIG, so reject oversized prompts cleanly.
   const lengthError = requireMaxLength(input?.prompt, "prompt");
   if (lengthError) return Promise.resolve({ ok: false, code: -6, stdout: "", stderr: lengthError });
-  // A prompt containing a null byte (JSON args can encode "\u0000") would
-  // make spawn() throw a synchronous TypeError ("must be a string without
-  // null bytes") instead of settling with a clean error, so reject it like
-  // the length guard above. The prompt becomes a direct argv entry after
-  // "--", so the same argv constraints apply.
   const promptNullError = requireNoNullBytes(input?.prompt, "prompt");
   if (promptNullError) return Promise.resolve({ ok: false, code: -6, stdout: "", stderr: promptNullError });
-  // cwd is interpolated into the codex argv as "--cd <workdir>" — the same
-  // single-argv-entry cap applies, so a model-controlled megabyte path would
-  // otherwise make spawn() fail with E2BIG. 4096 bytes covers any real path.
   const cwdLengthError = requireMaxLength(input?.cwd, "cwd", 4096);
   if (cwdLengthError) return Promise.resolve({ ok: false, code: -6, stdout: "", stderr: cwdLengthError });
-  // A null byte in cwd would make spawn() throw on BOTH the "--cd <workdir>"
-  // argv entry and the cwd option ("options.cwd must be a string ... without
-  // null bytes") instead of settling with a clean error — same guard as the
-  // prompt above, before resolveWorkdir normalizes the path.
   const cwdNullError = requireNoNullBytes(input?.cwd, "cwd");
   if (cwdNullError) return Promise.resolve({ ok: false, code: -6, stdout: "", stderr: cwdNullError });
   const { prompt, cwd } = input;
@@ -727,20 +663,12 @@ function runCodex(input) {
 }
 
 function runCuaDriver(input = {}) {
-  // Same optional chaining as runCodex: a null IPC payload must settle with
-  // the clean "Missing cua-driver tool_name." error below instead of throwing
-  // a TypeError that bypasses the model-facing error path entirely.
-  // cua-driver's tool registry is lowercase snake_case, and the model very
-  // plausibly emits a capitalized or whitespace-padded variant ("Launch_App",
-  // "List_Apps", " press_key ") from natural-language reasoning — the same
-  // cosmetic noise the press_key key/modifiers normalization already handles.
-  // Normalize once at the source so the canonical lowercase name flows
-  // through the blocked-tool set, the launch_app safety gates, and the driver
-  // call identically; an unnormalized name would otherwise pass the
-  // (case-insensitive) gate and reach the driver, failing with an opaque
-  // error the model cannot self-correct from — and a capitalized
-  // "Launch_App" would skip the launch_app safety checks entirely. The
-  // original value is kept for error messages so the model sees what it sent.
+  // Normalize the tool name once at the source (trim + lowercase): the
+  // canonical name must flow through the blocked-tool set, the launch_app
+  // safety gates, and the driver call identically — a capitalized
+  // "Launch_App" would otherwise skip the launch_app safety checks entirely.
+  // The original value is kept for error messages so the model sees what it
+  // sent.
   const rawToolName = input?.tool_name;
   const toolName = typeof rawToolName === "string" ? rawToolName.trim().toLowerCase() : rawToolName;
   if (!toolName || typeof toolName !== "string") {
@@ -754,39 +682,22 @@ function runCuaDriver(input = {}) {
   if (CUA_BLOCKED_TOOLS.has(toolName)) {
     return Promise.resolve({ ok: false, code: -3, stdout: "", stderr: `Blocked cua-driver tool for safety: ${toolName}.` });
   }
-  // The serialized args blob becomes a single argv entry (~256 KiB cap on
-  // macOS, ARG_MAX 1 MiB for the whole block), so an unbounded json_args from
-  // the model would make spawn() fail with E2BIG — reject it cleanly like the
-  // prompt/text guards do.
   const normalizedArgs = normalizeCuaArgs(toolName, input.json_args, input);
-  // press_key/type_text_chars need key/text, and the run_cua_driver schema
-  // only requires tool_name+json_args: a model call with the field missing
-  // would otherwise reach cua-driver and fail with an opaque error the model
-  // cannot self-correct from — the same class of failure the dedicated
-  // type_text_in_front_app/press_key_in_front_app guards prevent. Runs on
-  // the NORMALIZED args so a whitespace-only key that trims to "" fails here.
-  // The typing budget must track the configured driver timeout, not the 48s
-  // default: with a shorter CODEX_VOICE_CUA_TIMEOUT_MS, the default budget
-  // would let a text through that cannot fit the actual timeout and fail
-  // with a driver timeout — the exact failure the guard exists to prevent
-  // (same headroom math as typeTextInFrontApp).
+  // Validate required per-tool args on the NORMALIZED args (a whitespace-only
+  // key that trims to "" must fail here, not at the driver). The typing
+  // budget tracks the configured driver timeout — with a shorter
+  // CODEX_VOICE_CUA_TIMEOUT_MS the default budget would admit a text that
+  // cannot fit the actual timeout (same headroom math as typeTextInFrontApp).
   const requiredArgsError = validateCuaDriverRequiredArgs(toolName, normalizedArgs, Math.floor(CUA_TIMEOUT_MS * 0.8));
   if (requiredArgsError) {
     return Promise.resolve({ ok: false, code: -5, stdout: "", stderr: requiredArgsError });
   }
-  // type_text_chars reaches the same cua-driver machinery as the dedicated
-  // type_text_in_front_app tool, so it must get the same per-character delay
-  // scaling: the model can call run_cua_driver directly with tool_name
-  // "type_text_chars", and without a delay_ms the driver types at its default
-  // pace — a text that passes the typeability guard above (e.g. 30k chars,
-  // well under the typing budget) would then take minutes and blow the driver
-  // timeout with an opaque error the model cannot distinguish from a real
-  // hang. The guard already guarantees the text fits at the 1ms/char floor,
-  // so injecting the same scaled delay typeTextInFrontApp computes makes the
-  // run finish inside the timeout. A model-supplied delay_ms is respected
-  // as-is (the model may deliberately want a slower pace); only a missing or
-  // non-numeric value gets the scaled default. The budget tracks the
-  // configured driver timeout like every other typing guard in this file.
+  // A direct type_text_chars call gets the same scaled per-character delay
+  // the dedicated typeTextInFrontApp tool computes: without a delay_ms the
+  // driver's default pace would blow the timeout for long texts that the
+  // typeability guard already proved can fit at the 1ms/char floor. A
+  // model-supplied delay_ms is respected as-is (a deliberately slower pace);
+  // only a missing or non-numeric value gets the scaled default.
   if (toolName === "type_text_chars" && !(Number.isFinite(normalizedArgs.delay_ms) && normalizedArgs.delay_ms > 0)) {
     normalizedArgs.delay_ms = typeDelayMs(normalizedArgs.text.length, 20, Math.floor(CUA_TIMEOUT_MS * 0.8));
   }
@@ -845,30 +756,16 @@ async function openAppVisible(input = {}) {
   if (resolved.bundle_id) launchArgs.bundle_id = resolved.bundle_id;
   else launchArgs.name = resolved.name;
   if (input.url) {
-    // Normalize the URL once at the source, exactly like the URL-only path
-    // (resolveOpenAppTarget trims before opening) and normalizeCuaArgs do:
-    // isSafeLaunchUrl validates the trimmed form, so the raw value must not
-    // be the one handed to cua-driver. The launch currently works only
-    // because runCuaDriver re-trims urls downstream — the string that passed
-    // validation should be the string that is launched, never a
-    // whitespace-padded variant of it.
+    // Same normalization and gates as resolveOpenAppTarget's URL-only path:
+    // trim once (the string that passes validation is the string launched),
+    // cap the argv-bound length, reject null bytes, and only allow http/https
+    // — a model-controlled file:// or custom-scheme URL could open local
+    // files or trigger unintended handlers.
     const url = String(input.url).trim();
-    // Same argv-bound cap as resolveOpenAppTarget's URL-only path: the url
-    // travels inside launchArgs.urls to cua-driver as a single argv entry,
-    // so a model-controlled megabyte URL must be rejected here with a clear
-    // message instead of failing downstream with an opaque E2BIG.
     const urlLengthError = requireMaxLength(url, "url", 8192);
     if (urlLengthError) return { ok: false, code: -9, stdout: "", stderr: urlLengthError };
-    // Same argv-entry constraint as the cap above: a URL containing a null
-    // byte (JSON args can encode "\u0000") would make spawn() throw a
-    // synchronous TypeError somewhere downstream instead of settling with a
-    // clean error. (cua-driver receives the URL JSON-escaped, so the raw
-    // value can only reach a spawn here; reject it at the source like
-    // resolveOpenAppTarget does for the URL-only path.)
     const urlNullError = requireNoNullBytes(url, "url");
     if (urlNullError) return { ok: false, code: -9, stdout: "", stderr: urlNullError };
-    // Only http/https URLs may be opened: a model-controlled file:// or custom
-    // scheme URL could open local files or trigger unintended handlers.
     if (!isSafeLaunchUrl(url)) {
       return { ok: false, code: -9, stdout: "", stderr: "Rejected unsafe url (only http/https URLs may be opened)." };
     }
@@ -927,50 +824,23 @@ async function typeTextInFrontApp(input = {}) {
 }
 
 async function pressKeyInFrontApp(input = {}) {
+  // The key/modifiers normalization below (trim, lowercase, "+"-combo split,
+  // plus-key detection, modifier expansion/dedup) mirrors the canonical
+  // press_key normalization in lib.js normalizeCuaArgs — see there for the
+  // full rationale. Short version: cua-driver expects a lowercase single key
+  // name plus an array of lowercase modifier names, and model output is full
+  // of cosmetic noise ("Return", "cmd+shift+p", "CMD + Shift", "cmd++" for
+  // the plus key) that must normalize to the exact shape the driver accepts
+  // instead of failing opaquely. The length gate still runs on the original
+  // key — always at least as long as the pressed key — so the combo split
+  // cannot bypass it.
   const keyError = requireNonEmptyString(input.key, "key");
   if (keyError) return { ok: false, code: -5, stdout: "", stderr: keyError };
-  // Model-generated JSON often wraps values in stray whitespace or a trailing
-  // newline (e.g. a template literal) — the same cosmetic noise the modifiers
-  // normalization below and the app_name/url trims in lib.js already handle.
-  // An untrimmed key like "return " or "esc\n" would reach cua-driver as-is
-  // and fail with an opaque error the model cannot self-correct from, so trim
-  // once at the source: the string that passes the gates is the string that
-  // is pressed. Trimming cannot weaken the gates — the trimmed value is still
-  // re-validated by requireMaxLength below, and a whitespace-only key already
-  // failed requireNonEmptyString above.
-  // Lowercase for the same reason the modifiers are lowercased below:
-  // cua-driver's press_key expects lowercase key names ("return", "escape",
-  // "cmd", ...), and a model describing the action in natural language very
-  // plausibly sends "Return", "ESC", or "Enter" — a capitalized key would
-  // make the driver fail with an opaque error the model cannot self-correct
-  // from. Key names are never case-distinct (single letters are the same
-  // physical key; capitalization is expressed via the shift modifier), so
-  // lowercasing cannot change which key is pressed.
   const key = String(input.key).trim().toLowerCase();
-  // A model describing a shortcut in natural language very plausibly puts the
-  // whole combo in the key ("cmd+shift+p") instead of a single key plus a
-  // modifiers array. cua-driver's press_key expects a single key name, so
-  // such a key would reach the driver raw and fail with an opaque error the
-  // model cannot self-correct from — the same class of cosmetic noise the
-  // modifiers split below already handles. Key names never contain "+", so
-  // the split is unambiguous: the last part is the pressed key and the
-  // preceding parts join the modifiers pipeline below (trimmed, lowercased,
-  // deduped like every other entry). Single keys are untouched. The length
-  // gate still runs on the original key — always at least as long as the
-  // pressed key — so the split cannot bypass it.
   const keyCombo = key.split("+").map((part) => part.trim()).filter((part) => part.length > 0);
-  // "+" is a real key name — the plus key, e.g. Cmd+Plus to zoom in — but
-  // the combo split above treats "+" as the separator, so a model wanting
-  // the plus key ("cmd++", "cmd + +") would otherwise split to a single
-  // "cmd" part and silently degrade to a bare Cmd press (reported as
-  // success, wrong action). Only a SECOND "+" marks a real plus key: the
-  // string is exactly "+", or the final "+" is preceded by a non-"+",
-  // non-space character. A single trailing "+" ("cmd+", "+p") stays stray
-  // cosmetic noise — that part IS the key — and all-plus strings ("++")
-  // keep normalizing to "" so the required-arg guard rejects them with a
-  // clean message (mirrors normalizeCuaArgs). When the plus key is
-  // detected, the final "+" IS the key: re-split the prefix so the
-  // preceding parts join the modifiers pipeline ("cmd+" -> "cmd").
+  // Only a SECOND "+" marks a real plus key ("cmd++", "+"); a single trailing
+  // "+" is stray noise and all-plus strings normalize to "" for the
+  // required-arg guard to reject.
   const compactKey = key.replace(/\s+/g, "");
   const isPlusKey =
     compactKey === "+" ||
@@ -991,16 +861,11 @@ async function pressKeyInFrontApp(input = {}) {
   if (!active?.pid) {
     return { ok: false, code: -1, stdout: "", stderr: active?.error || "No active app pid found." };
   }
-  // cua-driver expects an array of lowercase modifier strings ("cmd", "ctrl",
-  // "alt", "shift", ...). Anything else — non-string entries like [42], or a
-  // bare string like "cmd" (a very plausible model output) — would be
-  // misparsed and make the driver fail with an opaque error, so normalize
-  // defensively. A bare string must NOT silently become []: that would press
-  // the key WITHOUT the modifier the model asked for (Cmd+X becomes plain X,
-  // a different action in the front app). A string therefore becomes a
-  // one-element array, every entry is trimmed and lowercased ("CMD",
-  // " Command ") so the driver receives the exact form it expects, and
-  // non-string entries are dropped.
+  // Same modifier pipeline as normalizeCuaArgs: a bare string becomes a
+  // one-element array (never [] — that would press the key WITHOUT the
+  // modifier the model asked for), entries are trimmed/lowercased, "+"-joined
+  // combos expand (modifier names never contain "+"), empties drop, and exact
+  // duplicates collapse while keeping order.
   const rawModifiers = [
     ...comboModifiers,
     ...(Array.isArray(input.modifiers)
@@ -1012,26 +877,8 @@ async function pressKeyInFrontApp(input = {}) {
   const modifiers = rawModifiers
     .filter((modifier) => typeof modifier === "string")
     .map((modifier) => modifier.trim().toLowerCase())
-    // A model describing a shortcut in natural language very plausibly emits
-    // a combined modifier entry ("cmd+shift", "CMD + Shift") or a bare combo
-    // string ("cmd+shift") instead of the array of individual modifier names
-    // cua-driver's press_key expects. Such an entry would reach the driver as
-    // one bogus modifier name and fail with an opaque error the model cannot
-    // self-correct from. Modifier names never contain "+" (cmd/ctrl/alt/
-    // shift/option/...), so splitting every entry on "+" is unambiguous: it
-    // can only expand one modifier into the several the model named, never
-    // invent one that was not asked for. Parts are trimmed so "CMD + Shift"
-    // normalizes like "cmd+shift".
     .flatMap((modifier) => modifier.split("+").map((part) => part.trim()))
-    // A whitespace-only entry ("  ", " \n") trims to "" — an empty modifier
-    // string would reach cua-driver and fail with an opaque error just like
-    // the non-string entries filtered above. Drop it so the driver only ever
-    // sees real modifier names.
     .filter((modifier) => modifier.length > 0)
-    // A duplicated modifier ("cmd+cmd") is never a meaningful instruction —
-    // pressing the same modifier twice is just pressing it once — and a
-    // duplicate would be a new shape the driver never sees today, so collapse
-    // exact duplicates while keeping the original order.
     .filter((modifier, index, all) => all.indexOf(modifier) === index);
   return runCuaDriver({ tool_name: "press_key", json_args: { pid: active.pid, key: pressedKey, modifiers } });
 }

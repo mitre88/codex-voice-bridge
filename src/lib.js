@@ -168,15 +168,16 @@ export const APP_BUNDLE_ALIASES = new Map([
   ["webex", "com.cisco.webexmeetings"],
 ]);
 
+// NOTE ON THE normalize* HELPERS: .env files conventionally use UPPERCASE
+// values and shell exports often carry stray whitespace, so each helper
+// normalizes case and padding BEFORE its known-value check — otherwise
+// "HIGH", " Calm ", or "ES" would silently fall back (or reach the API raw
+// and 400 every connect). The fallback still guards every other value, and a
+// non-string input keeps the fallback behavior instead of throwing on
+// .trim(). Each returns the canonical key/code so callers can persist or
+// select it (e.g. the renderer dropdowns) without re-deriving it.
+
 export function normalizeReasoningEffort(value, fallback = "low") {
-  // .env files conventionally use UPPERCASE values (the file is uppercase
-  // keys throughout) and shell exports often carry stray whitespace; without
-  // normalizing here, "HIGH" or " High " would silently fall back to "low"
-  // and the model would run at low reasoning despite the user asking for
-  // high. Normalize case and padding before the known-value check; the
-  // fallback still guards every other value, and a non-string value (e.g. a
-  // programmatic 42) keeps the previous fallback behavior instead of
-  // throwing on .trim().
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : value;
   return ["minimal", "low", "medium", "high", "xhigh"].includes(normalized) ? normalized : fallback;
 }
@@ -187,16 +188,8 @@ const TONE_PROMPTS = {
   energetic: "upbeat, clear, and action-oriented",
 };
 
-// Mirror normalizeReasoningEffort: .env files conventionally use UPPERCASE
-// values and shell exports often carry stray whitespace, so "CALM" or
-// " Calm " would otherwise silently fall back to the default tone and the
-// model would speak with the wrong persona despite the user asking for
-// another one. Normalize case and padding before the known-value check;
-// the fallback still guards every other value, and a non-string value
-// (e.g. a programmatic 42) keeps the previous fallback behavior instead
-// of throwing on .trim(). Returns the canonical tone KEY ("calm" | "direct"
-// | "energetic") so callers can persist/select the tone (e.g. the renderer's
-// tone dropdown) without re-deriving it from a prompt phrase.
+// See the normalize* note above. Returns the canonical tone KEY ("calm" |
+// "direct" | "energetic"), not the prompt phrase.
 export function normalizeToneKey(value, fallback = "calm") {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : value;
   return Object.hasOwn(TONE_PROMPTS, normalized) ? normalized : fallback;
@@ -211,16 +204,7 @@ export function normalizeTone(value) {
 // must fall back instead of 400-ing every translate-mode connect.
 const TARGET_LANGUAGES = new Set(["es", "en", "fr", "de", "pt", "ja", "ko", "zh"]);
 
-// Mirror normalizeToneKey: .env files conventionally use UPPERCASE values
-// and shell exports often carry stray whitespace, so "ES" or " Es " would
-// otherwise reach the API as an unknown language and fail every translate
-// connect with a 400 the user cannot diagnose from the .env they wrote —
-// and the renderer's language select would show no matching option for the
-// raw value. Normalize case and padding before the known-value check; the
-// fallback still guards every other value, and a non-string value (e.g. a
-// programmatic 42) keeps the previous fallback behavior instead of throwing
-// on .trim(). Returns the canonical language code so callers can persist/
-// select it without re-deriving it.
+// See the normalize* note above. Returns the canonical language code.
 export function normalizeTargetLanguage(value, fallback = "es") {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : value;
   return TARGET_LANGUAGES.has(normalized) ? normalized : fallback;
@@ -260,14 +244,9 @@ const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,253}$/;
 const APP_NAME_RE = /^[\p{L}\p{N}_ .'+-]{1,100}$/u;
 
 export function isSafeAppIdentity(identity = {}) {
-  // Type-check before the regexes: they used to String() their input, so a
-  // model-supplied non-string value (e.g. launch_app with "bundle_id": 42)
-  // passed the gate as "42" and reached cua-driver in a shape the driver
-  // rejects with an opaque error the model cannot self-correct from. Reject
-  // it here so the callers' clean "Rejected unsafe ..." messages win. (All
-  // first-party callers already produce strings — resolveAppIdentity and
-  // normalizeCuaArgs trim string fields only — so this only tightens the raw
-  // model-controlled json_args path.)
+  // Type-check before the regexes so a non-string value (e.g. "bundle_id":
+  // 42) is rejected with the callers' clean "Rejected unsafe ..." message
+  // instead of being String()-coerced past the gate.
   if (identity.bundle_id !== undefined && typeof identity.bundle_id !== "string") return false;
   if (identity.name !== undefined && typeof identity.name !== "string") return false;
   if (identity.bundle_id) return BUNDLE_ID_RE.test(identity.bundle_id);
@@ -276,32 +255,17 @@ export function isSafeAppIdentity(identity = {}) {
 }
 
 export function resolveAppIdentity(input = {}, aliases = APP_BUNDLE_ALIASES) {
-  // Only string values are identities: a model-supplied non-string (e.g.
-  // open_app with "bundle_id": 42) used to be String()-coerced into "42" and
-  // launched as an app literally named "42" (or handed to cua-driver as a
-  // number), failing with an opaque driver error. Non-strings now resolve to
-  // {} so the caller's clean "Missing app_name, bundle_id, or url." wins and
-  // the model can self-correct from the message.
+  // Only string values are identities: a non-string (e.g. "bundle_id": 42)
+  // resolves to {} so the caller's clean "Missing app_name, bundle_id, or
+  // url." message wins instead of a String()-coerced launch of an app
+  // literally named "42". Both fields are trimmed before use — model JSON
+  // often wraps values in stray whitespace — and trimming cannot weaken the
+  // gates: the identity is still validated by isSafeAppIdentity afterwards,
+  // and a whitespace-only value trims to "" and fails like any empty value.
   if (typeof input.bundle_id === "string" && input.bundle_id) {
-    // Same cosmetic-noise trim as app_name below: model-generated JSON often
-    // wraps values in stray whitespace or a trailing newline (e.g. a template
-    // literal), and an untrimmed bundle_id would fail BUNDLE_ID_RE and come
-    // back as "Rejected unsafe app_name or bundle_id" for a perfectly safe,
-    // correctly-intended identity. Trimming cannot weaken the gates: the
-    // identity is still validated by isSafeAppIdentity afterwards, and a
-    // whitespace-only bundle_id trims to "" and fails the regex like any
-    // empty value.
     return { bundle_id: input.bundle_id.trim() };
   }
   if (typeof input.app_name === "string" && input.app_name) {
-    // Model-generated JSON often wraps values in stray whitespace or a
-    // trailing newline (e.g. a template literal) — the same cosmetic noise
-    // isSafeLaunchUrl already trims from URLs. Trim before the alias lookup
-    // so " Safari " resolves to the Safari bundle id and a raw-name launch
-    // never tries to open an app literally named " Safari ". Trimming cannot
-    // weaken the safety gates: the identity is still validated by
-    // isSafeAppIdentity afterwards, and a whitespace-only name trims to ""
-    // and fails the name regex like any other empty name.
     const appName = input.app_name.trim();
     const key = appName.toLowerCase();
     return aliases.has(key) ? { bundle_id: aliases.get(key) } : { name: appName };
@@ -338,65 +302,42 @@ function getAliasPatterns(aliases) {
   return patterns;
 }
 
+// CANONICAL press_key/type_text_chars/launch_app normalization. The model
+// can call run_cua_driver directly, so the same cosmetic noise the dedicated
+// tools clean up (capitalized keys, "+"-joined combos, bare-string modifiers,
+// stringified pids, padded identities/URLs) must normalize here too — an
+// unnormalized value reaches cua-driver raw and fails with an opaque error
+// the model cannot self-correct from. Every step is idempotent, so the
+// dedicated tools' already-normalized args pass through unchanged
+// (pressKeyInFrontApp in main.js mirrors this pipeline and references this
+// comment for the rationale).
 export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliases = APP_BUNDLE_ALIASES) {
   const args = jsonArgs && typeof jsonArgs === "object" ? { ...jsonArgs } : {};
-  // press_key/type_text_chars address their target process by pid, and a
-  // model very plausibly emits it as a string ("123") instead of the number
-  // cua-driver's schema expects — a stringified pid would otherwise reach
-  // the driver raw and fail with an opaque error the model cannot
-  // self-correct from (the same cosmetic-noise class the key/modifiers
-  // normalization below handles). Normalize digits-only strings to a number
-  // (leading zeros included: "0123" is pid 123, and JSON numbers cannot
-  // carry them anyway); any other value is left untouched for
-  // validateCuaDriverRequiredArgs to reject with a clean message. Idempotent:
-  // an already-numeric pid passes through unchanged.
+  // A digits-only string pid becomes the number cua-driver's schema expects;
+  // any other value is left for validateCuaDriverRequiredArgs to reject.
   if (toolName === "press_key" || toolName === "type_text_chars") {
     if (typeof args.pid === "string" && /^\d+$/.test(args.pid) && Number(args.pid) > 0) {
       args.pid = Number(args.pid);
     }
   }
-  // press_key reaches the same cua-driver machinery as the dedicated
-  // press_key_in_front_app tool, so its args must be normalized identically:
-  // the model can call run_cua_driver directly with tool_name "press_key",
-  // and a capitalized key ("Return"), a bare-string modifiers ("cmd"), or a
-  // "+"-joined combo ("cmd+shift") would otherwise reach the driver raw and
-  // fail with an opaque error the model cannot self-correct from — the exact
-  // failures pressKeyInFrontApp's normalization exists to prevent. The
-  // dedicated tool normalizes before calling runCuaDriver, and this
-  // normalization is idempotent (trim/lowercase/split of an already-normalized
-  // value is a no-op), so that path is unaffected.
   if (toolName === "press_key") {
-    // Same trim+lowercase as pressKeyInFrontApp: cua-driver expects lowercase
-    // key names, and model-generated keys are often capitalized or wrapped in
-    // whitespace. Key names are never case-distinct, so lowercasing cannot
-    // change which key is pressed.
+    // cua-driver expects a lowercase single key name. Key names are never
+    // case-distinct (capitalization is expressed via the shift modifier), so
+    // lowercasing cannot change which key is pressed. A whole combo in the
+    // key ("cmd+shift+p") splits unambiguously — key names never contain "+"
+    // — into the pressed key (last part) plus modifiers (the rest).
     if (typeof args.key === "string") args.key = args.key.trim().toLowerCase();
-    // A model describing a shortcut in natural language very plausibly puts
-    // the whole combo in the key ("cmd+shift+p") instead of a single key
-    // plus a modifiers array. cua-driver's press_key expects a single key
-    // name, so such a key would reach the driver raw and fail with an opaque
-    // error the model cannot self-correct from — the same class of cosmetic
-    // noise the modifiers split below already handles. Key names never
-    // contain "+", so the split is unambiguous: the last part is the pressed
-    // key and the preceding parts join the modifiers pipeline (trimmed,
-    // lowercased, deduped like every other entry). Single keys are untouched,
-    // and the split is idempotent, so the dedicated tool's already-normalized
-    // args still pass through unchanged.
     let comboModifiers = [];
     if (typeof args.key === "string") {
-      // "+" is a real key name — the plus key, e.g. Cmd+Plus to zoom in —
-      // but the split below treats "+" as the combo separator, so a model
-      // wanting the plus key ("cmd++", "cmd + +") would otherwise split to a
-      // single "cmd" part and silently degrade to a bare Cmd press (reported
-      // as success, wrong action). Only a SECOND "+" marks a real plus key:
+      // "+" is a real key name (the plus key, e.g. Cmd+Plus to zoom), but the
+      // combo split treats "+" as the separator, so "cmd++" would otherwise
+      // degrade to a bare Cmd press. Only a SECOND "+" marks a real plus key:
       // the string is exactly "+", or the final "+" is preceded by a
       // non-"+", non-space character. A single trailing "+" ("cmd+", "+p")
-      // stays stray cosmetic noise, and all-plus strings ("++") keep
-      // normalizing to "" for the required-arg guard to reject. When the
-      // plus key is detected, the final "+" IS the key: strip it so the
-      // split below sees only the modifier combo ("cmd+" -> ["cmd"] ->
-      // modifier "cmd"). Mirrors pressKeyInFrontApp; idempotent, so the
-      // dedicated tool's already-normalized args pass through unchanged.
+      // stays stray noise — that part IS the key — and all-plus strings
+      // ("++") normalize to "" for the required-arg guard to reject. When
+      // the plus key is detected, the final "+" IS the key and the prefix
+      // joins the modifiers ("cmd+" -> "cmd").
       const compactKey = args.key.replace(/\s+/g, "");
       const isPlusKey =
         compactKey === "+" ||
@@ -410,25 +351,19 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
         args.key = comboParts[comboParts.length - 1];
         comboModifiers = comboParts.slice(0, -1);
       } else if (comboParts.length === 1) {
-        // A stray leading/trailing "+" ("cmd+", "+p", "cmd +") splits to a
-        // single normalized part: that part IS the key, and the raw key with
-        // the stray plus must not reach cua-driver to fail opaquely — the
-        // same cosmetic-noise class the split exists to clean. Plain single
-        // keys ("return") produce the same single part and are unchanged.
+        // A stray leading/trailing "+" splits to a single part: that part IS
+        // the key. Plain single keys produce the same single part, unchanged.
         args.key = comboParts[0];
       } else {
-        // The key was entirely "+" characters ("++", "+++"): normalize it to
-        // "" so the downstream required-arg guard rejects it with a clean,
-        // self-correctable message instead of the driver failing opaquely.
+        // Entirely "+" characters ("++", "+++"): normalize to "" so the
+        // required-arg guard rejects it with a clean message.
         args.key = "";
       }
     }
-    // Same array normalization as pressKeyInFrontApp: a bare string must
-    // become a one-element array (never [] — that would press the key without
-    // the modifier the model asked for), every entry is trimmed/lowercased
-    // and split on "+" (modifier names never contain "+", so the split can
-    // only expand one modifier into the several the model named), whitespace-
-    // only entries are dropped, and exact duplicates collapse.
+    // Modifier pipeline: a bare string becomes a one-element array (never []
+    // — that would press the key WITHOUT the modifier the model asked for),
+    // entries are trimmed/lowercased, "+"-joined combos expand (modifier
+    // names never contain "+"), empties drop, and exact duplicates collapse.
     const rawModifiers = [
       ...comboModifiers,
       ...(Array.isArray(args.modifiers)
@@ -446,25 +381,17 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
     return args;
   }
   if (toolName !== "launch_app") return args;
-  // Same cosmetic-noise trim as resolveAppIdentity applies to app_name: a
-  // model-generated bundle_id/name wrapped in stray whitespace or a trailing
-  // newline (e.g. a template literal) would otherwise fail the identity gate
-  // below and come back as "Rejected unsafe launch_app arguments" for a
-  // perfectly safe identity. Trimming cannot weaken the gates: the identity
-  // is still validated by isSafeCuaLaunchArgs/isSafeAppIdentity afterwards,
-  // and a whitespace-only value trims to "" and fails the regexes like any
-  // empty value.
+  // Trim identities before the gates (a padded-but-safe identity must not be
+  // rejected as unsafe); the trimmed values are still validated by
+  // isSafeCuaLaunchArgs/isSafeAppIdentity afterwards, so trimming cannot
+  // weaken anything.
   if (typeof args.bundle_id === "string") args.bundle_id = args.bundle_id.trim();
   if (typeof args.name === "string") args.name = args.name.trim();
   // cua-driver's launch_app speaks name/bundle_id, but callers may pass the
-  // app_name key the open_app tool uses. Resolve it through the same alias
-  // map so launch_app({app_name}) validates and launches the exact identity
-  // the open_app path would — otherwise an app_name (aliased or not) would
-  // skip both the alias resolution and the isSafeAppIdentity gate below.
-  // Only string values resolve: a non-string app_name (e.g. 42) must stay
-  // untouched so the identity gate rejects it with the clean "Rejected unsafe
-  // launch_app arguments" message instead of being String()-coerced into a
-  // launch attempt for an app literally named "42".
+  // app_name key the open_app tool uses: resolve it through the same alias
+  // map so it validates and launches the exact identity the open_app path
+  // would. Only string values resolve — a non-string app_name stays untouched
+  // for the identity gate to reject cleanly.
   if (typeof args.app_name === "string" && args.app_name && !args.bundle_id && !args.name) {
     const identity = resolveAppIdentity({ app_name: args.app_name }, aliases);
     if (identity.bundle_id) args.bundle_id = identity.bundle_id;
@@ -500,15 +427,10 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
       }
     }
   }
-  // URLs get the same cosmetic-noise trim the identity fields get above:
-  // isSafeLaunchUrl validates the trimmed value, so a whitespace-padded URL
-  // would pass the gate but reach cua-driver untrimmed and fail to open.
-  // Trim AFTER the alias-guess guard: a whitespace-only url is still truthy
-  // there (an explicit "open this URL" intent must never be re-guessed as an
-  // app), and trims to "" only for the downstream safety gate to reject.
-  // Trimming cannot weaken the gates: isSafeCuaLaunchArgs re-validates every
-  // URL afterwards, and a whitespace-only entry trims to "" and fails like
-  // any other empty value.
+  // Trim URLs AFTER the alias-guess guard: a whitespace-only url is still
+  // truthy there (an explicit "open this URL" intent must never be re-guessed
+  // as an app) and trims to "" only for the downstream safety gate to reject.
+  // isSafeCuaLaunchArgs re-validates every URL afterwards.
   if (typeof args.url === "string") args.url = args.url.trim();
   if (Array.isArray(args.urls)) {
     args.urls = args.urls.map((url) => (typeof url === "string" ? url.trim() : url));
@@ -551,34 +473,19 @@ export function isSafeCuaLaunchArgs(args = {}) {
   return urls.every((url) => isSafeLaunchUrl(url));
 }
 
-// cua-driver's press_key and type_text_chars require a key and a text
-// respectively, but the run_cua_driver tool schema only requires tool_name
-// and json_args — so the model can call them directly with the required
-// field missing, and the driver would fail with an opaque error the model
-// cannot self-correct from (the same class of failure the dedicated
-// type_text_in_front_app/press_key_in_front_app requireNonEmptyString guards
-// exist to prevent). Callers run this on the NORMALIZED args, so a
-// whitespace-only key ("  " trims to "") fails here instead of reaching the
-// driver raw. The dedicated tools' other guards are mirrored here too: the
-// same oversized key/text that pressKeyInFrontApp/typeTextInFrontApp reject
-// up front must not reach the driver raw through run_cua_driver (the
-// json_args byte cap alone does not catch a 100k-char text — well under
-// 200KB — that is guaranteed to blow the driver timeout at the 1ms/char
-// floor, or a 5KB key that is never a real key name). typingBudgetMs follows
-// the caller's configured driver timeout, same as typeTextInFrontApp. Other
-// tools have no required fields this bridge knows of: missing
-// identities/URLs are the launch_app gate's problem, and everything else is
-// cua-driver's problem. Returns null when valid, or a short human-readable
-// error message.
+// The run_cua_driver tool schema only requires tool_name+json_args, so the
+// model can call press_key/type_text_chars directly with their required
+// key/text missing (or oversized: a 100k-char text fits the 200KB byte cap
+// but is guaranteed to blow the driver timeout at the 1ms/char floor).
+// Mirror the dedicated tools' guards here, running on the NORMALIZED args so
+// a whitespace-only key fails cleanly instead of reaching the driver raw.
+// typingBudgetMs follows the caller's configured driver timeout. Other tools
+// have no required fields this bridge knows of. Returns null when valid, or
+// a short human-readable error message.
 export function validateCuaDriverRequiredArgs(toolName, args = {}, typingBudgetMs = 48000) {
-  // pid is how press_key/type_text_chars address their target process, but it
-  // is OPTIONAL: cua-driver falls back to the frontmost app when it is absent
-  // (the dedicated tools always resolve and send it). When present it must be
-  // a positive integer — a 0/negative/fractional pid or a non-numeric string
-  // would otherwise reach the driver raw and fail with an opaque error the
-  // model cannot self-correct from, the same class of failure the key/text
-  // guards exist to prevent. normalizeCuaArgs converts digit strings to
-  // numbers first, so a string here means a genuinely malformed value.
+  // pid is OPTIONAL (cua-driver falls back to the frontmost app), but when
+  // present it must be a positive integer. normalizeCuaArgs converts digit
+  // strings first, so a string here means a genuinely malformed value.
   if (toolName === "press_key" || toolName === "type_text_chars") {
     const pid = args.pid;
     const pidIsValid =
@@ -591,19 +498,13 @@ export function validateCuaDriverRequiredArgs(toolName, args = {}, typingBudgetM
   if (toolName === "press_key") {
     const keyError = requireNonEmptyString(args.key, "key");
     if (keyError) return keyError;
-    // Mirror pressKeyInFrontApp's 100-byte key cap: a real key name is
-    // always short, and a model-generated megabyte key would otherwise reach
-    // cua-driver raw and fail with an opaque error the model cannot
-    // self-correct from.
+    // Mirror pressKeyInFrontApp's 100-byte key cap: real key names are short.
     return requireMaxLength(args.key, "key", 100);
   }
   if (toolName === "type_text_chars") {
     const textError = requireNonEmptyString(args.text, "text");
     if (textError) return textError;
-    // Mirror typeTextInFrontApp's typeability guard: at the 1ms/char floor a
-    // text longer than the typing budget can never finish inside the driver
-    // timeout, so reject it cleanly instead of launching a doomed run that
-    // fails with a timeout the model cannot distinguish from a real hang.
+    // Mirror typeTextInFrontApp's typeability guard (see requireTypeableLength).
     return requireTypeableLength(args.text.length, typingBudgetMs);
   }
   return null;
