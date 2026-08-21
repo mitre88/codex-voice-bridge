@@ -38,12 +38,16 @@
   "build": {
     "appId": "com.mitre.codex-voice-bridge",
     "productName": "Codex Voice Bridge",
+    "directories": {
+      "buildResources": "assets"
+    },
     "files": [
       "src/**/*",
       "package.json"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.png",
       "target": [
         "dmg",
         "zip"
