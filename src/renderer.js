@@ -1,4 +1,4 @@
-import { hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, truncateOutput } from "./renderer-utils.js";
+import { hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, sameMediaDeviceList, truncateOutput } from "./renderer-utils.js";
 
 // How long the Realtime SDP exchange may take before we give up. The main
 // process already times out the token fetch; this bounds the second network
@@ -262,6 +262,8 @@ function renderCaptions() {
   captionsDirty = true;
   requestAnimationFrame(() => {
     captionsDirty = false;
+    // Assistant mode hides the panel; skip the join + DOM write.
+    if (captionPanel?.hidden) return;
     sourceCaption = sourceBucket.parts.join("");
     outputCaption = outputBucket.parts.join("");
     sourceCaptionEl.textContent = sourceCaption.trim() || "...";
@@ -300,6 +302,10 @@ function appendCaption(kind, text, replace = false) {
 }
 
 function handleTranscriptEvent(event, targets = { source: "source", output: "output" }) {
+  // Assistant mode hides #captionPanel. Accumulating 50KB strings and
+  // joining them every frame is wasted CPU/memory the user cannot see —
+  // tools still run; only the live transcript UI is skipped.
+  if (captionPanel?.hidden) return;
   if (event.type === "session.input_transcript.delta" && targets.source) appendCaption(targets.source, event.delta);
   if (event.type === "session.output_transcript.delta" && targets.output) appendCaption(targets.output, event.delta);
   if (event.type === "conversation.item.input_audio_transcription.delta" && targets.source) appendCaption(targets.source, event.delta);
@@ -555,7 +561,12 @@ function setSelectOptions(select, devices, defaultLabel) {
   const current = select.value;
   select.replaceChildren(new Option(defaultLabel, ""));
   devices.forEach((device, index) => select.appendChild(new Option(device.label || `${defaultLabel} ${index + 1}`, device.deviceId)));
-  if ([...select.options].some((option) => option.value === current)) select.value = current;
+  for (const option of select.options) {
+    if (option.value === current) {
+      select.value = current;
+      break;
+    }
+  }
 }
 
 async function refreshMediaDevices(promptForLabels = false) {
@@ -571,6 +582,11 @@ async function refreshMediaDevices(promptForLabels = false) {
   }
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
+    // devicechange fires often on macOS (Bluetooth, sleep, audio session
+    // flaps) with an identical list. Rebuilding four <select>s and scanning
+    // lost selections is wasted DOM work when nothing changed — labels
+    // appearing after a permission grant still differ, so that path rebuilds.
+    if (sameMediaDeviceList(lastMediaDevices, devices)) return;
     // Capture the previous selections BEFORE the setSelectOptions calls below
     // replace the options: a device that vanished (unplugged, renamed with a
     // new id, permission revoked) silently falls back to the default option,

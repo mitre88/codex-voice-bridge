@@ -1249,8 +1249,16 @@ ipcMain.handle("realtime:key-status", guard(async () => ({
   hasSavedKey: Boolean(await readKeychainApiKey()),
   hasRuntimeKey: Boolean(runtimeApiKey),
 })));
-ipcMain.handle("codex:run", guard((_event, input) => runCodex(input)));
-ipcMain.handle("cua:run", guard((_event, input) => runCuaDriver(input)));
+// Bound the invoke return before the structured clone into the renderer.
+// runProcess already caps the live buffer at 1MB so a runaway child cannot
+// grow without limit, but sending that whole tail across IPC (and then
+// pretty-printing it) spiked renderer memory on every finished Codex/CUA
+// run. The model only ever sees truncateOutput's 30KB tail — same helper
+// the renderer already applied after the clone — so this drops the extra
+// copy without changing what the session receives. Streamed debug output
+// still arrives via the batched "codex-output" channel.
+ipcMain.handle("codex:run", guard(async (_event, input) => truncateOutput(await runCodex(input))));
+ipcMain.handle("cua:run", guard(async (_event, input) => truncateOutput(await runCuaDriver(input))));
 ipcMain.handle("mac:run", guard((_event, input) => runMacAction(input)));
 ipcMain.on("log:renderer", (event, message, data) => {
   if (!isTrustedSender(event)) {

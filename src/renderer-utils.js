@@ -14,6 +14,20 @@ export function hasVirtualAudioDevice(devices = []) {
   return Array.isArray(devices) && devices.some((device) => VIRTUAL_AUDIO_LABEL.test(device?.label || ""));
 }
 
+// True when two enumerateDevices() snapshots describe the same hardware
+// (id, kind, and label). Used to skip rebuilding four <select>s on the
+// frequent macOS devicechange flaps that report an identical list.
+export function sameMediaDeviceList(prev, next) {
+  if (!Array.isArray(prev) || !Array.isArray(next)) return false;
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < next.length; i++) {
+    const a = prev[i];
+    const b = next[i];
+    if (a.deviceId !== b.deviceId || a.kind !== b.kind || a.label !== b.label) return false;
+  }
+  return true;
+}
+
 // Turn common failure modes into short, actionable messages for the UI.
 // Pure so it stays unit-testable; anything unrecognized passes through as-is.
 export function humanizeError(error) {

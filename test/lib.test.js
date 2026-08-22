@@ -12,6 +12,7 @@ import {
   typeDelayMs,
   hasVirtualAudioDevice,
   humanizeError,
+  sameMediaDeviceList,
   humanizeSpawnError,
   isApiKeyRejection,
   isPlausibleApiKey,
@@ -1630,6 +1631,19 @@ test("hasVirtualAudioDevice tolerates non-array input", () => {
   assert.equal(hasVirtualAudioDevice(undefined), false);
   assert.equal(hasVirtualAudioDevice("BlackHole"), false);
   assert.equal(hasVirtualAudioDevice({ label: "BlackHole 2ch" }), false);
+});
+
+test("sameMediaDeviceList is true only when id, kind, and label match in order", () => {
+  const mic = { deviceId: "mic-1", kind: "audioinput", label: "Built-in Microphone" };
+  const out = { deviceId: "out-1", kind: "audiooutput", label: "Speakers" };
+  assert.equal(sameMediaDeviceList([mic, out], [mic, out]), true);
+  assert.equal(sameMediaDeviceList([mic, out], [{ ...mic }, { ...out }]), true);
+  assert.equal(sameMediaDeviceList([mic], [mic, out]), false);
+  assert.equal(sameMediaDeviceList([mic, out], [out, mic]), false);
+  assert.equal(sameMediaDeviceList([mic], [{ ...mic, label: "USB Mic" }]), false);
+  assert.equal(sameMediaDeviceList([mic], [{ ...mic, deviceId: "mic-2" }]), false);
+  assert.equal(sameMediaDeviceList(null, [mic]), false);
+  assert.equal(sameMediaDeviceList([], []), true);
 });
 
 test("rotateLogIfNeeded ignores a missing log file", () => {

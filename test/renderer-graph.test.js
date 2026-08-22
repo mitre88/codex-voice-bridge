@@ -292,6 +292,7 @@ test("lib.js re-exports the renderer helpers for a single import surface", async
   assert.equal(typeof lib.humanizeError, "function");
   assert.equal(typeof lib.truncateOutput, "function");
   assert.equal(typeof lib.hasVirtualAudioDevice, "function");
+  assert.equal(typeof lib.sameMediaDeviceList, "function");
   assert.ok(lib.VIRTUAL_AUDIO_LABEL instanceof RegExp);
 });
 
@@ -597,5 +598,54 @@ test("enabling auto-run executes a pending action instead of letting its auto-re
     listenerBody,
     /executeAction\(pendingAction\)/,
     "the auto-run change listener must execute the pending action (which clears the auto-reject timer)",
+  );
+});
+
+test("hidden caption panel skips transcript accumulation and DOM joins", () => {
+  // Assistant mode hides #captionPanel. Transcript deltas still arrive on
+  // the data channel; joining them into 50KB strings and writing the DOM
+  // every frame is wasted work the user cannot see. Tools keep running —
+  // only the live caption UI is skipped.
+  const renderer = readSource("renderer.js");
+  const eventStart = renderer.indexOf("function handleTranscriptEvent");
+  assert.ok(eventStart !== -1, "renderer.js must define handleTranscriptEvent");
+  const eventBody = renderer.slice(eventStart, renderer.indexOf("const MAX_PENDING_ARGS_CHARS"));
+  assert.match(
+    eventBody,
+    /captionPanel\?\.hidden/,
+    "handleTranscriptEvent must skip caption work while the panel is hidden",
+  );
+  const renderStart = renderer.indexOf("function renderCaptions()");
+  const renderBody = renderer.slice(renderStart, renderer.indexOf("const MAX_CAPTION_CHARS"));
+  assert.match(
+    renderBody,
+    /captionPanel\?\.hidden/,
+    "renderCaptions must skip the join + textContent write while the panel is hidden",
+  );
+});
+
+test("refreshMediaDevices skips rebuilding selects when the device list is unchanged", () => {
+  // devicechange fires often on macOS with an identical enumerateDevices()
+  // result. Rebuilding four <select>s on every no-op enumeration is wasted
+  // DOM work; a permission grant that fills in labels still differs and
+  // rebuilds.
+  const renderer = readSource("renderer.js");
+  assert.match(
+    renderer,
+    /sameMediaDeviceList/,
+    "renderer.js must compare device lists before rebuilding the dropdowns",
+  );
+  const refreshStart = renderer.indexOf("async function refreshMediaDevices");
+  assert.ok(refreshStart !== -1, "renderer.js must define refreshMediaDevices");
+  const refreshBody = renderer.slice(refreshStart, renderer.indexOf("async function getInterviewAudioStream"));
+  assert.match(
+    refreshBody,
+    /sameMediaDeviceList\(lastMediaDevices, devices\)/,
+    "refreshMediaDevices must compare the new enumeration to the last one",
+  );
+  assert.ok(
+    refreshBody.indexOf("sameMediaDeviceList(lastMediaDevices, devices)") <
+      refreshBody.indexOf("setSelectOptions"),
+    "the unchanged-list check must run before any <select> rebuild",
   );
 });

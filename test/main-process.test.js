@@ -882,3 +882,23 @@ test("loadDotEnv trims CODEX_VOICE_ENV_FILE so a whitespace-padded path cannot s
     "loadDotEnv must trim CODEX_VOICE_ENV_FILE so a whitespace-padded path cannot silently skip the custom .env",
   );
 });
+
+test("codex and cua IPC returns are truncated before the structured clone into the renderer", () => {
+  // runProcess keeps up to 1MB of child output so a long run cannot grow
+  // without bound. Cloning that whole tail into the renderer on every
+  // finished invoke (then pretty-printing it) spiked renderer memory; the
+  // model already received truncateOutput's 30KB tail. The invoke handlers
+  // must truncate before the clone. Streamed debug output still uses the
+  // batched codex-output channel inside runCodex/runCuaDriver.
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /ipcMain\.handle\("codex:run", guard\(async \(_event, input\) => truncateOutput\(await runCodex\(input\)\)\)\)/,
+    "codex:run must truncate the invoke return before sending it to the renderer",
+  );
+  assert.match(
+    main,
+    /ipcMain\.handle\("cua:run", guard\(async \(_event, input\) => truncateOutput\(await runCuaDriver\(input\)\)\)\)/,
+    "cua:run must truncate the invoke return before sending it to the renderer",
+  );
+});
