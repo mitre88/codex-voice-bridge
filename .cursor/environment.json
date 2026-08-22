@@ -1,0 +1,4 @@
+{
+  "name": "codex-voice-bridge",
+  "install": "npm ci"
+}
