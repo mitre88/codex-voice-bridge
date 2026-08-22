@@ -24,6 +24,8 @@ import {
   normalizeTargetLanguage,
   normalizeTone,
   normalizeToneKey,
+  normalizeVoice,
+  REALTIME_VOICES,
   parseEnvFile,
   redactSecrets,
   requireMaxLength,
@@ -95,6 +97,29 @@ test("normalizeTone stays consistent with normalizeToneKey", () => {
   // normalizeToneKey is idempotent: a normalized key re-normalizes to itself.
   assert.equal(normalizeToneKey(normalizeToneKey("calm")), "calm");
   assert.equal(normalizeToneKey(normalizeToneKey("unknown")), "calm");
+});
+
+test("normalizeVoice returns canonical Realtime voices and defaults to marin", () => {
+  for (const voice of REALTIME_VOICES) {
+    assert.equal(normalizeVoice(voice), voice);
+  }
+  // Any value outside the Realtime voice list falls back, not 400s.
+  assert.equal(normalizeVoice("banana"), "marin");
+  assert.equal(normalizeVoice(""), "marin");
+  assert.equal(normalizeVoice(42), "marin");
+  // A caller-supplied fallback is honored for invalid values.
+  assert.equal(normalizeVoice("bogus", "cedar"), "cedar");
+});
+
+test("normalizeVoice normalizes case and whitespace (.env style)", () => {
+  assert.equal(normalizeVoice("MARIN"), "marin");
+  assert.equal(normalizeVoice(" Marin "), "marin");
+  assert.equal(normalizeVoice("CEDAR\n"), "cedar");
+  assert.equal(normalizeVoice("Alloy"), "alloy");
+  // A non-string value must keep falling back instead of throwing on .trim().
+  assert.equal(normalizeVoice(null), "marin");
+  // normalizeVoice is idempotent: a normalized name re-normalizes.
+  assert.equal(normalizeVoice(normalizeVoice("SAGE")), "sage");
 });
 
 test("normalizeTargetLanguage returns canonical codes and defaults to es", () => {

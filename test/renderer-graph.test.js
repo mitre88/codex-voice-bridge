@@ -542,3 +542,39 @@ test("enabling auto-run executes a pending action instead of letting its auto-re
     "the auto-run change listener must execute the pending action (which clears the auto-reject timer)",
   );
 });
+
+test("the assistant Voice select offers every Realtime voice and is locked while connected", () => {
+  // The README and renderer.html comment advertise a choosable voice, but
+  // the UI only had Tone/Reasoning — OPENAI_REALTIME_VOICE was env-only
+  // and an uppercase .env value could not even match a select option.
+  // The Voice select must list the Realtime catalog, travel through
+  // getVoiceOptions, initialize from app:config, and lock mid-session
+  // like the other connect-time controls.
+  const html = readSource("renderer.html");
+  assert.match(html, /<select id="voice">/, "renderer.html must include a Voice select");
+  for (const voice of ["marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"]) {
+    assert.match(
+      html,
+      new RegExp(`<option value="${voice}">`),
+      `the Voice select must offer ${voice}`,
+    );
+  }
+
+  const renderer = readSource("renderer.js");
+  assert.match(renderer, /const voiceInput = document\.querySelector\("#voice"\)/, "renderer.js must capture the Voice select");
+  const optionsStart = renderer.indexOf("function getVoiceOptions()");
+  assert.ok(optionsStart !== -1, "renderer.js must define getVoiceOptions");
+  const optionsBody = renderer.slice(optionsStart, renderer.indexOf("function resetCaptions"));
+  assert.match(optionsBody, /voice:\s*voiceInput\.value/, "getVoiceOptions must send the selected voice to the token request");
+
+  const controlsStart = renderer.indexOf("const connectTimeControls = [");
+  assert.ok(controlsStart !== -1, "renderer.js must define connectTimeControls");
+  const controlsBody = renderer.slice(controlsStart, renderer.indexOf("function setConnectControlsLocked"));
+  assert.match(controlsBody, /voiceInput/, "the Voice select must lock while a session is connected");
+
+  assert.match(
+    renderer,
+    /if \(config\.voice\) voiceInput\.value = config\.voice/,
+    "the Voice select must initialize from app:config so OPENAI_REALTIME_VOICE sticks across launches",
+  );
+});

@@ -85,7 +85,7 @@ Environment variables (all optional):
 export OPENAI_REALTIME_MODEL="gpt-realtime-2"               # assistant model
 export OPENAI_REALTIME_TRANSLATE_MODEL="gpt-realtime-translate"
 export OPENAI_REALTIME_TRANSCRIBE_MODEL="gpt-realtime-whisper"
-export OPENAI_REALTIME_VOICE="marin"                        # assistant voice
+export OPENAI_REALTIME_VOICE="marin"                        # marin | cedar | alloy | ash | ballad | coral | echo | sage | shimmer | verse
 export OPENAI_REALTIME_TONE="calm"                          # calm | direct | energetic
 export OPENAI_REALTIME_REASONING_EFFORT="low"               # low | minimal | medium | high | xhigh
 export OPENAI_REALTIME_TARGET_LANGUAGE="es"                 # es en fr de pt ja ko zh
@@ -107,7 +107,7 @@ You can also put these in a `.env` file in the directory you launch from (see `.
 
 ### Assistant
 
-The main Samantha-style assistant. Uses `gpt-realtime-2`, speaks naturally, and can call local tools (`run_codex`, `run_cua_driver`, `open_app`, `type_text_in_front_app`, `press_key_in_front_app`). Codex runs in read-only mode by default.
+The main Samantha-style assistant. Uses `gpt-realtime-2`, speaks naturally, and can call local tools (`run_codex`, `run_cua_driver`, `open_app`, `type_text_in_front_app`, `press_key_in_front_app`). Pick the voice in the UI (`marin`, `cedar`, `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`) or set `OPENAI_REALTIME_VOICE`. Codex runs in read-only mode by default.
 
 ### Interview
 
@@ -195,7 +195,8 @@ codex-voice-bridge/
 ## Roadmap
 
 - [ ] Demo video + walkthrough
-- [ ] More assistant voices and tones
+- [x] Assistant voice picker (10 Realtime voices)
+- [ ] More assistant tones
 - [ ] Custom tool registration for user projects
 - [ ] Windows/Linux support (audio routing differs)
 - [ ] Multi-language interview mode

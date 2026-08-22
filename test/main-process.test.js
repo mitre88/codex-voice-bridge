@@ -746,7 +746,8 @@ test("model/voice/language defaults trim their env values so padded strings cann
   // sent to the OpenAI API exactly as-is, so every connect fails with a 400
   // (unknown model/voice) that the user cannot diagnose from the .env they
   // wrote. Each default must trim so a padded or whitespace-only value
-  // behaves exactly like the bare value or the built-in default.
+  // behaves exactly like the bare value or the built-in default. Voice also
+  // goes through normalizeVoice so "MARIN" / "banana" cannot 400 either.
   const main = readSource("main.js");
   const defaultsStart = main.indexOf("const DEFAULT_MODEL = ");
   assert.ok(defaultsStart !== -1, "main.js must define DEFAULT_MODEL");
@@ -755,10 +756,17 @@ test("model/voice/language defaults trim their env values so padded strings cann
     ["OPENAI_REALTIME_MODEL", /process\.env\.OPENAI_REALTIME_MODEL\?\.trim\(\) \|\| "gpt-realtime-2"/],
     ["OPENAI_REALTIME_TRANSLATE_MODEL", /process\.env\.OPENAI_REALTIME_TRANSLATE_MODEL\?\.trim\(\) \|\| "gpt-realtime-translate"/],
     ["OPENAI_REALTIME_TRANSCRIBE_MODEL", /process\.env\.OPENAI_REALTIME_TRANSCRIBE_MODEL\?\.trim\(\) \|\| "gpt-realtime-whisper"/],
-    ["OPENAI_REALTIME_VOICE", /process\.env\.OPENAI_REALTIME_VOICE\?\.trim\(\) \|\| "marin"/],
   ]) {
     assert.match(defaultsBody, pattern, `DEFAULT_* must trim ${envVar} and fall back for a whitespace-only value`);
   }
+  const voiceStart = main.indexOf("const DEFAULT_VOICE = ");
+  assert.ok(voiceStart !== -1, "main.js must define DEFAULT_VOICE");
+  const voiceBody = main.slice(voiceStart, main.indexOf("const DEFAULT_REASONING_EFFORT"));
+  assert.match(
+    voiceBody,
+    /normalizeVoice\(process\.env\.OPENAI_REALTIME_VOICE \|\| "marin"\)/,
+    "DEFAULT_VOICE must normalize OPENAI_REALTIME_VOICE and fall back for an invalid/whitespace-only value",
+  );
   const langStart = main.indexOf("const DEFAULT_TARGET_LANGUAGE = ");
   assert.ok(langStart !== -1, "main.js must define DEFAULT_TARGET_LANGUAGE");
   const langBody = main.slice(langStart, main.indexOf("// Fall back to the home directory"));
@@ -766,6 +774,57 @@ test("model/voice/language defaults trim their env values so padded strings cann
     langBody,
     /normalizeTargetLanguage\(process\.env\.OPENAI_REALTIME_TARGET_LANGUAGE \|\| "es"\)/,
     "DEFAULT_TARGET_LANGUAGE must normalize OPENAI_REALTIME_TARGET_LANGUAGE and fall back for an invalid/whitespace-only value",
+  );
+});
+
+test("createAssistantClientSecret normalizes options.voice so a padded/uppercase UI value cannot 400", () => {
+  // The session used DEFAULT_VOICE only, so a voice selected in the UI (or a
+  // stale/uppercase IPC payload) never reached the API — and a raw
+  // options.voice of "MARIN" / " Marin " would 400 every assistant connect
+  // if it were forwarded without normalizeVoice. The token request must
+  // normalize the per-connect voice with DEFAULT_VOICE as fallback.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("async function createAssistantClientSecret");
+  assert.ok(fnStart !== -1, "main.js must define createAssistantClientSecret");
+  const fnBody = main.slice(fnStart, main.indexOf("async function createTranslationClientSecret"));
+  assert.match(
+    fnBody,
+    /voice:\s*normalizeVoice\(options\.voice,\s*DEFAULT_VOICE\)/,
+    "createAssistantClientSecret must normalize options.voice with DEFAULT_VOICE as fallback",
+  );
+});
+
+test("createTranslationClientSecret normalizes options.targetLanguage at the API call site", () => {
+  // DEFAULT_TARGET_LANGUAGE is already normalized, but a renderer/IPC value
+  // of "ES" or " Es " would otherwise be sent raw and 400 every translate
+  // connect. Mirror reasoning/tone: normalize the per-connect option.
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("async function createTranslationClientSecret");
+  assert.ok(fnStart !== -1, "main.js must define createTranslationClientSecret");
+  const fnBody = main.slice(fnStart, main.indexOf("async function createTranscriptionClientSecret"));
+  assert.match(
+    fnBody,
+    /normalizeTargetLanguage\(options\.targetLanguage,\s*DEFAULT_TARGET_LANGUAGE\)/,
+    "createTranslationClientSecret must normalize options.targetLanguage",
+  );
+});
+
+test("createTranscriptionClientSecret drops invalid sourceLanguage instead of 400-ing Auto", () => {
+  // Empty means Auto (omit the field). A padded/uppercase code must normalize;
+  // an unrecognized value must not be sent (and must not force "es").
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("async function createTranscriptionClientSecret");
+  assert.ok(fnStart !== -1, "main.js must define createTranscriptionClientSecret");
+  const fnBody = main.slice(fnStart, main.indexOf("function postOpenAIJson"));
+  assert.match(
+    fnBody,
+    /normalizeTargetLanguage\(options\.sourceLanguage,\s*""\)/,
+    "createTranscriptionClientSecret must normalize a non-empty sourceLanguage",
+  );
+  assert.match(
+    fnBody,
+    /if \(sourceLanguage\) transcription\.language = sourceLanguage/,
+    "createTranscriptionClientSecret must omit language when Auto/invalid so it cannot 400",
   );
 });
 
