@@ -195,6 +195,27 @@ function log(message, data) {
   tryBridge()?.log("ui", { message, data }).catch(() => {});
 }
 
+// The config line packs version/models/shortcut/workdir into 11px text; as a
+// single "a / b / c" string it reads as one grey blur. Render it as items
+// with dimmed separators instead (the warning paths still overwrite it with
+// plain textContent, which clears the spans, and restore via this helper).
+function renderBaseConfig() {
+  if (!baseConfigText) return;
+  configEl.classList.remove("is-warning");
+  configEl.replaceChildren(
+    ...baseConfigText.split(" / ").flatMap((part, index) => {
+      const item = document.createElement("span");
+      item.className = "config-item";
+      item.textContent = part;
+      if (index === 0) return [item];
+      const separator = document.createElement("span");
+      separator.className = "config-sep";
+      separator.textContent = " · ";
+      return [separator, item];
+    }),
+  );
+}
+
 function updateModeControls() {
   const mode = voiceModeInput.value;
   assistantOptions.forEach((el) => (el.hidden = mode !== "assistant"));
@@ -212,7 +233,7 @@ function updateModeControls() {
     sourceCaptionLabel.textContent = "Source";
     outputCaptionLabel.textContent = "Output";
     configEl.classList.remove("is-warning");
-    if (baseConfigText) configEl.textContent = baseConfigText;
+    renderBaseConfig();
   }
 }
 
@@ -606,8 +627,8 @@ async function refreshMediaDevices(promptForLabels = false) {
       warnedDeviceFallback = false;
       if (voiceModeInput.value === "interview") updateInterviewAudioWarning(devices);
       else {
-        configEl.textContent = baseConfigText;
         configEl.classList.remove("is-warning");
+        renderBaseConfig();
       }
     }
   } finally {
@@ -1057,7 +1078,7 @@ try {
     // operates on without opening the debug log. The main process always
     // resolves a workdir (path.resolve), so the value is never empty.
     baseConfigText = `v${config.version || "?"} / ${config.model} / ${config.translateModel} / ${config.transcribeModel} / ${(config.shortcut || "CommandOrControl+Shift+Space").replace(/CommandOrControl/g, "Cmd")} / ${config.workdir}`;
-    configEl.textContent = baseConfigText;
+    renderBaseConfig();
     updateModeControls();
   });
   getBridge().logPath().then((logPath) => log(`Live log: ${logPath}`));

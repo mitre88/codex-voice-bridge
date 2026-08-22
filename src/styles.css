@@ -69,6 +69,19 @@ textarea {
   font-size: 11px;
 }
 
+.meta {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.meta .config-item {
+  color: rgba(247, 247, 242, 0.55);
+}
+
+.meta .config-sep {
+  color: rgba(247, 247, 242, 0.24);
+}
+
 .meta.is-warning {
   color: rgba(247, 247, 242, 0.78);
 }
