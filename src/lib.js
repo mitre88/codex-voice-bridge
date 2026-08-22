@@ -759,10 +759,59 @@ export function humanizeSpawnError(command, error) {
 // conclusion. The buffer also keeps rolling to the newest tail once capped:
 // output arriving after the first overflow (the true end of a long run) must
 // not be discarded, or the model would miss the very lines it needs.
+export function createOutputAccumulator(maxChars = 1024 * 1024) {
+  // Chunk list + running length so a capped 1MB buffer does not copy the
+  // whole string on every small stdout chunk. join() happens once, when the
+  // caller asks for the final text (typically when the child exits).
+  const chunks = [];
+  let length = 0;
+  let capped = false;
+
+  function trimToMax() {
+    while (length > maxChars && chunks.length > 0) {
+      const extra = length - maxChars;
+      const first = chunks[0];
+      if (first.length <= extra) {
+        chunks.shift();
+        length -= first.length;
+        capped = true;
+      } else {
+        chunks[0] = first.slice(extra);
+        length -= extra;
+        capped = true;
+        break;
+      }
+    }
+  }
+
+  return {
+    push(chunk) {
+      const piece = String(chunk);
+      if (!piece) return;
+      chunks.push(piece);
+      length += piece.length;
+      if (length > maxChars) trimToMax();
+    },
+    text() {
+      return chunks.join("");
+    },
+    get capped() {
+      return capped;
+    },
+    get length() {
+      return length;
+    },
+  };
+}
+
 export function accumulateOutput(buffer, chunk, maxChars = 1024 * 1024) {
-  const next = buffer + String(chunk);
-  if (next.length > maxChars) return { text: next.slice(-maxChars), capped: true };
-  return { text: next, capped: false };
+  const acc = createOutputAccumulator(maxChars);
+  if (buffer) acc.push(buffer);
+  acc.push(chunk);
+  return {
+    text: acc.text(),
+    capped: buffer.length + String(chunk).length > maxChars,
+  };
 }
 
 // Pick a per-character delay so a whole text fits inside the CUA timeout:

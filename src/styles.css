@@ -93,6 +93,7 @@ h2 {
 }
 
 .orb {
+  position: relative;
   width: 104px;
   height: 104px;
   border-radius: 50%;
@@ -103,17 +104,30 @@ h2 {
     rgba(232, 236, 232, 0.9) 56%,
     rgba(171, 177, 174, 0.72) 100%
   );
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+  animation: orb-pulse 2.6s ease-in-out infinite;
+}
+
+.orb::before {
+  content: "";
+  position: absolute;
+  inset: -28px;
+  border-radius: 50%;
+  pointer-events: none;
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.2),
     0 0 44px rgba(255, 255, 255, 0.28),
     0 18px 80px rgba(255, 255, 255, 0.14);
-  animation: orb-pulse 2.6s ease-in-out infinite;
+  animation: orb-glow 2.6s ease-in-out infinite;
 }
 
 body[data-state="listening"] .orb,
 body[data-state="connecting"] .orb,
 body[data-state="cua-running"] .orb,
-body[data-state="codex-running"] .orb {
+body[data-state="codex-running"] .orb,
+body[data-state="listening"] .orb::before,
+body[data-state="connecting"] .orb::before,
+body[data-state="cua-running"] .orb::before,
+body[data-state="codex-running"] .orb::before {
   animation-duration: 1.25s;
 }
 
@@ -122,27 +136,35 @@ body[data-state="error"] .orb {
   opacity: 0.62;
 }
 
+body[data-state="error"] .orb::before {
+  animation-duration: 4s;
+}
+
 @keyframes orb-pulse {
   0%,
   100% {
     transform: scale(0.96);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.18),
-      0 0 30px rgba(255, 255, 255, 0.2),
-      0 18px 70px rgba(255, 255, 255, 0.1);
   }
 
   50% {
     transform: scale(1.04);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.28),
-      0 0 58px rgba(255, 255, 255, 0.38),
-      0 22px 96px rgba(255, 255, 255, 0.2);
+  }
+}
+
+@keyframes orb-glow {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+
+  50% {
+    opacity: 1;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .orb {
+  .orb,
+  .orb::before {
     animation: none;
   }
 }

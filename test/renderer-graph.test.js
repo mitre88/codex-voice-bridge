@@ -515,8 +515,46 @@ test("log() serializes defensively so a non-serializable payload cannot loop the
   const fnBody = renderer.slice(fnStart, renderer.indexOf("function updateModeControls"));
   assert.match(
     fnBody,
-    /try \{[\s\S]*?JSON\.stringify\(data, null, 2\)[\s\S]*?\} catch \{[\s\S]*?serialized = String\(data\);/,
+    /try \{[\s\S]*?JSON\.stringify\(logData, null, 2\)[\s\S]*?\} catch \{[\s\S]*?serialized = String\(data\);/,
     "log() must fall back to String(data) when JSON.stringify throws",
+  );
+});
+
+test("log() caps large payloads before pretty-printing and skips DOM writes while the debug panel is closed", () => {
+  // A finished Codex result can carry up to 1MB of stdout. Pretty-printing
+  // that into the <pre> (and sending it over IPC) spiked renderer memory on
+  // every "Local action finished" line. Truncate before stringify, and do
+  // not rewrite textContent while the user is not looking at the log.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("function log(message, data)");
+  assert.ok(fnStart !== -1, "renderer.js must define log()");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("function updateModeControls"));
+  assert.match(
+    fnBody,
+    /truncateOutput\(data, 8000\)/,
+    "log() must cap object payloads (stdout/stderr) before serializing them",
+  );
+  assert.match(
+    fnBody,
+    /if \(debugPanel\?\.open\) logEl\.textContent = logBuffer/,
+    "log() must not rewrite the debug <pre> while the panel is closed",
+  );
+  assert.match(
+    renderer,
+    /debugPanel\?\.addEventListener\("toggle"/,
+    "opening the debug panel must catch up the deferred log buffer",
+  );
+});
+
+test("captions coalesce to one DOM write per frame", () => {
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("function renderCaptions()");
+  assert.ok(fnStart !== -1, "renderer.js must define renderCaptions");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("const MAX_CAPTION_CHARS"));
+  assert.match(
+    fnBody,
+    /requestAnimationFrame/,
+    "renderCaptions must coalesce transcript deltas onto animation frames",
   );
 });
 

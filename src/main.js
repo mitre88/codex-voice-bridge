@@ -7,8 +7,8 @@ import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  accumulateOutput,
   applyEnvOverrides,
+  createOutputAccumulator,
   escapeAppleScript,
   extractFirstJsonObject,
   humanizeSpawnError,
@@ -32,6 +32,7 @@ import {
   resolveWorkdir,
   rotateLogIfNeeded,
   toPositiveInt,
+  truncateOutput,
   typeDelayMs,
   validateCuaDriverRequiredArgs,
 } from "./lib.js";
@@ -175,6 +176,14 @@ const CUA_BLOCKED_TOOLS = new Set(["hotkey", "move_cursor", "replay_trajectory",
 let mainWindow;
 let runtimeApiKey = "";
 let logStream = null;
+// bytesWritten on a WriteStream only counts this process's writes, so an
+// existing bridge.log that is already near LOG_MAX_BYTES would grow by
+// another full cap before rotating. Track the on-disk size instead.
+let logBytesWritten = 0;
+// Cap a single log payload so a 1MB Codex result cannot be JSON.stringified
+// (and redacted) on the logging path — that double-copy spiked main-process
+// memory on every "Local action finished" line.
+const MAX_LOG_PAYLOAD_CHARS = 32000;
 // Live child processes (codex, cua-driver, osascript, security). They are
 // spawned detached in their own process group; tracking them lets us terminate
 // any still-running group on quit so a long Codex run cannot outlive the app.
@@ -185,6 +194,11 @@ function getLogStream() {
     fs.mkdirSync(LOG_DIR, { recursive: true });
     // Rotate an oversized log on startup so bridge.log cannot grow without bound.
     rotateLogFile();
+    try {
+      logBytesWritten = fs.statSync(LOG_FILE).size;
+    } catch {
+      logBytesWritten = 0;
+    }
     logStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
     // Avoid crashing the main process if the disk/log file misbehaves.
     logStream.on("error", () => {});
@@ -199,6 +213,21 @@ function rotateLogFile() {
   rotateLogIfNeeded(fs, LOG_FILE, LOG_MAX_BYTES);
 }
 
+function serializeLogData(data) {
+  const bounded =
+    data && typeof data === "object" && !Array.isArray(data) ? truncateOutput(data, 16000) : data;
+  let raw;
+  try {
+    raw = typeof bounded === "string" ? bounded : JSON.stringify(bounded);
+  } catch {
+    raw = String(data);
+  }
+  if (raw.length > MAX_LOG_PAYLOAD_CHARS) {
+    return `${raw.slice(0, MAX_LOG_PAYLOAD_CHARS)}\n...[truncated ${raw.length - MAX_LOG_PAYLOAD_CHARS} chars]`;
+  }
+  return raw;
+}
+
 function writeLog(message, data) {
   try {
     let payload;
@@ -206,19 +235,21 @@ function writeLog(message, data) {
       payload = JSON.stringify({
         ts: new Date().toISOString(),
         message,
-        data: data === undefined ? undefined : redactSecrets(JSON.stringify(data)),
+        data: data === undefined ? undefined : redactSecrets(serializeLogData(data)),
       });
     } catch {
       // Never let a non-serializable payload take down the logging path (or the
       // uncaughtException handler that calls it).
       payload = JSON.stringify({ ts: new Date().toISOString(), message, data: String(data) });
     }
-    if (logStream && logStream.bytesWritten >= LOG_MAX_BYTES) {
+    if (logStream && logBytesWritten >= LOG_MAX_BYTES) {
       logStream.end();
       logStream = null;
       rotateLogFile();
     }
-    getLogStream().write(`${payload}\n`);
+    const line = `${payload}\n`;
+    getLogStream().write(line);
+    logBytesWritten += Buffer.byteLength(line);
   } catch {
     // Logging is best-effort and must never throw: writeLog runs inside the
     // uncaughtException/unhandledRejection handlers and the log:renderer IPC
@@ -247,16 +278,38 @@ function runProcess(command, args, options = {}) {
     child.stdin.on("error", () => {});
     child.stdin.end(options.stdin || "");
 
-    let stdout = "";
-    let stderr = "";
-    let stdoutCapped = false;
-    let stderrCapped = false;
+    const stdoutAcc = createOutputAccumulator(MAX_PROCESS_OUTPUT_CHARS);
+    const stderrAcc = createOutputAccumulator(MAX_PROCESS_OUTPUT_CHARS);
     let settled = false;
     // Decode UTF-8 incrementally: chunk.toString() alone would garble any
     // multi-byte character split across two chunks (common with streaming
     // Codex output, e.g. accented Spanish) into U+FFFD replacement chars.
     const stdoutDecoder = new StringDecoder("utf8");
     const stderrDecoder = new StringDecoder("utf8");
+    // Batch streamed IPC: each tiny stdout chunk used to cross the process
+    // boundary on its own. Flush at 4KB (the renderer log already coalesces
+    // at the same size) or when the run settles, so the renderer still sees
+    // the complete tail before the IPC call resolves.
+    const OUTPUT_IPC_BATCH_CHARS = 4000;
+    let pendingOutput = "";
+    function forwardOutput(text) {
+      if (!text || settled || !options.onOutput) return;
+      pendingOutput += text;
+      if (pendingOutput.length >= OUTPUT_IPC_BATCH_CHARS) {
+        const payload = pendingOutput;
+        pendingOutput = "";
+        options.onOutput(payload);
+      }
+    }
+    function flushPendingOutput() {
+      if (!pendingOutput || !options.onOutput) {
+        pendingOutput = "";
+        return;
+      }
+      const payload = pendingOutput;
+      pendingOutput = "";
+      options.onOutput(payload);
+    }
 
     function killProcessGroup(signal) {
       try {
@@ -287,12 +340,12 @@ function runProcess(command, args, options = {}) {
       // the close handler does, so timed-out output is not missing its tail.
       const tailOut = stdoutDecoder.end();
       const tailErr = stderrDecoder.end();
-      if (tailOut) stdout = accumulateOutput(stdout, tailOut, MAX_PROCESS_OUTPUT_CHARS).text;
-      if (tailErr) stderr = accumulateOutput(stderr, tailErr, MAX_PROCESS_OUTPUT_CHARS).text;
+      if (tailOut) stdoutAcc.push(tailOut);
+      if (tailErr) stderrAcc.push(tailErr);
       finish({
         ok: false,
         code: -2,
-        stdout: stdout.trim(),
+        stdout: stdoutAcc.text().trim(),
         stderr: `${command} timed out after ${Math.round((options.timeoutMs || 60000) / 1000)} seconds.`,
       });
     }, options.timeoutMs || 60000);
@@ -301,34 +354,31 @@ function runProcess(command, args, options = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      flushPendingOutput();
       let out = result.stdout;
       let err = result.stderr;
       // The captured buffer keeps the TAIL (see accumulateOutput), so the
       // marker goes at the FRONT, before the kept tail — appending it at the
       // end would put the announcement after the very lines the model needs
       // (final result, error summary), the same convention truncateOutput uses.
-      if (stdoutCapped && typeof out === "string") out = "...[stdout truncated at 1MB]\n" + out;
-      if (stderrCapped && typeof err === "string") err = "...[stderr truncated at 1MB]\n" + err;
+      if (stdoutAcc.capped && typeof out === "string") out = "...[stdout truncated at 1MB]\n" + out;
+      if (stderrAcc.capped && typeof err === "string") err = "...[stderr truncated at 1MB]\n" + err;
       resolve({ ...result, stdout: String(out ?? "").trim(), stderr: String(err ?? "").trim() });
     }
 
     child.stdout.on("data", (chunk) => {
       const text = stdoutDecoder.write(chunk);
-      const result = accumulateOutput(stdout, text, MAX_PROCESS_OUTPUT_CHARS);
-      stdout = result.text;
-      stdoutCapped = stdoutCapped || result.capped;
+      stdoutAcc.push(text);
       // Only stream while the run is still live: once the timeout has settled
       // the promise, the child may keep emitting until the group is killed
       // (up to 3s later), and forwarding those late chunks would make the
       // renderer flush a dead run's tail into the next run's debug log.
-      if (!settled) options.onOutput?.(text);
+      forwardOutput(text);
     });
     child.stderr.on("data", (chunk) => {
       const text = stderrDecoder.write(chunk);
-      const result = accumulateOutput(stderr, text, MAX_PROCESS_OUTPUT_CHARS);
-      stderr = result.text;
-      stderrCapped = stderrCapped || result.capped;
-      if (!settled) options.onOutput?.(text);
+      stderrAcc.push(text);
+      forwardOutput(text);
     });
     child.on("close", (code) => {
       runningChildren.delete(child);
@@ -337,9 +387,9 @@ function runProcess(command, args, options = {}) {
       // final captured output is never missing its last character.
       const tailOut = stdoutDecoder.end();
       const tailErr = stderrDecoder.end();
-      if (tailOut) stdout = accumulateOutput(stdout, tailOut, MAX_PROCESS_OUTPUT_CHARS).text;
-      if (tailErr) stderr = accumulateOutput(stderr, tailErr, MAX_PROCESS_OUTPUT_CHARS).text;
-      finish({ ok: code === 0, code, stdout, stderr });
+      if (tailOut) stdoutAcc.push(tailOut);
+      if (tailErr) stderrAcc.push(tailErr);
+      finish({ ok: code === 0, code, stdout: stdoutAcc.text(), stderr: stderrAcc.text() });
     });
     child.on("error", (error) => {
       // A failed spawn never emits "close", so drop the tracking entry here.
@@ -360,12 +410,12 @@ function runProcess(command, args, options = {}) {
         finish({
           ok: false,
           code: -1,
-          stdout,
+          stdout: stdoutAcc.text(),
           stderr: `The working directory does not exist: ${options.cwd || DEFAULT_WORKDIR}`,
         });
         return;
       }
-      finish({ ok: false, code: -1, stdout, stderr: humanizeSpawnError(command, error) });
+      finish({ ok: false, code: -1, stdout: stdoutAcc.text(), stderr: humanizeSpawnError(command, error) });
     });
   });
 }
@@ -1114,9 +1164,11 @@ if (!app.requestSingleInstanceLock()) {
         }
         try {
           const sources = await desktopCapturer.getSources({
-            types: ["screen", "window"],
+            types: ["screen"],
             // No thumbnails or window icons: cheaper and avoids capturing
-            // screen content we never display.
+            // screen content we never display. Window sources are unused —
+            // we pick the first screen for loopback audio — so enumerating
+            // every window is wasted main-process work on older macOS.
             thumbnailSize: { width: 0, height: 0 },
             fetchWindowIcons: false,
           });
@@ -1200,10 +1252,13 @@ ipcMain.handle("realtime:key-status", guard(async () => ({
 ipcMain.handle("codex:run", guard((_event, input) => runCodex(input)));
 ipcMain.handle("cua:run", guard((_event, input) => runCuaDriver(input)));
 ipcMain.handle("mac:run", guard((_event, input) => runMacAction(input)));
-ipcMain.handle("log:renderer", guard((_event, message, data) => {
+ipcMain.on("log:renderer", (event, message, data) => {
+  if (!isTrustedSender(event)) {
+    writeLog("blocked IPC call from untrusted sender", { url: event.senderFrame?.url });
+    return;
+  }
   writeLog(`renderer:${message}`, data);
-  return { ok: true };
-}));
+});
 ipcMain.handle("log:path", guard(() => LOG_FILE));
 ipcMain.handle("app:config", guard(() => ({
   version: APP_VERSION,

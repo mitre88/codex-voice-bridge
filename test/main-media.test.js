@@ -23,6 +23,12 @@ test("main.js registers a display media handler (interview screen capture needs 
   const main = readSource("main.js");
   assert.match(main, /setDisplayMediaRequestHandler/, "main.js must register a display media request handler");
   assert.match(main, /desktopCapturer\.getSources/, "the handler must resolve capture sources");
+  assert.match(main, /types: \["screen"\]/, "the fallback picker must enumerate screens only — window lists are unused and expensive");
+  assert.doesNotMatch(
+    main,
+    /types: \["screen", "window"\]/,
+    "do not enumerate every window just to pick a screen source",
+  );
   assert.match(main, /useSystemPicker/, "the handler should prefer the native system picker when available");
   assert.match(
     main,

@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   accumulateOutput,
   applyEnvOverrides,
+  createOutputAccumulator,
   escapeAppleScript,
   extractFirstJsonObject,
   typeDelayMs,
@@ -1425,6 +1426,23 @@ test("accumulateOutput caps the buffer at maxChars and reports truncation", () =
   const ok = accumulateOutput("abc", "def", 100);
   assert.equal(ok.text, "abcdef");
   assert.equal(ok.capped, false);
+  // An empty chunk is a no-op and must not report a false truncation.
+  const empty = accumulateOutput("abc", "", 100);
+  assert.equal(empty.text, "abc");
+  assert.equal(empty.capped, false);
+});
+
+test("createOutputAccumulator keeps the tail across many small chunks without flattening each time", () => {
+  const acc = createOutputAccumulator(50);
+  for (const ch of "A".repeat(60) + "B".repeat(40)) acc.push(ch);
+  assert.equal(acc.length, 50);
+  assert.equal(acc.capped, true);
+  assert.equal(acc.text(), "A".repeat(10) + "B".repeat(40));
+  // A single chunk larger than the cap keeps only its tail.
+  const big = createOutputAccumulator(8);
+  big.push("0123456789abcdef");
+  assert.equal(big.text(), "89abcdef");
+  assert.equal(big.capped, true);
 });
 
 test("resolveWorkdir keeps paths inside the base workdir", () => {

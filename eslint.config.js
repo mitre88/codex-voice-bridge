@@ -52,6 +52,7 @@ export default [
         clearTimeout: "readonly",
         fetch: "readonly",
         AbortSignal: "readonly",
+        requestAnimationFrame: "readonly",
         AbortController: "readonly",
       },
     },
