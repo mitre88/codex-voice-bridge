@@ -206,6 +206,29 @@ export function normalizeTone(value) {
   return TONE_PROMPTS[normalizeToneKey(value)];
 }
 
+// Voices the Realtime API accepts for gpt-realtime-2 (and that the
+// renderer's Voice select offers). Marin and cedar are Realtime-only;
+// the other eight also exist on the standard TTS endpoint. The API
+// rejects anything outside this set, so an env value that is not one of
+// them must fall back instead of 400-ing every assistant connect.
+export const REALTIME_VOICES = ["marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"];
+const REALTIME_VOICE_SET = new Set(REALTIME_VOICES);
+
+// Mirror normalizeToneKey: .env files conventionally use UPPERCASE values
+// and shell exports often carry stray whitespace, so "MARIN" or " Marin "
+// would otherwise reach the API as an unknown voice and fail every
+// assistant connect with a 400 the user cannot diagnose from the .env
+// they wrote — and the renderer's voice select would show no matching
+// option for the raw value. Normalize case and padding before the
+// known-value check; the fallback still guards every other value, and a
+// non-string value (e.g. a programmatic 42) keeps the previous fallback
+// behavior instead of throwing on .trim(). Returns the canonical voice
+// name so callers can persist/select it without re-deriving it.
+export function normalizeVoice(value, fallback = "marin") {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : value;
+  return REALTIME_VOICE_SET.has(normalized) ? normalized : fallback;
+}
+
 // The language codes the renderer's "Translate to" select offers; the API
 // rejects anything outside this set, so an env value that is not one of them
 // must fall back instead of 400-ing every translate-mode connect.

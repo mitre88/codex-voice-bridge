@@ -22,6 +22,7 @@ import {
   normalizeTargetLanguage,
   normalizeTone,
   normalizeToneKey,
+  normalizeVoice,
   parseEnvFile,
   redactSecrets,
   requireMaxLength,
@@ -68,16 +69,25 @@ function loadDotEnv() {
 }
 loadDotEnv();
 
-// Trim the model/voice env values at the source: a whitespace-padded value (a
+// Trim the model env values at the source: a whitespace-padded value (a
 // shell export with a trailing space, a launchd plist string with stray
 // whitespace) would otherwise be sent to the OpenAI API as-is and rejected
 // with a 400 on every connect — the same cosmetic-noise class of failure the
 // WORKDIR/SHORTCUT/API-key trims prevent. A whitespace-only value trims to ""
-// and falls back to the default exactly like an unset variable.
+// and falls back to the default exactly like an unset variable. Voice is
+// normalized separately below (case + allowlist), not just trimmed.
 const DEFAULT_MODEL = process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-2";
 const DEFAULT_TRANSLATE_MODEL = process.env.OPENAI_REALTIME_TRANSLATE_MODEL?.trim() || "gpt-realtime-translate";
 const DEFAULT_TRANSCRIBE_MODEL = process.env.OPENAI_REALTIME_TRANSCRIBE_MODEL?.trim() || "gpt-realtime-whisper";
-const DEFAULT_VOICE = process.env.OPENAI_REALTIME_VOICE?.trim() || "marin";
+// Mirror the reasoning-effort/tone/language env vars: a user who configured
+// OPENAI_REALTIME_VOICE in .env (or exported it for a launchd run) with an
+// uppercase or padded value ("MARIN", " Marin ") — or a typo like "banana"
+// — had it sent to the API raw after a mere trim. An unknown voice 400s
+// every assistant connect, and the renderer's voice select would show no
+// matching option for the raw value. normalizeVoice is case- and
+// whitespace-insensitive and falls back to "marin" for any value outside
+// the Realtime voice list, exactly like the tone/effort/language fallbacks.
+const DEFAULT_VOICE = normalizeVoice(process.env.OPENAI_REALTIME_VOICE || "marin");
 // Normalize the .env value at the source: a typo like "banana" would
 // otherwise surface in the UI select (no matching option) and reach the API
 // (forcing the reasoning-400 retry on every connect) instead of falling back
@@ -476,7 +486,7 @@ async function createAssistantClientSecret(apiKey, options = {}) {
           transcription: { model: DEFAULT_TRANSCRIBE_MODEL },
           noise_reduction: { type: "near_field" },
         },
-        output: { voice: DEFAULT_VOICE },
+        output: { voice: normalizeVoice(options.voice, DEFAULT_VOICE) },
       },
       tools: assistantTools(),
       tool_choice: "auto",
@@ -503,7 +513,7 @@ async function createAssistantClientSecret(apiKey, options = {}) {
 }
 
 async function createTranslationClientSecret(apiKey, options = {}) {
-  const targetLanguage = options.targetLanguage || DEFAULT_TARGET_LANGUAGE;
+  const targetLanguage = normalizeTargetLanguage(options.targetLanguage, DEFAULT_TARGET_LANGUAGE);
   const body = {
     session: {
       model: DEFAULT_TRANSLATE_MODEL,
@@ -533,7 +543,15 @@ async function createTranscriptionClientSecret(apiKey, options = {}) {
     model: DEFAULT_TRANSCRIBE_MODEL,
     prompt: "Codex, CUA Driver, OpenAI Realtime, macOS app control, Spanish and English technical vocabulary.",
   };
-  if (options.sourceLanguage) transcription.language = options.sourceLanguage;
+  // Empty/whitespace means "auto" (omit the field). A padded or uppercase
+  // code ("ES", " En ") would otherwise 400 the transcribe connect; an
+  // unrecognized value is dropped so Auto still wins instead of forcing
+  // the target-language default.
+  const sourceLanguage =
+    typeof options.sourceLanguage === "string" && options.sourceLanguage.trim()
+      ? normalizeTargetLanguage(options.sourceLanguage, "")
+      : "";
+  if (sourceLanguage) transcription.language = sourceLanguage;
 
   const body = {
     session: {

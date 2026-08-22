@@ -23,6 +23,7 @@ const apiKeyField = document.querySelector("#apiKeyField");
 const keyStatusEl = document.querySelector("#keyStatus");
 const autoRunInput = document.querySelector("#autoRun");
 const voiceModeInput = document.querySelector("#voiceMode");
+const voiceInput = document.querySelector("#voice");
 const toneInput = document.querySelector("#tone");
 const reasoningInput = document.querySelector("#reasoningEffort");
 const targetLanguageInput = document.querySelector("#targetLanguage");
@@ -88,6 +89,7 @@ let warnedDeviceFallback = false;
 // while connected (not just the mode select).
 const connectTimeControls = [
   voiceModeInput,
+  voiceInput,
   toneInput,
   reasoningInput,
   targetLanguageInput,
@@ -187,6 +189,7 @@ function updateInterviewAudioWarning(devices = lastMediaDevices) {
 function getVoiceOptions() {
   return {
     mode: voiceModeInput.value,
+    voice: voiceInput.value,
     tone: toneInput.value,
     reasoningEffort: reasoningInput.value,
     targetLanguage: targetLanguageInput.value,
@@ -959,6 +962,7 @@ function flushCodexOutput() {
 try {
   getBridge().config().then((config) => {
     if (config.reasoningEffort) reasoningInput.value = config.reasoningEffort;
+    if (config.voice) voiceInput.value = config.voice;
     if (config.tone) toneInput.value = config.tone;
     if (config.targetLanguage) targetLanguageInput.value = config.targetLanguage;
     if (config.actionTimeoutMs) actionTimeoutMs = config.actionTimeoutMs;
