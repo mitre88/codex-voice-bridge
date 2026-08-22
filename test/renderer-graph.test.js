@@ -292,6 +292,7 @@ test("lib.js re-exports the renderer helpers for a single import surface", async
   assert.equal(typeof lib.humanizeError, "function");
   assert.equal(typeof lib.truncateOutput, "function");
   assert.equal(typeof lib.hasVirtualAudioDevice, "function");
+  assert.equal(typeof lib.sameMediaDeviceList, "function");
   assert.ok(lib.VIRTUAL_AUDIO_LABEL instanceof RegExp);
 });
 
@@ -404,6 +405,11 @@ test("captions are capped so a long session cannot grow the DOM without bound", 
     /truncated \$\{next\.length - MAX_CAPTION_CHARS\} chars/,
     "appendCaption must mark the truncation so the cut is visible, not silent",
   );
+  assert.match(
+    fnBody,
+    /bucket\.parts\.push\(text\)/,
+    "appendCaption must accumulate deltas in a part list instead of copying the whole caption string on every event",
+  );
 });
 
 test("connectPeerSession drops non-object Realtime events instead of throwing in the message handler", () => {
@@ -515,8 +521,60 @@ test("log() serializes defensively so a non-serializable payload cannot loop the
   const fnBody = renderer.slice(fnStart, renderer.indexOf("function updateModeControls"));
   assert.match(
     fnBody,
-    /try \{[\s\S]*?JSON\.stringify\(data, null, 2\)[\s\S]*?\} catch \{[\s\S]*?serialized = String\(data\);/,
+    /try \{[\s\S]*?JSON\.stringify\(logData, null, 2\)[\s\S]*?\} catch \{[\s\S]*?serialized = String\(data\);/,
     "log() must fall back to String(data) when JSON.stringify throws",
+  );
+});
+
+test("log() caps large payloads before pretty-printing and skips DOM writes while the debug panel is closed", () => {
+  // A finished Codex result can carry up to 1MB of stdout. Pretty-printing
+  // that into the <pre> (and sending it over IPC) spiked renderer memory on
+  // every "Local action finished" line. Truncate before stringify, and do
+  // not rewrite textContent while the user is not looking at the log.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("function log(message, data)");
+  assert.ok(fnStart !== -1, "renderer.js must define log()");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("function updateModeControls"));
+  assert.match(
+    fnBody,
+    /truncateOutput\(data, 8000\)/,
+    "log() must cap object payloads (stdout/stderr) before serializing them",
+  );
+  assert.match(
+    fnBody,
+    /if \(debugPanel\?\.open\) \{[\s\S]*?logEl\.textContent = logBuffer/,
+    "log() must not rewrite the debug <pre> while the panel is closed",
+  );
+  assert.match(
+    renderer,
+    /debugPanel\?\.addEventListener\("toggle"/,
+    "opening the debug panel must catch up the deferred log buffer",
+  );
+});
+
+test("orb animation is paused while idle so the always-on-top window does not composite every frame", () => {
+  const css = readSource("styles.css");
+  assert.match(
+    css,
+    /animation-play-state:\s*paused/,
+    "the orb must pause by default (idle and first paint)",
+  );
+  assert.match(
+    css,
+    /animation-play-state:\s*running/,
+    "active states (listening/connecting/running/error) must resume the orb animation",
+  );
+});
+
+test("captions coalesce to one DOM write per frame", () => {
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("function renderCaptions()");
+  assert.ok(fnStart !== -1, "renderer.js must define renderCaptions");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("const MAX_CAPTION_CHARS"));
+  assert.match(
+    fnBody,
+    /requestAnimationFrame/,
+    "renderCaptions must coalesce transcript deltas onto animation frames",
   );
 });
 
@@ -540,5 +598,54 @@ test("enabling auto-run executes a pending action instead of letting its auto-re
     listenerBody,
     /executeAction\(pendingAction\)/,
     "the auto-run change listener must execute the pending action (which clears the auto-reject timer)",
+  );
+});
+
+test("hidden caption panel skips transcript accumulation and DOM joins", () => {
+  // Assistant mode hides #captionPanel. Transcript deltas still arrive on
+  // the data channel; joining them into 50KB strings and writing the DOM
+  // every frame is wasted work the user cannot see. Tools keep running —
+  // only the live caption UI is skipped.
+  const renderer = readSource("renderer.js");
+  const eventStart = renderer.indexOf("function handleTranscriptEvent");
+  assert.ok(eventStart !== -1, "renderer.js must define handleTranscriptEvent");
+  const eventBody = renderer.slice(eventStart, renderer.indexOf("const MAX_PENDING_ARGS_CHARS"));
+  assert.match(
+    eventBody,
+    /captionPanel\?\.hidden/,
+    "handleTranscriptEvent must skip caption work while the panel is hidden",
+  );
+  const renderStart = renderer.indexOf("function renderCaptions()");
+  const renderBody = renderer.slice(renderStart, renderer.indexOf("const MAX_CAPTION_CHARS"));
+  assert.match(
+    renderBody,
+    /captionPanel\?\.hidden/,
+    "renderCaptions must skip the join + textContent write while the panel is hidden",
+  );
+});
+
+test("refreshMediaDevices skips rebuilding selects when the device list is unchanged", () => {
+  // devicechange fires often on macOS with an identical enumerateDevices()
+  // result. Rebuilding four <select>s on every no-op enumeration is wasted
+  // DOM work; a permission grant that fills in labels still differs and
+  // rebuilds.
+  const renderer = readSource("renderer.js");
+  assert.match(
+    renderer,
+    /sameMediaDeviceList/,
+    "renderer.js must compare device lists before rebuilding the dropdowns",
+  );
+  const refreshStart = renderer.indexOf("async function refreshMediaDevices");
+  assert.ok(refreshStart !== -1, "renderer.js must define refreshMediaDevices");
+  const refreshBody = renderer.slice(refreshStart, renderer.indexOf("async function getInterviewAudioStream"));
+  assert.match(
+    refreshBody,
+    /sameMediaDeviceList\(lastMediaDevices, devices\)/,
+    "refreshMediaDevices must compare the new enumeration to the last one",
+  );
+  assert.ok(
+    refreshBody.indexOf("sameMediaDeviceList(lastMediaDevices, devices)") <
+      refreshBody.indexOf("setSelectOptions"),
+    "the unchanged-list check must run before any <select> rebuild",
   );
 });

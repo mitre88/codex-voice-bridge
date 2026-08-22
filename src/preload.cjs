@@ -8,7 +8,14 @@ contextBridge.exposeInMainWorld("voiceBridge", {
   runCodex: (input) => ipcRenderer.invoke("codex:run", input),
   runCua: (input) => ipcRenderer.invoke("cua:run", input),
   runMac: (input) => ipcRenderer.invoke("mac:run", input),
-  log: (message, data) => ipcRenderer.invoke("log:renderer", message, data),
+  log: (message, data) => {
+    // Fire-and-forget: invoke() waited for a round-trip on every UI log line
+    // (including batched Codex output). The renderer only needs the write to
+    // be queued; returning a resolved promise keeps the .catch() guards on
+    // the window error handlers valid.
+    ipcRenderer.send("log:renderer", message, data);
+    return Promise.resolve({ ok: true });
+  },
   logPath: () => ipcRenderer.invoke("log:path"),
   onCodexOutput: (callback) => {
     ipcRenderer.on("codex-output", (_event, chunk) => callback(chunk));

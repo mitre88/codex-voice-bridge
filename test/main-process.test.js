@@ -135,6 +135,93 @@ test("writeLog swallows logging-path failures so error handlers cannot crash or 
   );
 });
 
+test("writeLog caps log payloads so a 1MB Codex result cannot be stringified whole", () => {
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /function serializeLogData\(data\)/,
+    "writeLog must serialize through a bounded helper",
+  );
+  const fnStart = main.indexOf("function serializeLogData");
+  const fnBody = main.slice(fnStart, main.indexOf("function writeLog"));
+  assert.match(
+    fnBody,
+    /truncateOutput\(data, 16000\)/,
+    "object log payloads with stdout/stderr must be truncated before stringify",
+  );
+  assert.match(
+    fnBody,
+    /MAX_LOG_PAYLOAD_CHARS/,
+    "the serialized log line itself must be length-capped",
+  );
+});
+
+test("log rotation tracks on-disk size, not WriteStream.bytesWritten", () => {
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /logBytesWritten = fs\.statSync\(LOG_FILE\)\.size/,
+    "opening the log stream must seed the byte counter from the existing file size",
+  );
+  const fnStart = main.indexOf("function writeLog");
+  const fnBody = main.slice(fnStart, main.indexOf("function runProcess"));
+  assert.match(
+    fnBody,
+    /logBytesWritten >= LOG_MAX_BYTES/,
+    "rotation must use the on-disk counter, not stream.bytesWritten",
+  );
+  assert.doesNotMatch(
+    fnBody,
+    /logStream\.bytesWritten/,
+    "stream.bytesWritten undercounts an appended existing log file",
+  );
+});
+
+test("renderer log IPC is fire-and-forget (send), not a round-trip invoke", () => {
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /ipcMain\.on\("log:renderer"/,
+    "log:renderer must be a one-way ipcMain.on handler",
+  );
+  assert.doesNotMatch(
+    main,
+    /ipcMain\.handle\("log:renderer"/,
+    "log:renderer must not use invoke/handle (that waits for a reply on every UI log line)",
+  );
+  const preload = readSource("preload.cjs");
+  assert.match(
+    preload,
+    /ipcRenderer\.send\("log:renderer"/,
+    "the preload log bridge must send, not invoke",
+  );
+  assert.match(
+    preload,
+    /return Promise\.resolve\(\{ ok: true \}\)/,
+    "preload log() must still return a thenable so window error handlers can .catch()",
+  );
+});
+
+test("runProcess batches streamed output IPC and flushes before settling", () => {
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("function runProcess");
+  const fnBody = main.slice(fnStart, main.indexOf("async function readKeychainApiKey"));
+  assert.match(
+    fnBody,
+    /createOutputAccumulator\(MAX_PROCESS_OUTPUT_CHARS\)/,
+    "runProcess must accumulate stdout/stderr with the chunked cap helper",
+  );
+  assert.match(
+    fnBody,
+    /OUTPUT_IPC_BATCH_CHARS = 4000/,
+    "streamed IPC must batch instead of sending every tiny stdout chunk",
+  );
+  assert.ok(
+    fnBody.indexOf("flushPendingOutput()") < fnBody.indexOf("resolve({"),
+    "the leftover IPC batch must flush before the runProcess promise resolves",
+  );
+});
+
 test("runProcess swallows EPIPE on child stdin so an early-exiting child cannot raise an uncaught error", () => {
   // runProcess always ends child.stdin (empty, or the API key for the
   // keychain save). A child that exits without reading stdin — e.g. the
@@ -192,13 +279,18 @@ test("runProcess stops streaming child output to the renderer once the run has s
   const fnStart = main.indexOf("function runProcess");
   assert.ok(fnStart !== -1, "main.js must define runProcess");
   const fnBody = main.slice(fnStart, main.indexOf("async function readKeychainApiKey"));
-  // Both the stdout and stderr data handlers must gate options.onOutput on
-  // the settled flag so a timed-out run's late chunks cannot reach the
-  // renderer and be flushed into a later run's debug log.
-  const guardedCalls = fnBody.match(/if \(!settled\) options\.onOutput\?\.\(text\)/g) || [];
+  // Both the stdout and stderr data handlers must forward through a helper
+  // that gates on the settled flag so a timed-out run's late chunks cannot
+  // reach the renderer and be flushed into a later run's debug log.
+  const forwarded = fnBody.match(/forwardOutput\(text\)/g) || [];
   assert.ok(
-    guardedCalls.length >= 2,
-    "both stdout and stderr data handlers must guard options.onOutput with !settled",
+    forwarded.length >= 2,
+    "both stdout and stderr data handlers must forward output through forwardOutput",
+  );
+  assert.match(
+    fnBody,
+    /if \(!text \|\| settled \|\| !options\.onOutput\) return/,
+    "forwardOutput must drop chunks once the run has settled",
   );
   // The settled flag must be declared before the data handlers are attached so
   // the guard refers to the same flag finish() flips.
@@ -788,5 +880,25 @@ test("loadDotEnv trims CODEX_VOICE_ENV_FILE so a whitespace-padded path cannot s
     fnBody,
     /process\.env\.CODEX_VOICE_ENV_FILE\?\.trim\(\)/,
     "loadDotEnv must trim CODEX_VOICE_ENV_FILE so a whitespace-padded path cannot silently skip the custom .env",
+  );
+});
+
+test("codex and cua IPC returns are truncated before the structured clone into the renderer", () => {
+  // runProcess keeps up to 1MB of child output so a long run cannot grow
+  // without bound. Cloning that whole tail into the renderer on every
+  // finished invoke (then pretty-printing it) spiked renderer memory; the
+  // model already received truncateOutput's 30KB tail. The invoke handlers
+  // must truncate before the clone. Streamed debug output still uses the
+  // batched codex-output channel inside runCodex/runCuaDriver.
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /ipcMain\.handle\("codex:run", guard\(async \(_event, input\) => truncateOutput\(await runCodex\(input\)\)\)\)/,
+    "codex:run must truncate the invoke return before sending it to the renderer",
+  );
+  assert.match(
+    main,
+    /ipcMain\.handle\("cua:run", guard\(async \(_event, input\) => truncateOutput\(await runCuaDriver\(input\)\)\)\)/,
+    "cua:run must truncate the invoke return before sending it to the renderer",
   );
 });

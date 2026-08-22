@@ -1,4 +1,4 @@
-import { hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, truncateOutput } from "./renderer-utils.js";
+import { hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, sameMediaDeviceList, truncateOutput } from "./renderer-utils.js";
 
 // How long the Realtime SDP exchange may take before we give up. The main
 // process already times out the token fetch; this bounds the second network
@@ -45,6 +45,7 @@ const outputCaptionEl = document.querySelector("#outputCaption");
 const pendingPanel = document.querySelector("#pendingPanel");
 const pendingPromptEl = document.querySelector("#pendingPrompt");
 const logEl = document.querySelector("#log");
+const debugPanel = logEl?.closest("details");
 const configEl = document.querySelector("#config");
 
 const activeSessions = [];
@@ -74,6 +75,11 @@ let connectAbortController;
 let hasStoredKey = false;
 let sourceCaption = "";
 let outputCaption = "";
+// Transcript deltas arrive many times per second. Concatenating into the
+// growing caption string on every delta copies up to 50KB per event; keep
+// parts here and join once per animation frame (and once if we hit the cap).
+const sourceBucket = { parts: [], length: 0 };
+const outputBucket = { parts: [], length: 0 };
 let baseConfigText = "";
 let lastMediaDevices = [];
 let warnedMissingVirtualAudio = false;
@@ -127,6 +133,26 @@ function setStatus(text, state) {
   document.body.dataset.state = state || text.toLowerCase().replace(/\s+/g, "-");
 }
 
+const logLines = [];
+let logChars = 0;
+let logBuffer = "";
+
+function joinLogLines() {
+  return logLines.join("");
+}
+
+function pushLogLine(line) {
+  logLines.unshift(line);
+  logChars += line.length;
+  while (logChars > 50000 && logLines.length > 1) {
+    logChars -= logLines.pop().length;
+  }
+  if (logChars > 50000 && logLines.length === 1) {
+    logLines[0] = logLines[0].slice(0, 50000);
+    logChars = logLines[0].length;
+  }
+}
+
 function log(message, data) {
   // Serialize defensively: log() runs inside the window error/unhandled
   // rejection handlers too, and a non-serializable payload (a circular
@@ -136,16 +162,36 @@ function log(message, data) {
   // main.js writeLog already guards its own stringify for exactly this
   // reason; the renderer log must not be the one unguarded link.
   let serialized;
+  let logData = data;
   try {
-    serialized = JSON.stringify(data, null, 2);
+    // A finished Codex/CUA result can carry up to 1MB of stdout. Pretty-printing
+    // that into the debug log (and sending it over IPC) spiked renderer memory
+    // on every "Local action finished" line. Cap before stringify; the model
+    // still receives the separately truncated function_call_output.
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      logData = truncateOutput(data, 8000);
+    } else if (typeof data === "string" && data.length > 16000) {
+      logData = `${data.slice(0, 16000)}\n...[truncated ${data.length - 16000} chars]`;
+    }
+    serialized = JSON.stringify(logData, null, 2);
+    if (typeof serialized === "string" && serialized.length > 16000) {
+      serialized = `${serialized.slice(0, 16000)}\n...[truncated ${serialized.length - 16000} chars]`;
+    }
   } catch {
     serialized = String(data);
+    logData = serialized;
   }
-  const suffix = data ? `\n${typeof data === "string" ? data : serialized}` : "";
-  logEl.textContent = `${new Date().toLocaleTimeString()}  ${message}${suffix}\n${logEl.textContent}`;
-  // Cap the in-memory log so long Codex streams cannot grow the DOM forever.
-  if (logEl.textContent.length > 50000) logEl.textContent = logEl.textContent.slice(0, 50000);
-  tryBridge()?.log("ui", { message, data }).catch(() => {});
+  const suffix = data ? `\n${typeof logData === "string" ? logData : serialized}` : "";
+  const line = `${new Date().toLocaleTimeString()}  ${message}${suffix}\n`;
+  // Newest-first line list: concatenating into a 50KB string on every log
+  // copied the whole buffer (and then sliced it) even while the debug panel
+  // was closed. Join only when the user can see it.
+  pushLogLine(line);
+  if (debugPanel?.open) {
+    logBuffer = joinLogLines();
+    logEl.textContent = logBuffer;
+  }
+  tryBridge()?.log("ui", { message, data: logData }).catch(() => {});
 }
 
 function updateModeControls() {
@@ -200,14 +246,29 @@ function getVoiceOptions() {
 }
 
 function resetCaptions() {
+  sourceBucket.parts = [];
+  sourceBucket.length = 0;
+  outputBucket.parts = [];
+  outputBucket.length = 0;
   sourceCaption = "";
   outputCaption = "";
   renderCaptions();
 }
 
+let captionsDirty = false;
+
 function renderCaptions() {
-  sourceCaptionEl.textContent = sourceCaption.trim() || "...";
-  outputCaptionEl.textContent = outputCaption.trim() || "...";
+  if (captionsDirty) return;
+  captionsDirty = true;
+  requestAnimationFrame(() => {
+    captionsDirty = false;
+    // Assistant mode hides the panel; skip the join + DOM write.
+    if (captionPanel?.hidden) return;
+    sourceCaption = sourceBucket.parts.join("");
+    outputCaption = outputBucket.parts.join("");
+    sourceCaptionEl.textContent = sourceCaption.trim() || "...";
+    outputCaptionEl.textContent = outputCaption.trim() || "...";
+  });
 }
 
 // Cap each accumulated caption so a long session cannot grow the caption
@@ -221,17 +282,30 @@ const MAX_CAPTION_CHARS = 50000;
 
 function appendCaption(kind, text, replace = false) {
   if (!text) return;
-  let next =
-    kind === "source" ? (replace ? text : `${sourceCaption}${text}`) : (replace ? text : `${outputCaption}${text}`);
-  if (next.length > MAX_CAPTION_CHARS) {
-    next = `...[truncated ${next.length - MAX_CAPTION_CHARS} chars]\n${next.slice(-MAX_CAPTION_CHARS)}`;
+  const bucket = kind === "source" ? sourceBucket : outputBucket;
+  if (replace) {
+    bucket.parts = [text];
+    bucket.length = text.length;
+  } else {
+    bucket.parts.push(text);
+    bucket.length += text.length;
   }
-  if (kind === "source") sourceCaption = next;
-  else outputCaption = next;
+  if (bucket.length > MAX_CAPTION_CHARS) {
+    let next = bucket.parts.join("");
+    next = `...[truncated ${next.length - MAX_CAPTION_CHARS} chars]\n${next.slice(-MAX_CAPTION_CHARS)}`;
+    bucket.parts = [next];
+    bucket.length = next.length;
+  } else if (bucket.parts.length >= 32) {
+    bucket.parts = [bucket.parts.join("")];
+  }
   renderCaptions();
 }
 
 function handleTranscriptEvent(event, targets = { source: "source", output: "output" }) {
+  // Assistant mode hides #captionPanel. Accumulating 50KB strings and
+  // joining them every frame is wasted CPU/memory the user cannot see —
+  // tools still run; only the live transcript UI is skipped.
+  if (captionPanel?.hidden) return;
   if (event.type === "session.input_transcript.delta" && targets.source) appendCaption(targets.source, event.delta);
   if (event.type === "session.output_transcript.delta" && targets.output) appendCaption(targets.output, event.delta);
   if (event.type === "conversation.item.input_audio_transcription.delta" && targets.source) appendCaption(targets.source, event.delta);
@@ -487,7 +561,12 @@ function setSelectOptions(select, devices, defaultLabel) {
   const current = select.value;
   select.replaceChildren(new Option(defaultLabel, ""));
   devices.forEach((device, index) => select.appendChild(new Option(device.label || `${defaultLabel} ${index + 1}`, device.deviceId)));
-  if ([...select.options].some((option) => option.value === current)) select.value = current;
+  for (const option of select.options) {
+    if (option.value === current) {
+      select.value = current;
+      break;
+    }
+  }
 }
 
 async function refreshMediaDevices(promptForLabels = false) {
@@ -503,6 +582,11 @@ async function refreshMediaDevices(promptForLabels = false) {
   }
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
+    // devicechange fires often on macOS (Bluetooth, sleep, audio session
+    // flaps) with an identical list. Rebuilding four <select>s and scanning
+    // lost selections is wasted DOM work when nothing changed — labels
+    // appearing after a permission grant still differ, so that path rebuilds.
+    if (sameMediaDeviceList(lastMediaDevices, devices)) return;
     // Capture the previous selections BEFORE the setSelectOptions calls below
     // replace the options: a device that vanished (unplugged, renamed with a
     // new id, permission revoked) silently falls back to the default option,
@@ -945,6 +1029,12 @@ rejectCodexButton.addEventListener("click", () => {
 // with auto-run already checked (executeAction clears the pending timer).
 autoRunInput.addEventListener("change", () => {
   if (autoRunInput.checked && pendingAction) executeAction(pendingAction);
+});
+debugPanel?.addEventListener("toggle", () => {
+  if (debugPanel.open) {
+    logBuffer = joinLogLines();
+    logEl.textContent = logBuffer;
+  }
 });
 navigator.mediaDevices?.addEventListener?.("devicechange", () => refreshMediaDevices(false).catch(() => {}));
 

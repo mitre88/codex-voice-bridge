@@ -7,7 +7,7 @@ import path from "node:path";
 // The sandboxed renderer (Chromium ESM loader) cannot import node: builtins,
 // so the helpers it needs live in renderer-utils.js (zero imports). Re-export
 // them here so the main process and tests keep a single import surface.
-export { hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, truncateOutput, VIRTUAL_AUDIO_LABEL } from "./renderer-utils.js";
+export { hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, sameMediaDeviceList, truncateOutput, VIRTUAL_AUDIO_LABEL } from "./renderer-utils.js";
 
 export const APP_BUNDLE_ALIASES = new Map([
   ["safari", "com.apple.Safari"],
@@ -759,10 +759,63 @@ export function humanizeSpawnError(command, error) {
 // conclusion. The buffer also keeps rolling to the newest tail once capped:
 // output arriving after the first overflow (the true end of a long run) must
 // not be discarded, or the model would miss the very lines it needs.
+export function createOutputAccumulator(maxChars = 1024 * 1024) {
+  // Chunk list + running length so a capped 1MB buffer does not copy the
+  // whole string on every small stdout chunk. join() happens once, when the
+  // caller asks for the final text (typically when the child exits).
+  // Compact before trimming: dropping the head with Array.shift() on tens of
+  // thousands of tiny chunks is quadratic and would freeze the main process
+  // on a runaway stream of 1-byte writes (the exact case the cap exists to
+  // survive). Join into one string, then slice the tail.
+  const COMPACT_AFTER = 32;
+  const chunks = [];
+  let length = 0;
+  let capped = false;
+
+  function compact() {
+    if (chunks.length <= 1) return;
+    const joined = chunks.join("");
+    chunks.length = 0;
+    chunks.push(joined);
+  }
+
+  function trimToMax() {
+    compact();
+    if (length <= maxChars) return;
+    capped = true;
+    chunks[0] = chunks[0].slice(-maxChars);
+    length = maxChars;
+  }
+
+  return {
+    push(chunk) {
+      const piece = String(chunk);
+      if (!piece) return;
+      chunks.push(piece);
+      length += piece.length;
+      if (length > maxChars) trimToMax();
+      else if (chunks.length >= COMPACT_AFTER) compact();
+    },
+    text() {
+      return chunks.join("");
+    },
+    get capped() {
+      return capped;
+    },
+    get length() {
+      return length;
+    },
+  };
+}
+
 export function accumulateOutput(buffer, chunk, maxChars = 1024 * 1024) {
-  const next = buffer + String(chunk);
-  if (next.length > maxChars) return { text: next.slice(-maxChars), capped: true };
-  return { text: next, capped: false };
+  const acc = createOutputAccumulator(maxChars);
+  if (buffer) acc.push(buffer);
+  acc.push(chunk);
+  return {
+    text: acc.text(),
+    capped: buffer.length + String(chunk).length > maxChars,
+  };
 }
 
 // Pick a per-character delay so a whole text fits inside the CUA timeout:

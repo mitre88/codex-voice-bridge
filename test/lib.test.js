@@ -6,11 +6,13 @@ import path from "node:path";
 import {
   accumulateOutput,
   applyEnvOverrides,
+  createOutputAccumulator,
   escapeAppleScript,
   extractFirstJsonObject,
   typeDelayMs,
   hasVirtualAudioDevice,
   humanizeError,
+  sameMediaDeviceList,
   humanizeSpawnError,
   isApiKeyRejection,
   isPlausibleApiKey,
@@ -1425,6 +1427,36 @@ test("accumulateOutput caps the buffer at maxChars and reports truncation", () =
   const ok = accumulateOutput("abc", "def", 100);
   assert.equal(ok.text, "abcdef");
   assert.equal(ok.capped, false);
+  // An empty chunk is a no-op and must not report a false truncation.
+  const empty = accumulateOutput("abc", "", 100);
+  assert.equal(empty.text, "abc");
+  assert.equal(empty.capped, false);
+});
+
+test("createOutputAccumulator keeps the tail across many small chunks without flattening each time", () => {
+  const acc = createOutputAccumulator(50);
+  for (const ch of "A".repeat(60) + "B".repeat(40)) acc.push(ch);
+  assert.equal(acc.length, 50);
+  assert.equal(acc.capped, true);
+  assert.equal(acc.text(), "A".repeat(10) + "B".repeat(40));
+  // A single chunk larger than the cap keeps only its tail.
+  const big = createOutputAccumulator(8);
+  big.push("0123456789abcdef");
+  assert.equal(big.text(), "89abcdef");
+  assert.equal(big.capped, true);
+});
+
+test("createOutputAccumulator stays linear across thousands of tiny chunks", () => {
+  // Without compacting, trim used Array.shift() on the chunk list — O(n) per
+  // overflow byte, quadratic over a 1MB stream of 1-char writes. Compacting
+  // into one string before slicing keeps this in linear time and bounded
+  // memory. The public contract is unchanged: cap at maxChars, keep the tail.
+  const acc = createOutputAccumulator(100);
+  for (let i = 0; i < 10000; i++) acc.push(String(i % 10));
+  assert.equal(acc.length, 100);
+  assert.equal(acc.capped, true);
+  const expectedTail = Array.from({ length: 100 }, (_, i) => String((9900 + i) % 10)).join("");
+  assert.equal(acc.text(), expectedTail);
 });
 
 test("resolveWorkdir keeps paths inside the base workdir", () => {
@@ -1599,6 +1631,19 @@ test("hasVirtualAudioDevice tolerates non-array input", () => {
   assert.equal(hasVirtualAudioDevice(undefined), false);
   assert.equal(hasVirtualAudioDevice("BlackHole"), false);
   assert.equal(hasVirtualAudioDevice({ label: "BlackHole 2ch" }), false);
+});
+
+test("sameMediaDeviceList is true only when id, kind, and label match in order", () => {
+  const mic = { deviceId: "mic-1", kind: "audioinput", label: "Built-in Microphone" };
+  const out = { deviceId: "out-1", kind: "audiooutput", label: "Speakers" };
+  assert.equal(sameMediaDeviceList([mic, out], [mic, out]), true);
+  assert.equal(sameMediaDeviceList([mic, out], [{ ...mic }, { ...out }]), true);
+  assert.equal(sameMediaDeviceList([mic], [mic, out]), false);
+  assert.equal(sameMediaDeviceList([mic, out], [out, mic]), false);
+  assert.equal(sameMediaDeviceList([mic], [{ ...mic, label: "USB Mic" }]), false);
+  assert.equal(sameMediaDeviceList([mic], [{ ...mic, deviceId: "mic-2" }]), false);
+  assert.equal(sameMediaDeviceList(null, [mic]), false);
+  assert.equal(sameMediaDeviceList([], []), true);
 });
 
 test("rotateLogIfNeeded ignores a missing log file", () => {
