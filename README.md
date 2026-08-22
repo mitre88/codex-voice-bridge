@@ -155,7 +155,7 @@ npm run smoke:cua # CUA Driver connectivity check (requires CUA Driver)
 npm start
 ```
 
-CI on `main` runs `npm ci`, `npm run lint`, `npm test`, and `npm run check` on Node 20.
+CI on `main` runs `npm ci`, `npm run lint`, `npm test`, and `npm run check` on Node 20 and 22.
 
 ---
 
@@ -179,6 +179,8 @@ codex-voice-bridge/
 │   ├── renderer-utils.js# Browser-safe helpers for the sandboxed renderer (zero imports)
 │   ├── lib.js           # Pure, unit-tested helpers for the main process (re-exports renderer-utils)
 │   └── styles.css       # Dark theme (#070808 / #f7f7f2)
+├── assets/
+│   └── icon.png         # App icon (electron-builder buildResources)
 ├── scripts/
 │   └── smoke-cua.sh     # CUA Driver connectivity check
 ├── test/

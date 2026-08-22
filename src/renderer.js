@@ -46,6 +46,10 @@ const pendingPanel = document.querySelector("#pendingPanel");
 const pendingPromptEl = document.querySelector("#pendingPrompt");
 const logEl = document.querySelector("#log");
 const configEl = document.querySelector("#config");
+const debugPanel = document.querySelector(".debug-panel");
+const errorBanner = document.querySelector("#errorBanner");
+const errorBannerText = document.querySelector("#errorBannerText");
+const errorBannerDismiss = document.querySelector("#errorBannerDismiss");
 
 const activeSessions = [];
 const handledToolCalls = new Set();
@@ -127,6 +131,48 @@ function setStatus(text, state) {
   document.body.dataset.state = state || text.toLowerCase().replace(/\s+/g, "-");
 }
 
+// A failed connect surfaces its humanized, actionable message in a dedicated
+// dismissible banner: the status pill is far too small for the longer
+// messages (TLS, network, quota diagnoses), and burying them only in the
+// collapsible debug log left the user staring at a bare "Error" pill.
+function showErrorBanner(message) {
+  errorBannerText.textContent = message;
+  errorBanner.hidden = false;
+}
+
+function hideErrorBanner() {
+  errorBanner.hidden = true;
+  errorBannerText.textContent = "";
+}
+
+// The debug log used to rewrite the <pre>'s full textContent (up to 50KB) on
+// every line — an O(n) DOM write plus layout per log call, multiplied by
+// streamed Codex output and live transcript sessions. Keep the text in a
+// plain string instead and render at most once per frame, and only while the
+// <details> panel is actually open: rendering a display:none subtree is pure
+// wasted work, so a closed panel just marks the buffer dirty and the toggle
+// listener catches up when it opens.
+const MAX_LOG_CHARS = 50000;
+let logBuffer = "";
+let logDirty = false;
+let logRenderQueued = false;
+
+function renderLog() {
+  logRenderQueued = false;
+  logDirty = false;
+  logEl.textContent = logBuffer;
+}
+
+function scheduleLogRender() {
+  if (!debugPanel.open) {
+    logDirty = true;
+    return;
+  }
+  if (logRenderQueued) return;
+  logRenderQueued = true;
+  requestAnimationFrame(renderLog);
+}
+
 function log(message, data) {
   // Serialize defensively: log() runs inside the window error/unhandled
   // rejection handlers too, and a non-serializable payload (a circular
@@ -142,10 +188,32 @@ function log(message, data) {
     serialized = String(data);
   }
   const suffix = data ? `\n${typeof data === "string" ? data : serialized}` : "";
-  logEl.textContent = `${new Date().toLocaleTimeString()}  ${message}${suffix}\n${logEl.textContent}`;
-  // Cap the in-memory log so long Codex streams cannot grow the DOM forever.
-  if (logEl.textContent.length > 50000) logEl.textContent = logEl.textContent.slice(0, 50000);
+  logBuffer = `${new Date().toLocaleTimeString()}  ${message}${suffix}\n${logBuffer}`;
+  // Cap the in-memory log so long Codex streams cannot grow the buffer forever.
+  if (logBuffer.length > MAX_LOG_CHARS) logBuffer = logBuffer.slice(0, MAX_LOG_CHARS);
+  scheduleLogRender();
   tryBridge()?.log("ui", { message, data }).catch(() => {});
+}
+
+// The config line packs version/models/shortcut/workdir into 11px text; as a
+// single "a / b / c" string it reads as one grey blur. Render it as items
+// with dimmed separators instead (the warning paths still overwrite it with
+// plain textContent, which clears the spans, and restore via this helper).
+function renderBaseConfig() {
+  if (!baseConfigText) return;
+  configEl.classList.remove("is-warning");
+  configEl.replaceChildren(
+    ...baseConfigText.split(" / ").flatMap((part, index) => {
+      const item = document.createElement("span");
+      item.className = "config-item";
+      item.textContent = part;
+      if (index === 0) return [item];
+      const separator = document.createElement("span");
+      separator.className = "config-sep";
+      separator.textContent = " · ";
+      return [separator, item];
+    }),
+  );
 }
 
 function updateModeControls() {
@@ -165,7 +233,7 @@ function updateModeControls() {
     sourceCaptionLabel.textContent = "Source";
     outputCaptionLabel.textContent = "Output";
     configEl.classList.remove("is-warning");
-    if (baseConfigText) configEl.textContent = baseConfigText;
+    renderBaseConfig();
   }
 }
 
@@ -205,9 +273,22 @@ function resetCaptions() {
   renderCaptions();
 }
 
+// Transcript deltas arrive several times per second and each one used to
+// rewrite both caption nodes (strings up to 50KB) immediately — redundant
+// DOM writes and layout work between frames the user can never see. Coalesce
+// to at most one render per animation frame; the render always reads the
+// CURRENT caption strings, so no delta is ever lost, only intermediate
+// repaints are skipped.
+let captionsRenderQueued = false;
+
 function renderCaptions() {
-  sourceCaptionEl.textContent = sourceCaption.trim() || "...";
-  outputCaptionEl.textContent = outputCaption.trim() || "...";
+  if (captionsRenderQueued) return;
+  captionsRenderQueued = true;
+  requestAnimationFrame(() => {
+    captionsRenderQueued = false;
+    sourceCaptionEl.textContent = sourceCaption.trim() || "...";
+    outputCaptionEl.textContent = outputCaption.trim() || "...";
+  });
 }
 
 // Cap each accumulated caption so a long session cannot grow the caption
@@ -546,8 +627,8 @@ async function refreshMediaDevices(promptForLabels = false) {
       warnedDeviceFallback = false;
       if (voiceModeInput.value === "interview") updateInterviewAudioWarning(devices);
       else {
-        configEl.textContent = baseConfigText;
         configEl.classList.remove("is-warning");
+        renderBaseConfig();
       }
     }
   } finally {
@@ -755,22 +836,31 @@ async function connectInterviewRealtime(options, controller) {
     // Same race as connectSingleRealtime: the prompt was answered just as
     // Disconnect was pressed. The catch below stops both streams.
     if (controller?.signal.aborted) throw new Error("Connection cancelled by disconnect.");
-    await connectPeerSession({
-      label: "Interview to Spanish",
-      tokenOptions: { mode: "translate", targetLanguage: "es" },
-      inputStream: interviewerStream,
-      outputDeviceId: options.spanishOutputDeviceId,
-      transcriptTargets: { source: null, output: "source" },
-      controller,
-    });
-    await connectPeerSession({
-      label: "My reply to English",
-      tokenOptions: { mode: "translate", targetLanguage: "en" },
-      inputStream: myMicStream,
-      outputDeviceId: options.englishOutputDeviceId,
-      transcriptTargets: { source: null, output: "output" },
-      controller,
-    });
+    // The two Realtime sessions are independent (separate streams, tokens,
+    // and peer connections), so connect them in parallel: serially, the
+    // interview connect paid two full token + SDP round trips back to back —
+    // roughly twice the "Connecting" wait it needs. If one side fails,
+    // Promise.all rejects, the outer error path aborts the shared controller,
+    // and the surviving side tears itself down via its own cleanup (the
+    // aborted-signal check refuses to register a cancelled session).
+    await Promise.all([
+      connectPeerSession({
+        label: "Interview to Spanish",
+        tokenOptions: { mode: "translate", targetLanguage: "es" },
+        inputStream: interviewerStream,
+        outputDeviceId: options.spanishOutputDeviceId,
+        transcriptTargets: { source: null, output: "source" },
+        controller,
+      }),
+      connectPeerSession({
+        label: "My reply to English",
+        tokenOptions: { mode: "translate", targetLanguage: "en" },
+        inputStream: myMicStream,
+        outputDeviceId: options.englishOutputDeviceId,
+        transcriptTargets: { source: null, output: "output" },
+        controller,
+      }),
+    ]);
   } catch (error) {
     // Streams not yet owned by a session stay hot if the second half fails
     // (mic denied after meeting audio was captured, or the second Realtime
@@ -801,9 +891,13 @@ async function connectRealtime() {
   connectAbortController = controller;
   handledToolCalls.clear();
   resetCaptions();
+  // A stale error message must not linger over a fresh connect attempt.
+  hideErrorBanner();
   try {
-    await ensureApiKeyReady();
-    await refreshMediaDevices(false).catch(() => {});
+    // The key check and the device refresh are independent (one is IPC to
+    // the main process, the other a local enumeration), so overlap them
+    // instead of paying the two latencies back to back on every connect.
+    await Promise.all([ensureApiKeyReady(), refreshMediaDevices(false).catch(() => {})]);
     const options = getVoiceOptions();
     if (options.mode === "interview") await connectInterviewRealtime(options, controller);
     else await connectSingleRealtime(options, controller);
@@ -831,16 +925,18 @@ async function connectRealtime() {
     disconnectRealtime({ silent: true });
     // The humanized message is the actionable one ("check your key", "check
     // your network", ...); burying it only in the collapsible debug log left
-    // the user staring at a bare "Error" pill. Surface it in the status
-    // itself, keeping the "error" state so the orb styling still applies.
+    // the user staring at a bare "Error" pill. Surface it in the dedicated
+    // error banner — the pill is far too small for the longer TLS/network
+    // diagnoses — keeping the "error" state so the orb styling still applies.
     const message = humanizeError(error);
     log(message);
+    showErrorBanner(message);
     // A rejected key (revoked, expired, wrong project) must also un-hide the
     // key input: it is hidden whenever any key exists, so the user would see
     // "save it again" with no way to save — reveal it only for the
     // key-rejection class, never for network/quota/server failures.
     if (isApiKeyRejection(error)) revealApiKeyField();
-    setStatus(`Error: ${message}`, "error");
+    setStatus("Error", "error");
     connectButton.disabled = false;
   }
 }
@@ -946,7 +1042,20 @@ rejectCodexButton.addEventListener("click", () => {
 autoRunInput.addEventListener("change", () => {
   if (autoRunInput.checked && pendingAction) executeAction(pendingAction);
 });
-navigator.mediaDevices?.addEventListener?.("devicechange", () => refreshMediaDevices(false).catch(() => {}));
+// Plugging a dock or Bluetooth headset fires devicechange in bursts; each
+// event re-enumerates devices and rebuilds four selects, so debounce the
+// refresh to run once per burst instead of once per event.
+let deviceChangeDebounce;
+navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+  clearTimeout(deviceChangeDebounce);
+  deviceChangeDebounce = setTimeout(() => refreshMediaDevices(false).catch(() => {}), 250);
+});
+errorBannerDismiss.addEventListener("click", hideErrorBanner);
+// The log render is skipped while the details panel is closed (see
+// scheduleLogRender); catch up on any buffered lines the moment it opens.
+debugPanel.addEventListener("toggle", () => {
+  if (debugPanel.open && logDirty) scheduleLogRender();
+});
 
 let codexOutputBuffer = "";
 
@@ -969,7 +1078,7 @@ try {
     // operates on without opening the debug log. The main process always
     // resolves a workdir (path.resolve), so the value is never empty.
     baseConfigText = `v${config.version || "?"} / ${config.model} / ${config.translateModel} / ${config.transcribeModel} / ${(config.shortcut || "CommandOrControl+Shift+Space").replace(/CommandOrControl/g, "Cmd")} / ${config.workdir}`;
-    configEl.textContent = baseConfigText;
+    renderBaseConfig();
     updateModeControls();
   });
   getBridge().logPath().then((logPath) => log(`Live log: ${logPath}`));

@@ -121,27 +121,43 @@ test("a stale connect's catch cannot abort or overwrite a newer connect", () => 
   );
 });
 
-test("connect failures surface the humanized error in the status, not just the debug log", () => {
+test("connect failures surface the humanized error in the banner, not just the debug log", () => {
   // A failed connect (bad key, no network, quota, ...) used to leave the
   // status pill at a bare "Error" while the actionable humanized message went
   // only to the collapsible debug log — the user had to know to expand it to
-  // learn why the connect failed. The status must carry the message itself,
-  // with an explicit "error" state so the error styling (dimmed orb) still
-  // applies to the longer text.
+  // learn why the connect failed. The message now goes to a dedicated,
+  // dismissible error banner (the pill is far too small for the longer TLS/
+  // network diagnoses), while the status keeps the explicit "error" state so
+  // the error styling (dimmed orb, red accent) still applies. A stale banner
+  // must also be cleared when a new connect starts.
   const renderer = readSource("renderer.js");
   const connectStart = renderer.indexOf("async function connectRealtime()");
   assert.ok(connectStart !== -1, "renderer.js must define connectRealtime");
   const connectBody = renderer.slice(connectStart, renderer.indexOf("async function disconnectRealtime()"));
   assert.match(
     connectBody,
-    /setStatus\(`Error: \$\{message\}`, "error"\)/,
-    "connectRealtime must show the humanized error in the status pill with the error state",
+    /showErrorBanner\(message\)/,
+    "connectRealtime must show the humanized error in the error banner",
+  );
+  assert.match(
+    connectBody,
+    /setStatus\("Error", "error"\)/,
+    "connectRealtime must keep the explicit error state on the status pill",
   );
   assert.ok(
     connectBody.indexOf("const message = humanizeError(error)") <
-      connectBody.indexOf("setStatus(`Error: ${message}`"),
-    "the status must use the humanized error message, not the raw error",
+      connectBody.indexOf("showErrorBanner(message)"),
+    "the banner must use the humanized error message, not the raw error",
   );
+  assert.match(
+    connectBody,
+    /hideErrorBanner\(\)/,
+    "connectRealtime must clear a stale error banner when a new connect starts",
+  );
+  // The banner helpers must exist and actually toggle the element.
+  assert.match(renderer, /function showErrorBanner\(/);
+  assert.match(renderer, /errorBanner\.hidden = false/);
+  assert.match(renderer, /errorBannerDismiss\.addEventListener\("click", hideErrorBanner\)/);
 });
 
 test("connect reveals the API key input when the key itself was rejected", () => {
