@@ -106,6 +106,9 @@ h2 {
   );
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
   animation: orb-pulse 2.6s ease-in-out infinite;
+  /* Idle (and first paint, before data-state is set) stays still so the
+     always-on-top window does not composite every frame forever. */
+  animation-play-state: paused;
 }
 
 .orb::before {
@@ -118,6 +121,20 @@ h2 {
     0 0 44px rgba(255, 255, 255, 0.28),
     0 18px 80px rgba(255, 255, 255, 0.14);
   animation: orb-glow 2.6s ease-in-out infinite;
+  animation-play-state: paused;
+}
+
+body[data-state="listening"] .orb,
+body[data-state="connecting"] .orb,
+body[data-state="cua-running"] .orb,
+body[data-state="codex-running"] .orb,
+body[data-state="error"] .orb,
+body[data-state="listening"] .orb::before,
+body[data-state="connecting"] .orb::before,
+body[data-state="cua-running"] .orb::before,
+body[data-state="codex-running"] .orb::before,
+body[data-state="error"] .orb::before {
+  animation-play-state: running;
 }
 
 body[data-state="listening"] .orb,

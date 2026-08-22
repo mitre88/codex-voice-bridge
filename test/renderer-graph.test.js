@@ -404,6 +404,11 @@ test("captions are capped so a long session cannot grow the DOM without bound", 
     /truncated \$\{next\.length - MAX_CAPTION_CHARS\} chars/,
     "appendCaption must mark the truncation so the cut is visible, not silent",
   );
+  assert.match(
+    fnBody,
+    /bucket\.parts\.push\(text\)/,
+    "appendCaption must accumulate deltas in a part list instead of copying the whole caption string on every event",
+  );
 });
 
 test("connectPeerSession drops non-object Realtime events instead of throwing in the message handler", () => {
@@ -543,6 +548,20 @@ test("log() caps large payloads before pretty-printing and skips DOM writes whil
     renderer,
     /debugPanel\?\.addEventListener\("toggle"/,
     "opening the debug panel must catch up the deferred log buffer",
+  );
+});
+
+test("orb animation is paused while idle so the always-on-top window does not composite every frame", () => {
+  const css = readSource("styles.css");
+  assert.match(
+    css,
+    /animation-play-state:\s*paused/,
+    "the orb must pause by default (idle and first paint)",
+  );
+  assert.match(
+    css,
+    /animation-play-state:\s*running/,
+    "active states (listening/connecting/running/error) must resume the orb animation",
   );
 });
 

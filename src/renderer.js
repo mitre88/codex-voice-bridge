@@ -75,6 +75,11 @@ let connectAbortController;
 let hasStoredKey = false;
 let sourceCaption = "";
 let outputCaption = "";
+// Transcript deltas arrive many times per second. Concatenating into the
+// growing caption string on every delta copies up to 50KB per event; keep
+// parts here and join once per animation frame (and once if we hit the cap).
+const sourceBucket = { parts: [], length: 0 };
+const outputBucket = { parts: [], length: 0 };
 let baseConfigText = "";
 let lastMediaDevices = [];
 let warnedMissingVirtualAudio = false;
@@ -241,6 +246,10 @@ function getVoiceOptions() {
 }
 
 function resetCaptions() {
+  sourceBucket.parts = [];
+  sourceBucket.length = 0;
+  outputBucket.parts = [];
+  outputBucket.length = 0;
   sourceCaption = "";
   outputCaption = "";
   renderCaptions();
@@ -253,6 +262,8 @@ function renderCaptions() {
   captionsDirty = true;
   requestAnimationFrame(() => {
     captionsDirty = false;
+    sourceCaption = sourceBucket.parts.join("");
+    outputCaption = outputBucket.parts.join("");
     sourceCaptionEl.textContent = sourceCaption.trim() || "...";
     outputCaptionEl.textContent = outputCaption.trim() || "...";
   });
@@ -269,13 +280,22 @@ const MAX_CAPTION_CHARS = 50000;
 
 function appendCaption(kind, text, replace = false) {
   if (!text) return;
-  let next =
-    kind === "source" ? (replace ? text : `${sourceCaption}${text}`) : (replace ? text : `${outputCaption}${text}`);
-  if (next.length > MAX_CAPTION_CHARS) {
-    next = `...[truncated ${next.length - MAX_CAPTION_CHARS} chars]\n${next.slice(-MAX_CAPTION_CHARS)}`;
+  const bucket = kind === "source" ? sourceBucket : outputBucket;
+  if (replace) {
+    bucket.parts = [text];
+    bucket.length = text.length;
+  } else {
+    bucket.parts.push(text);
+    bucket.length += text.length;
   }
-  if (kind === "source") sourceCaption = next;
-  else outputCaption = next;
+  if (bucket.length > MAX_CAPTION_CHARS) {
+    let next = bucket.parts.join("");
+    next = `...[truncated ${next.length - MAX_CAPTION_CHARS} chars]\n${next.slice(-MAX_CAPTION_CHARS)}`;
+    bucket.parts = [next];
+    bucket.length = next.length;
+  } else if (bucket.parts.length >= 32) {
+    bucket.parts = [bucket.parts.join("")];
+  }
   renderCaptions();
 }
 
