@@ -128,7 +128,25 @@ function setStatus(text, state) {
   document.body.dataset.state = state || text.toLowerCase().replace(/\s+/g, "-");
 }
 
+const logLines = [];
+let logChars = 0;
 let logBuffer = "";
+
+function joinLogLines() {
+  return logLines.join("");
+}
+
+function pushLogLine(line) {
+  logLines.unshift(line);
+  logChars += line.length;
+  while (logChars > 50000 && logLines.length > 1) {
+    logChars -= logLines.pop().length;
+  }
+  if (logChars > 50000 && logLines.length === 1) {
+    logLines[0] = logLines[0].slice(0, 50000);
+    logChars = logLines[0].length;
+  }
+}
 
 function log(message, data) {
   // Serialize defensively: log() runs inside the window error/unhandled
@@ -160,12 +178,14 @@ function log(message, data) {
   }
   const suffix = data ? `\n${typeof logData === "string" ? logData : serialized}` : "";
   const line = `${new Date().toLocaleTimeString()}  ${message}${suffix}\n`;
-  logBuffer = `${line}${logBuffer}`;
-  // Cap the in-memory log so long Codex streams cannot grow the DOM forever.
-  if (logBuffer.length > 50000) logBuffer = logBuffer.slice(0, 50000);
-  // A closed <details> panel does not need a 50KB textContent rewrite; paint
-  // only while the user is looking at it (and catch up on toggle).
-  if (debugPanel?.open) logEl.textContent = logBuffer;
+  // Newest-first line list: concatenating into a 50KB string on every log
+  // copied the whole buffer (and then sliced it) even while the debug panel
+  // was closed. Join only when the user can see it.
+  pushLogLine(line);
+  if (debugPanel?.open) {
+    logBuffer = joinLogLines();
+    logEl.textContent = logBuffer;
+  }
   tryBridge()?.log("ui", { message, data: logData }).catch(() => {});
 }
 
@@ -975,7 +995,10 @@ autoRunInput.addEventListener("change", () => {
   if (autoRunInput.checked && pendingAction) executeAction(pendingAction);
 });
 debugPanel?.addEventListener("toggle", () => {
-  if (debugPanel.open) logEl.textContent = logBuffer;
+  if (debugPanel.open) {
+    logBuffer = joinLogLines();
+    logEl.textContent = logBuffer;
+  }
 });
 navigator.mediaDevices?.addEventListener?.("devicechange", () => refreshMediaDevices(false).catch(() => {}));
 

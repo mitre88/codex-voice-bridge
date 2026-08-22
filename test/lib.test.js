@@ -1445,6 +1445,19 @@ test("createOutputAccumulator keeps the tail across many small chunks without fl
   assert.equal(big.capped, true);
 });
 
+test("createOutputAccumulator stays linear across thousands of tiny chunks", () => {
+  // Without compacting, trim used Array.shift() on the chunk list — O(n) per
+  // overflow byte, quadratic over a 1MB stream of 1-char writes. Compacting
+  // into one string before slicing keeps this in linear time and bounded
+  // memory. The public contract is unchanged: cap at maxChars, keep the tail.
+  const acc = createOutputAccumulator(100);
+  for (let i = 0; i < 10000; i++) acc.push(String(i % 10));
+  assert.equal(acc.length, 100);
+  assert.equal(acc.capped, true);
+  const expectedTail = Array.from({ length: 100 }, (_, i) => String((9900 + i) % 10)).join("");
+  assert.equal(acc.text(), expectedTail);
+});
+
 test("resolveWorkdir keeps paths inside the base workdir", () => {
   const base = path.join(path.sep, "Users", "alex", "projects", "app");
   assert.equal(resolveWorkdir(undefined, base), base);

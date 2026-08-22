@@ -763,25 +763,28 @@ export function createOutputAccumulator(maxChars = 1024 * 1024) {
   // Chunk list + running length so a capped 1MB buffer does not copy the
   // whole string on every small stdout chunk. join() happens once, when the
   // caller asks for the final text (typically when the child exits).
+  // Compact before trimming: dropping the head with Array.shift() on tens of
+  // thousands of tiny chunks is quadratic and would freeze the main process
+  // on a runaway stream of 1-byte writes (the exact case the cap exists to
+  // survive). Join into one string, then slice the tail.
+  const COMPACT_AFTER = 32;
   const chunks = [];
   let length = 0;
   let capped = false;
 
+  function compact() {
+    if (chunks.length <= 1) return;
+    const joined = chunks.join("");
+    chunks.length = 0;
+    chunks.push(joined);
+  }
+
   function trimToMax() {
-    while (length > maxChars && chunks.length > 0) {
-      const extra = length - maxChars;
-      const first = chunks[0];
-      if (first.length <= extra) {
-        chunks.shift();
-        length -= first.length;
-        capped = true;
-      } else {
-        chunks[0] = first.slice(extra);
-        length -= extra;
-        capped = true;
-        break;
-      }
-    }
+    compact();
+    if (length <= maxChars) return;
+    capped = true;
+    chunks[0] = chunks[0].slice(-maxChars);
+    length = maxChars;
   }
 
   return {
@@ -791,6 +794,7 @@ export function createOutputAccumulator(maxChars = 1024 * 1024) {
       chunks.push(piece);
       length += piece.length;
       if (length > maxChars) trimToMax();
+      else if (chunks.length >= COMPACT_AFTER) compact();
     },
     text() {
       return chunks.join("");

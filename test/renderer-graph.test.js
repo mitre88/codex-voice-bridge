@@ -536,7 +536,7 @@ test("log() caps large payloads before pretty-printing and skips DOM writes whil
   );
   assert.match(
     fnBody,
-    /if \(debugPanel\?\.open\) logEl\.textContent = logBuffer/,
+    /if \(debugPanel\?\.open\) \{[\s\S]*?logEl\.textContent = logBuffer/,
     "log() must not rewrite the debug <pre> while the panel is closed",
   );
   assert.match(
