@@ -293,6 +293,7 @@ test("lib.js re-exports the renderer helpers for a single import surface", async
   assert.equal(typeof lib.truncateOutput, "function");
   assert.equal(typeof lib.hasVirtualAudioDevice, "function");
   assert.equal(typeof lib.sameMediaDeviceList, "function");
+  assert.equal(typeof lib.createDebugLogBuffer, "function");
   assert.ok(lib.VIRTUAL_AUDIO_LABEL instanceof RegExp);
 });
 
@@ -670,15 +671,21 @@ test("hidden caption panel skips transcript accumulation and DOM joins", () => {
 test("devicechange is ignored while the window is hidden and catches up on show", () => {
   // The global shortcut hide()s the window without destroying the renderer,
   // so macOS still delivers devicechange bursts. Enumerating while hidden is
-  // wasted work; showing the window must refresh so dropdowns are not stale.
+  // wasted work; showing the window must refresh only if a change arrived
+  // during the hide (or the list was never filled).
   const renderer = readSource("renderer.js");
   const listenerStart = renderer.indexOf("navigator.mediaDevices?.addEventListener");
   assert.ok(listenerStart !== -1, "renderer.js must listen for devicechange");
-  const listenerBody = renderer.slice(listenerStart, listenerStart + 400);
+  const listenerBody = renderer.slice(listenerStart, listenerStart + 700);
   assert.match(
     listenerBody,
     /document\.hidden/,
     "devicechange must skip refreshMediaDevices while the window is hidden",
+  );
+  assert.match(
+    listenerBody,
+    /devicesChangedWhileHidden = true/,
+    "devicechange while hidden must record a pending refresh instead of enumerating",
   );
   assert.match(
     renderer,
@@ -689,8 +696,30 @@ test("devicechange is ignored while the window is hidden and catches up on show"
   const syncBody = renderer.slice(syncStart, renderer.indexOf("document.addEventListener(\"visibilitychange\""));
   assert.match(
     syncBody,
+    /devicesChangedWhileHidden/,
+    "becoming visible must consult the pending-devicechange flag before enumerating",
+  );
+  assert.match(
+    syncBody,
     /refreshMediaDevices\(false\)/,
     "becoming visible must refresh the device list skipped while hidden",
+  );
+});
+
+test("debug log uses a ring buffer instead of unshifting every line", () => {
+  const renderer = readSource("renderer.js");
+  assert.match(
+    renderer,
+    /createDebugLogBuffer/,
+    "renderer.js must use createDebugLogBuffer for the capped debug log",
+  );
+  const pushStart = renderer.indexOf("function pushLogLine");
+  assert.ok(pushStart !== -1, "renderer.js must define pushLogLine");
+  const pushBody = renderer.slice(pushStart, renderer.indexOf("function log("));
+  assert.doesNotMatch(
+    pushBody,
+    /unshift/,
+    "pushLogLine must not Array.unshift (O(n) per log line)",
   );
 });
 

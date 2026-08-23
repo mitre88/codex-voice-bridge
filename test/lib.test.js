@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   accumulateOutput,
   applyEnvOverrides,
+  createDebugLogBuffer,
   createOutputAccumulator,
   escapeAppleScript,
   extractFirstJsonObject,
@@ -1631,6 +1632,38 @@ test("hasVirtualAudioDevice tolerates non-array input", () => {
   assert.equal(hasVirtualAudioDevice(undefined), false);
   assert.equal(hasVirtualAudioDevice("BlackHole"), false);
   assert.equal(hasVirtualAudioDevice({ label: "BlackHole 2ch" }), false);
+});
+
+test("createDebugLogBuffer joins newest-first without shifting the line array", () => {
+  const buf = createDebugLogBuffer(100);
+  buf.push("old\n");
+  buf.push("mid\n");
+  buf.push("new\n");
+  assert.equal(buf.joinNewestFirst(), "new\nmid\nold\n");
+  assert.equal(buf.length, 12);
+});
+
+test("createDebugLogBuffer drops oldest lines when over the char cap", () => {
+  const buf = createDebugLogBuffer(10);
+  buf.push("aaaa\n");
+  buf.push("bbbb\n");
+  buf.push("cccc\n");
+  assert.equal(buf.joinNewestFirst(), "cccc\nbbbb\n");
+  assert.equal(buf.length, 10);
+});
+
+test("createDebugLogBuffer keeps the head of a single oversized line", () => {
+  const buf = createDebugLogBuffer(8);
+  buf.push("HEAD....TAIL");
+  assert.equal(buf.joinNewestFirst(), "HEAD....");
+  assert.equal(buf.length, 8);
+});
+
+test("createDebugLogBuffer compact of dropped prefixes keeps newest-first order", () => {
+  const buf = createDebugLogBuffer(15);
+  for (let i = 0; i < 40; i++) buf.push(`${String(i).padStart(2, "0")}\n`);
+  assert.equal(buf.joinNewestFirst(), "39\n38\n37\n36\n35\n");
+  assert.equal(buf.length, 15);
 });
 
 test("sameMediaDeviceList is true only when id, kind, and label match in order", () => {

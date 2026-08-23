@@ -348,6 +348,55 @@ export function isSdpAnswer(value) {
   return typeof value === "string" && value.trimStart().startsWith("v=");
 }
 
+// Newest-first debug log without Array.unshift. Lines are appended (O(1));
+// a start index skips dropped oldest lines; join walks from the end so the
+// <pre> still shows newest first. Compact the dead prefix every 32 drops so
+// the backing array cannot grow without bound on a long session.
+export function createDebugLogBuffer(maxChars = 50000) {
+  const COMPACT_AFTER = 32;
+  const lines = [];
+  let start = 0;
+  let chars = 0;
+
+  function compact() {
+    if (start === 0) return;
+    lines.splice(0, start);
+    start = 0;
+  }
+
+  return {
+    push(line) {
+      const piece = String(line);
+      if (!piece) return;
+      lines.push(piece);
+      chars += piece.length;
+      while (chars > maxChars && start < lines.length - 1) {
+        chars -= lines[start].length;
+        start += 1;
+      }
+      if (chars > maxChars && start === lines.length - 1) {
+        // Keep the HEAD of the remaining (newest) line — same as the old
+        // unshift + slice(0, maxChars). The timestamp and message start
+        // stay; a single huge Codex dump does not rotate the visible log
+        // to its tail.
+        lines[start] = lines[start].slice(0, maxChars);
+        chars = lines[start].length;
+      }
+      if (start >= COMPACT_AFTER) compact();
+    },
+    joinNewestFirst() {
+      let out = "";
+      for (let i = lines.length - 1; i >= start; i--) {
+        out += lines[i];
+      }
+      return out;
+    },
+    get length() {
+      return chars;
+    },
+  };
+}
+
 export function truncateOutput(output, maxChars = 30000) {
   const out = { ...output };
   for (const key of ["stdout", "stderr"]) {

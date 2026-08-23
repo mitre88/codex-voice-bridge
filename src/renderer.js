@@ -1,4 +1,4 @@
-import { hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, sameMediaDeviceList, truncateOutput } from "./renderer-utils.js";
+import { createDebugLogBuffer, hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, sameMediaDeviceList, truncateOutput } from "./renderer-utils.js";
 
 // How long the Realtime SDP exchange may take before we give up. The main
 // process already times out the token fetch; this bounds the second network
@@ -82,6 +82,10 @@ const sourceBucket = { parts: [], length: 0 };
 const outputBucket = { parts: [], length: 0 };
 let baseConfigText = "";
 let lastMediaDevices = [];
+// Set by devicechange while hide()'d; syncWindowVisibility enumerates only
+// when this is true (or the list was never filled), so a no-op show does
+// not pay a native enumerateDevices() hop.
+let devicesChangedWhileHidden = false;
 let warnedMissingVirtualAudio = false;
 // Set while the last refresh had to fall back to the default because a
 // previously selected device disappeared; cleared by the first refresh that
@@ -133,24 +137,15 @@ function setStatus(text, state) {
   document.body.dataset.state = state || text.toLowerCase().replace(/\s+/g, "-");
 }
 
-const logLines = [];
-let logChars = 0;
+const debugLog = createDebugLogBuffer();
 let logBuffer = "";
 
 function joinLogLines() {
-  return logLines.join("");
+  return debugLog.joinNewestFirst();
 }
 
 function pushLogLine(line) {
-  logLines.unshift(line);
-  logChars += line.length;
-  while (logChars > 50000 && logLines.length > 1) {
-    logChars -= logLines.pop().length;
-  }
-  if (logChars > 50000 && logLines.length === 1) {
-    logLines[0] = logLines[0].slice(0, 50000);
-    logChars = logLines[0].length;
-  }
+  debugLog.push(line);
 }
 
 function log(message, data) {
@@ -1048,9 +1043,15 @@ function syncWindowVisibility() {
   const hidden = document.hidden;
   document.body.classList.toggle("is-background", hidden);
   if (hidden) return;
-  // Catch up work we skipped while hide()'d: device dropdowns (Bluetooth
-  // flaps during the hide) and any caption parts that were not painted.
-  refreshMediaDevices(false).catch(() => {});
+  // Catch up work we skipped while hide()'d. Enumerate only if a
+  // devicechange arrived during the hide (or the list was never filled):
+  // a no-op enumerateDevices() is still a native hop, and Bluetooth flaps
+  // that never happened should not pay it on every show. Caption parts
+  // that were not painted still flush below.
+  if (devicesChangedWhileHidden || lastMediaDevices.length === 0) {
+    devicesChangedWhileHidden = false;
+    refreshMediaDevices(false).catch(() => {});
+  }
   captionsDirty = false;
   renderCaptions();
 }
@@ -1058,10 +1059,13 @@ function syncWindowVisibility() {
 document.addEventListener("visibilitychange", syncWindowVisibility);
 navigator.mediaDevices?.addEventListener?.("devicechange", () => {
   // hide() does not tear down the renderer; macOS still delivers
-  // devicechange bursts. Skip the native enumeration until the window is
-  // shown again (syncWindowVisibility refreshes then). Distinct from
+  // devicechange bursts. Record the change and skip the native
+  // enumeration until the window is shown again. Distinct from
   // coalescing bursts while visible.
-  if (document.hidden) return;
+  if (document.hidden) {
+    devicesChangedWhileHidden = true;
+    return;
+  }
   refreshMediaDevices(false).catch(() => {});
 });
 
