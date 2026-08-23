@@ -253,12 +253,14 @@ function resetCaptions() {
 let captionsDirty = false;
 
 function renderCaptions() {
+  // Assistant mode and hide() must not schedule a frame the compositor
+  // will never show. Parts still accumulate in appendCaption; the
+  // visibilitychange handler paints once on show.
+  if (captionPanel?.hidden || document.hidden) return;
   if (captionsDirty) return;
   captionsDirty = true;
   requestAnimationFrame(() => {
     captionsDirty = false;
-    // Assistant mode hides the panel; a shortcut-hidden window should not
-    // paint captions either. Parts keep accumulating for the next visible frame.
     if (captionPanel?.hidden || document.hidden) return;
     sourceCaption = sourceBucket.parts.join("");
     outputCaption = outputBucket.parts.join("");

@@ -620,6 +620,11 @@ test("captions coalesce to one DOM write per frame", () => {
     /requestAnimationFrame/,
     "renderCaptions must coalesce transcript deltas onto animation frames",
   );
+  assert.ok(
+    fnBody.indexOf("document.hidden") !== -1 &&
+      fnBody.indexOf("document.hidden") < fnBody.indexOf("requestAnimationFrame"),
+    "renderCaptions must not schedule requestAnimationFrame while the window is hidden",
+  );
 });
 
 test("enabling auto-run executes a pending action instead of letting its auto-reject timer fire", () => {
