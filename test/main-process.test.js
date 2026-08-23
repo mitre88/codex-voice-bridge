@@ -202,6 +202,22 @@ test("renderer log IPC is fire-and-forget (send), not a round-trip invoke", () =
   );
 });
 
+test("onCodexOutput replaces the previous listener instead of stacking them", () => {
+  const preload = readSource("preload.cjs");
+  const fnStart = preload.indexOf("onCodexOutput:");
+  assert.ok(fnStart !== -1, "preload must expose onCodexOutput");
+  const fnBody = preload.slice(fnStart, preload.indexOf("});", fnStart));
+  assert.match(
+    fnBody,
+    /removeAllListeners\("codex-output"\)/,
+    "onCodexOutput must drop any prior codex-output listener before adding a new one",
+  );
+  assert.ok(
+    fnBody.indexOf('removeAllListeners("codex-output")') < fnBody.indexOf('ipcRenderer.on("codex-output"'),
+    "the previous listener must be removed before the new one is added",
+  );
+});
+
 test("runProcess batches streamed output IPC and flushes before settling", () => {
   const main = readSource("main.js");
   const fnStart = main.indexOf("function runProcess");

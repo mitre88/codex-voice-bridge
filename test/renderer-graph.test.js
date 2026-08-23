@@ -552,6 +552,27 @@ test("log() caps large payloads before pretty-printing and skips DOM writes whil
   );
 });
 
+test("closing the debug panel drops the joined log from the DOM", () => {
+  // logLines already holds the capped newest-first text. After the user
+  // collapses the <details>, keeping the joined 50KB in <pre> + logBuffer
+  // is a duplicate the compositor still retains. Clear both; the toggle
+  // open path rejoins from the line list.
+  const renderer = readSource("renderer.js");
+  const toggleStart = renderer.indexOf('debugPanel?.addEventListener("toggle"');
+  assert.ok(toggleStart !== -1, "renderer.js must listen for debug panel toggle");
+  const toggleBody = renderer.slice(toggleStart, renderer.indexOf("function syncWindowVisibility"));
+  assert.match(
+    toggleBody,
+    /logEl\.textContent = ""/,
+    "closing the debug panel must clear the <pre> so the joined copy is not retained",
+  );
+  assert.match(
+    toggleBody,
+    /logBuffer = ""/,
+    "closing the debug panel must drop the joined logBuffer duplicate",
+  );
+});
+
 test("orb animation is paused while idle so the always-on-top window does not composite every frame", () => {
   const css = readSource("styles.css");
   assert.match(

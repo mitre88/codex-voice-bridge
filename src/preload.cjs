@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld("voiceBridge", {
   },
   logPath: () => ipcRenderer.invoke("log:path"),
   onCodexOutput: (callback) => {
+    // Replace, do not stack: a second subscribe (dev reload, or a future
+    // caller) would otherwise deliver every Codex chunk twice and grow the
+    // renderer log twice as fast.
+    ipcRenderer.removeAllListeners("codex-output");
     ipcRenderer.on("codex-output", (_event, chunk) => callback(chunk));
   },
 });

@@ -1035,6 +1035,12 @@ debugPanel?.addEventListener("toggle", () => {
   if (debugPanel.open) {
     logBuffer = joinLogLines();
     logEl.textContent = logBuffer;
+  } else {
+    // The line list already holds the capped log. Leaving the joined 50KB
+    // in the <pre> (and in logBuffer) after the user closes the panel is a
+    // duplicate the compositor still has to keep. Rejoin on the next open.
+    logEl.textContent = "";
+    logBuffer = "";
   }
 });
 
