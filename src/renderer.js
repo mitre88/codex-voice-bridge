@@ -262,8 +262,9 @@ function renderCaptions() {
   captionsDirty = true;
   requestAnimationFrame(() => {
     captionsDirty = false;
-    // Assistant mode hides the panel; skip the join + DOM write.
-    if (captionPanel?.hidden) return;
+    // Assistant mode hides the panel; a shortcut-hidden window should not
+    // paint captions either. Parts keep accumulating for the next visible frame.
+    if (captionPanel?.hidden || document.hidden) return;
     sourceCaption = sourceBucket.parts.join("");
     outputCaption = outputBucket.parts.join("");
     sourceCaptionEl.textContent = sourceCaption.trim() || "...";
@@ -1036,7 +1037,27 @@ debugPanel?.addEventListener("toggle", () => {
     logEl.textContent = logBuffer;
   }
 });
-navigator.mediaDevices?.addEventListener?.("devicechange", () => refreshMediaDevices(false).catch(() => {}));
+
+function syncWindowVisibility() {
+  const hidden = document.hidden;
+  document.body.classList.toggle("is-background", hidden);
+  if (hidden) return;
+  // Catch up work we skipped while hide()'d: device dropdowns (Bluetooth
+  // flaps during the hide) and any caption parts that were not painted.
+  refreshMediaDevices(false).catch(() => {});
+  captionsDirty = false;
+  renderCaptions();
+}
+
+document.addEventListener("visibilitychange", syncWindowVisibility);
+navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+  // hide() does not tear down the renderer; macOS still delivers
+  // devicechange bursts. Skip the native enumeration until the window is
+  // shown again (syncWindowVisibility refreshes then). Distinct from
+  // coalescing bursts while visible.
+  if (document.hidden) return;
+  refreshMediaDevices(false).catch(() => {});
+});
 
 let codexOutputBuffer = "";
 

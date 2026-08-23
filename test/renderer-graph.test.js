@@ -566,6 +566,28 @@ test("orb animation is paused while idle so the always-on-top window does not co
   );
 });
 
+test("orb animation is paused while the shortcut-hidden window is in the background", () => {
+  // hide() leaves the renderer running. A Listening session would otherwise
+  // keep the compositor scheduled behind a hidden always-on-top window.
+  const css = readSource("styles.css");
+  assert.match(
+    css,
+    /body\.is-background \.orb(?:,\s*body\.is-background \.orb::before)?\s*\{[^}]*animation-play-state:\s*paused/,
+    "a hidden window must pause the orb even when data-state is listening/running",
+  );
+  const renderer = readSource("renderer.js");
+  assert.match(
+    renderer,
+    /visibilitychange/,
+    "the renderer must sync is-background from document visibility",
+  );
+  assert.match(
+    renderer,
+    /classList\.toggle\("is-background"/,
+    "visibilitychange must toggle body.is-background",
+  );
+});
+
 test("captions coalesce to one DOM write per frame", () => {
   const renderer = readSource("renderer.js");
   const fnStart = renderer.indexOf("function renderCaptions()");
@@ -621,6 +643,33 @@ test("hidden caption panel skips transcript accumulation and DOM joins", () => {
     renderBody,
     /captionPanel\?\.hidden/,
     "renderCaptions must skip the join + textContent write while the panel is hidden",
+  );
+});
+
+test("devicechange is ignored while the window is hidden and catches up on show", () => {
+  // The global shortcut hide()s the window without destroying the renderer,
+  // so macOS still delivers devicechange bursts. Enumerating while hidden is
+  // wasted work; showing the window must refresh so dropdowns are not stale.
+  const renderer = readSource("renderer.js");
+  const listenerStart = renderer.indexOf("navigator.mediaDevices?.addEventListener");
+  assert.ok(listenerStart !== -1, "renderer.js must listen for devicechange");
+  const listenerBody = renderer.slice(listenerStart, listenerStart + 400);
+  assert.match(
+    listenerBody,
+    /document\.hidden/,
+    "devicechange must skip refreshMediaDevices while the window is hidden",
+  );
+  assert.match(
+    renderer,
+    /function syncWindowVisibility\(/,
+    "renderer.js must define syncWindowVisibility",
+  );
+  const syncStart = renderer.indexOf("function syncWindowVisibility");
+  const syncBody = renderer.slice(syncStart, renderer.indexOf("document.addEventListener(\"visibilitychange\""));
+  assert.match(
+    syncBody,
+    /refreshMediaDevices\(false\)/,
+    "becoming visible must refresh the device list skipped while hidden",
   );
 });
 

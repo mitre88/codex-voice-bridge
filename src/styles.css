@@ -157,6 +157,14 @@ body[data-state="error"] .orb::before {
   animation-duration: 4s;
 }
 
+/* hide() via the global shortcut leaves the renderer running. Pause the
+   always-on-top orb so a Listening session that is not on screen does not
+   keep the compositor scheduled. */
+body.is-background .orb,
+body.is-background .orb::before {
+  animation-play-state: paused;
+}
+
 @keyframes orb-pulse {
   0%,
   100% {
