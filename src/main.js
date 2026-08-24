@@ -909,6 +909,11 @@ async function openAppVisible(input = {}) {
 
   const cuaResult = await runCuaDriver({ tool_name: "launch_app", json_args: launchArgs, reason: input.reason || "Open app visibly." });
   const activateResult = await activateApp(resolved);
+  // Cap the driver's stdout/stderr before JSON.stringify. Embedding a 1MB
+  // launchOutput would build a megabyte JSON blob that mac:run then
+  // tail-slices, dropping launched/activated/app at the front — the
+  // fields the model needs to see which step failed.
+  const launch = truncateOutput(cuaResult);
   return {
     ok: cuaResult.ok && activateResult.ok,
     code: cuaResult.ok && activateResult.ok ? 0 : 1,
@@ -921,9 +926,9 @@ async function openAppVisible(input = {}) {
       app: resolved,
       launched: cuaResult.ok,
       activated: activateResult.ok,
-      launchOutput: cuaResult.stdout,
+      launchOutput: launch.stdout,
     }),
-    stderr: [cuaResult.stderr, activateResult.stderr].filter(Boolean).join("\n"),
+    stderr: [launch.stderr, activateResult.stderr].filter(Boolean).join("\n"),
   };
 }
 

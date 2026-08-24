@@ -67,8 +67,13 @@ test("openAppVisible reports the cua-driver launch result to the model, not just
   );
   assert.match(
     fnBody,
-    /launchOutput: cuaResult\.stdout/,
-    "openAppVisible stdout must include the driver's own launch output",
+    /truncateOutput\(cuaResult\)/,
+    "openAppVisible must cap launch stdout before JSON.stringify so a 1MB dump cannot drop launched/activated",
+  );
+  assert.match(
+    fnBody,
+    /launchOutput: launch\.stdout/,
+    "openAppVisible stdout must include the driver's own (capped) launch output",
   );
 });
 
