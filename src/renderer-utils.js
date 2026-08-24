@@ -352,6 +352,17 @@ export function isSdpAnswer(value) {
 // a start index skips dropped oldest lines; join walks from the end so the
 // <pre> still shows newest first. Compact the dead prefix every 32 drops so
 // the backing array cannot grow without bound on a long session.
+// Live captions are joined every animation frame. trim() on a 50KB string
+// allocates a copy whenever the edges are whitespace; when they are not
+// (the common case for a spoken turn), reuse the joined string.
+export function captionDisplayText(text) {
+  if (!text) return "...";
+  const start = text[0];
+  const end = text[text.length - 1];
+  if (!/\s/.test(start) && !/\s/.test(end)) return text;
+  return text.trim() || "...";
+}
+
 export function createDebugLogBuffer(maxChars = 50000) {
   const COMPACT_AFTER = 32;
   const lines = [];

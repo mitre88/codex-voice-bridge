@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   accumulateOutput,
   applyEnvOverrides,
+  captionDisplayText,
   createDebugLogBuffer,
   createOutputAccumulator,
   escapeAppleScript,
@@ -1632,6 +1633,16 @@ test("hasVirtualAudioDevice tolerates non-array input", () => {
   assert.equal(hasVirtualAudioDevice(undefined), false);
   assert.equal(hasVirtualAudioDevice("BlackHole"), false);
   assert.equal(hasVirtualAudioDevice({ label: "BlackHole 2ch" }), false);
+});
+
+test("captionDisplayText reuses the string when trim would be a no-op", () => {
+  const spoken = "Hello from the live caption";
+  assert.equal(captionDisplayText(spoken), spoken);
+  assert.ok(captionDisplayText(spoken) === spoken);
+  assert.equal(captionDisplayText(""), "...");
+  assert.equal(captionDisplayText("   "), "...");
+  assert.equal(captionDisplayText("  padded  "), "padded");
+  assert.equal(captionDisplayText("\nline\n"), "line");
 });
 
 test("createDebugLogBuffer joins newest-first without shifting the line array", () => {

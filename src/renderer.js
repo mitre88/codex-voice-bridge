@@ -1,4 +1,4 @@
-import { createDebugLogBuffer, hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, sameMediaDeviceList, truncateOutput } from "./renderer-utils.js";
+import { captionDisplayText, createDebugLogBuffer, hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, sameMediaDeviceList, truncateOutput } from "./renderer-utils.js";
 
 // How long the Realtime SDP exchange may take before we give up. The main
 // process already times out the token fetch; this bounds the second network
@@ -73,8 +73,6 @@ let actionDataChannel;
 // connect; aborting a finished connect's controller is a harmless no-op.
 let connectAbortController;
 let hasStoredKey = false;
-let sourceCaption = "";
-let outputCaption = "";
 // Transcript deltas arrive many times per second. Concatenating into the
 // growing caption string on every delta copies up to 50KB per event; keep
 // parts here and join once per animation frame (and once if we hit the cap).
@@ -245,8 +243,6 @@ function resetCaptions() {
   sourceBucket.length = 0;
   outputBucket.parts = [];
   outputBucket.length = 0;
-  sourceCaption = "";
-  outputCaption = "";
   renderCaptions();
 }
 
@@ -262,10 +258,8 @@ function renderCaptions() {
   requestAnimationFrame(() => {
     captionsDirty = false;
     if (captionPanel?.hidden || document.hidden) return;
-    sourceCaption = sourceBucket.parts.join("");
-    outputCaption = outputBucket.parts.join("");
-    sourceCaptionEl.textContent = sourceCaption.trim() || "...";
-    outputCaptionEl.textContent = outputCaption.trim() || "...";
+    sourceCaptionEl.textContent = captionDisplayText(sourceBucket.parts.join(""));
+    outputCaptionEl.textContent = captionDisplayText(outputBucket.parts.join(""));
   });
 }
 

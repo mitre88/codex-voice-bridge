@@ -294,6 +294,7 @@ test("lib.js re-exports the renderer helpers for a single import surface", async
   assert.equal(typeof lib.hasVirtualAudioDevice, "function");
   assert.equal(typeof lib.sameMediaDeviceList, "function");
   assert.equal(typeof lib.createDebugLogBuffer, "function");
+  assert.equal(typeof lib.captionDisplayText, "function");
   assert.ok(lib.VIRTUAL_AUDIO_LABEL instanceof RegExp);
 });
 
@@ -624,6 +625,16 @@ test("captions coalesce to one DOM write per frame", () => {
     fnBody.indexOf("document.hidden") !== -1 &&
       fnBody.indexOf("document.hidden") < fnBody.indexOf("requestAnimationFrame"),
     "renderCaptions must not schedule requestAnimationFrame while the window is hidden",
+  );
+  assert.match(
+    fnBody,
+    /captionDisplayText/,
+    "renderCaptions must use captionDisplayText so a no-op trim does not copy 50KB per frame",
+  );
+  assert.doesNotMatch(
+    renderer,
+    /^let sourceCaption/m,
+    "renderer.js must not keep a live sourceCaption copy of the already-capped bucket",
   );
 });
 
