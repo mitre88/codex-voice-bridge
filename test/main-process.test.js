@@ -917,4 +917,9 @@ test("codex and cua IPC returns are truncated before the structured clone into t
     /ipcMain\.handle\("cua:run", guard\(async \(_event, input\) => truncateOutput\(await runCuaDriver\(input\)\)\)\)/,
     "cua:run must truncate the invoke return before sending it to the renderer",
   );
+  assert.match(
+    main,
+    /ipcMain\.handle\("mac:run", guard\(async \(_event, input\) => truncateOutput\(await runMacAction\(input\)\)\)\)/,
+    "mac:run must truncate type/press (and open_app) returns before the renderer clone",
+  );
 });

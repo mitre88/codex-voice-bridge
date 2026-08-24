@@ -1257,9 +1257,11 @@ ipcMain.handle("realtime:key-status", guard(async () => ({
 // the renderer already applied after the clone — so this drops the extra
 // copy without changing what the session receives. Streamed debug output
 // still arrives via the batched "codex-output" channel.
+// mac:run is the same shape: type/press return runCuaDriver's 1MB buffer
+// directly, and open_app embeds that stdout in a JSON blob.
 ipcMain.handle("codex:run", guard(async (_event, input) => truncateOutput(await runCodex(input))));
 ipcMain.handle("cua:run", guard(async (_event, input) => truncateOutput(await runCuaDriver(input))));
-ipcMain.handle("mac:run", guard((_event, input) => runMacAction(input)));
+ipcMain.handle("mac:run", guard(async (_event, input) => truncateOutput(await runMacAction(input))));
 ipcMain.on("log:renderer", (event, message, data) => {
   if (!isTrustedSender(event)) {
     writeLog("blocked IPC call from untrusted sender", { url: event.senderFrame?.url });
