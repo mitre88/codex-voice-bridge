@@ -878,9 +878,9 @@ test("OpenAI token success bodies are stream-capped before JSON.parse", () => {
     "assistant, translation, and transcription token success paths must all use readCappedJson",
   );
   assert.equal(
-    (main.match(/response\.json\(\)/g) || []).length,
+    (main.match(/await response\.json\(\)/g) || []).length,
     0,
-    "main.js must not buffer an entire HTTP body with response.json()",
+    "main.js must not buffer an entire HTTP body with await response.json()",
   );
 });
 

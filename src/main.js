@@ -554,9 +554,9 @@ async function createAssistantClientSecret(apiKey, options = {}) {
   }
   if (!response.ok) throw new Error(`OpenAI Realtime token failed: ${response.status} ${await readCappedResponseText(response)}`);
 
-  // A 2xx HTML dump (captive portal) must not be buffered whole by
-  // response.json() just to discover it is not a token. 64KB covers a
-  // real client_secrets payload (secret + session echo) and cancels the rest.
+  // A 2xx HTML dump (captive portal) must not be buffered whole just to
+  // discover it is not a token. 64KB covers a real client_secrets payload
+  // (secret + session echo) and cancels the rest.
   return normalizeRealtimeToken(await readCappedJson(response), {
     mode: "assistant",
     callEndpoint: "https://api.openai.com/v1/realtime/calls",
