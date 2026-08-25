@@ -297,6 +297,7 @@ test("lib.js re-exports the renderer helpers for a single import surface", async
   assert.equal(typeof lib.captionDisplayText, "function");
   assert.equal(typeof lib.capErrorBody, "function");
   assert.equal(typeof lib.readCappedResponseText, "function");
+  assert.equal(typeof lib.readCappedJson, "function");
   assert.ok(lib.VIRTUAL_AUDIO_LABEL instanceof RegExp);
 });
 

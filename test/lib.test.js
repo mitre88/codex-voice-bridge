@@ -8,6 +8,7 @@ import {
   applyEnvOverrides,
   capErrorBody,
   captionDisplayText,
+  readCappedJson,
   readCappedResponseText,
   createDebugLogBuffer,
   createOutputAccumulator,
@@ -1387,6 +1388,38 @@ test("readCappedResponseText stops reading once the budget is filled", async () 
   assert.ok(out.includes("truncated"));
   assert.ok(!out.includes("TAIL"));
   assert.equal(await readCappedResponseText(null), "");
+});
+
+test("readCappedJson parses a small body and refuses a huge 2xx dump", async () => {
+  // response.json() buffers the whole stream. A captive portal that answers
+  // 200 with a megabyte of HTML would allocate that page just to throw.
+  // Stream-cap first, then parse; overflow and non-JSON fail with a short
+  // message so Error.message never holds the dump.
+  const encoder = new TextEncoder();
+  const streamBody = (text) => {
+    const bytes = encoder.encode(text);
+    let offset = 0;
+    return new Response(
+      new ReadableStream({
+        pull(controller) {
+          if (offset >= bytes.length) {
+            controller.close();
+            return;
+          }
+          const next = bytes.subarray(offset, offset + 32);
+          offset += next.length;
+          controller.enqueue(next);
+        },
+      }),
+    );
+  };
+  const token = { value: "ek_test", expires_at: 1 };
+  assert.deepEqual(await readCappedJson(streamBody(JSON.stringify(token))), token);
+  await assert.rejects(
+    () => readCappedJson(streamBody(`${"A".repeat(5000)}TAIL`), 20),
+    /unexpectedly large response/,
+  );
+  await assert.rejects(() => readCappedJson(streamBody("<html>portal</html>")), /non-JSON response/);
 });
 
 test("truncateOutput truncates long stdout and preserves metadata", () => {

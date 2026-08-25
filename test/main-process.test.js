@@ -862,6 +862,28 @@ test("OpenAI token error bodies are capped before they land on Error.message", (
   );
 });
 
+test("OpenAI token success bodies are stream-capped before JSON.parse", () => {
+  // A 2xx captive-portal dump used to hit response.json(), which buffers the
+  // entire body before throwing. The three client_secrets success paths must
+  // parse through readCappedJson so the peak stays at the 64KB budget.
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /normalizeRealtimeToken\(await readCappedJson\(response\)/,
+    "token / translation / transcription success paths must stream-cap before JSON.parse",
+  );
+  assert.equal(
+    (main.match(/readCappedJson\(response\)/g) || []).length,
+    3,
+    "assistant, translation, and transcription token success paths must all use readCappedJson",
+  );
+  assert.equal(
+    (main.match(/response\.json\(\)/g) || []).length,
+    0,
+    "main.js must not buffer an entire HTTP body with response.json()",
+  );
+});
+
 test("key-status does not report a whitespace-only OPENAI_API_KEY as a usable key", () => {
   // hasEnvKey hides the API key input field: a whitespace-only env var (the
   // same stray-whitespace class the trim fix addresses) would otherwise keep

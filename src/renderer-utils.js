@@ -478,6 +478,28 @@ export async function readCappedResponseText(response, maxChars = 4000) {
   return overflowed ? `${out}\n...[truncated]` : out;
 }
 
+// Parse a JSON HTTP body without buffering a megabyte 2xx dump.
+// response.json() reads the entire stream first; a captive portal that
+// answers 200 with HTML would allocate that page just to throw SyntaxError.
+// Stream-cap first (same helper as error bodies / SDP), then parse. A body
+// that overflows the budget, or that is not JSON, fails with a short
+// actionable message instead of keeping the dump alive on Error.message.
+export async function readCappedJson(response, maxChars = 65536) {
+  const text = await readCappedResponseText(response, maxChars);
+  if (typeof text === "string" && text.includes("\n...[truncated]")) {
+    throw new Error(
+      "the server returned an unexpectedly large response instead of JSON — a proxy or captive portal may be intercepting the connection.",
+    );
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(
+      "the server returned a non-JSON response — a proxy or captive portal may be intercepting the connection.",
+    );
+  }
+}
+
 export function truncateOutput(output, maxChars = 30000) {
   const out = { ...output };
   for (const key of ["stdout", "stderr"]) {
