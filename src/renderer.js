@@ -321,7 +321,20 @@ function handleTranscriptEvent(event, targets = { source: "source", output: "out
 const MAX_PENDING_ARGS_CHARS = 20000;
 
 function formatPendingArgs(args) {
-  const text = JSON.stringify(args || {}, null, 2);
+  // Cap large strings in the replacer *before* they are copied into the
+  // pretty-printed output. A 200KB json_args blob (or a 1MB model prompt)
+  // used to allocate the full pretty JSON just so the textarea could show
+  // 20KB of it. Execution still uses the original args object.
+  const text = JSON.stringify(
+    args || {},
+    (_key, value) => {
+      if (typeof value === "string" && value.length > MAX_PENDING_ARGS_CHARS) {
+        return `${value.slice(0, MAX_PENDING_ARGS_CHARS)}\n...[truncated ${value.length - MAX_PENDING_ARGS_CHARS} chars]`;
+      }
+      return value;
+    },
+    2,
+  );
   if (text.length <= MAX_PENDING_ARGS_CHARS) return text;
   return `${text.slice(0, MAX_PENDING_ARGS_CHARS)}\n...[truncated ${text.length - MAX_PENDING_ARGS_CHARS} chars]`;
 }

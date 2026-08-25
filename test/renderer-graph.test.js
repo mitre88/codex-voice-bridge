@@ -499,6 +499,11 @@ test("setPendingAction caps the args shown in the pending panel (display-only tr
   );
   assert.match(
     fnBody,
+    /typeof value === "string" && value\.length > MAX_PENDING_ARGS_CHARS/,
+    "formatPendingArgs must cap large strings before JSON.stringify so a 200KB args blob cannot allocate a megabyte preview",
+  );
+  assert.match(
+    fnBody,
     /truncated \$\{text\.length - MAX_PENDING_ARGS_CHARS\} chars/,
     "setPendingAction must mark the truncation so the cut is visible, not silent",
   );
