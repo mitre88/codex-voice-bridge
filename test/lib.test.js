@@ -720,6 +720,17 @@ test("normalizeCuaArgs bounds the alias-guess scan so a huge args blob cannot st
   // whole payload — freezing the main process before the json_args length
   // guard downstream even runs. The scan must be bounded to the head of the
   // payload, with the reason first so a long args blob cannot truncate it.
+  // Large strings must also be capped in the JSON.stringify replacer: a
+  // post-stringify slice still allocated the full JSON just to read 4KB.
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const guessStart = src.indexOf("const ALIAS_GUESS_CHARS");
+  assert.ok(guessStart !== -1, "normalizeCuaArgs must name the alias-guess window");
+  const guessBody = src.slice(guessStart, src.indexOf("for (const { bundleId, re } of getAliasPatterns"));
+  assert.match(
+    guessBody,
+    /typeof value === "string" && value\.length > ALIAS_GUESS_CHARS/,
+    "alias-guess stringify must cap large strings so a 100KB padding field cannot allocate a megabyte JSON",
+  );
   const hugeArgs = { padding: "x".repeat(100000) };
   // The alias mention lives in the reason, which is stringified before args,
   // so it must still resolve even with a huge args blob present.

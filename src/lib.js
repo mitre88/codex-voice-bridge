@@ -488,7 +488,15 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
     // args blob cannot truncate the very field the guess is meant to read.
     // A standalone alias mention lives in the reason or the first chars of
     // args, so truncating cannot weaken the guess for legitimate calls.
-    const text = JSON.stringify({ reason: fullInput?.reason, args }).slice(0, 4096).toLowerCase();
+    // Cap large strings in the replacer too: slice() after stringify still
+    // allocated the full JSON (100KB+ padding) just to scan 4KB of it.
+    const ALIAS_GUESS_CHARS = 4096;
+    const text = JSON.stringify({ reason: fullInput?.reason, args }, (_key, value) => {
+      if (typeof value === "string" && value.length > ALIAS_GUESS_CHARS) {
+        return value.slice(0, ALIAS_GUESS_CHARS);
+      }
+      return value;
+    }).slice(0, ALIAS_GUESS_CHARS).toLowerCase();
     for (const { bundleId, re } of getAliasPatterns(aliases).values()) {
       // Match the alias on word boundaries, not as a raw substring: "keynotes"
       // contains "notes" and "previewing" contains "preview", so a substring
