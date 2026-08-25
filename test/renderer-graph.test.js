@@ -295,6 +295,7 @@ test("lib.js re-exports the renderer helpers for a single import surface", async
   assert.equal(typeof lib.sameMediaDeviceList, "function");
   assert.equal(typeof lib.createDebugLogBuffer, "function");
   assert.equal(typeof lib.captionDisplayText, "function");
+  assert.equal(typeof lib.capErrorBody, "function");
   assert.ok(lib.VIRTUAL_AUDIO_LABEL instanceof RegExp);
 });
 
@@ -467,6 +468,23 @@ test("connectPeerSession fetches the token inside the try so a failed fetch cann
     fnBody,
     /inputStream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/,
     "the catch must stop the input stream tracks so the mic cannot stay hot after a failed connect",
+  );
+});
+
+test("connectPeerSession caps failed Realtime HTTP bodies before they land on Error.message", () => {
+  // A non-OK Realtime call (or a captive portal answering 401/403 with a
+  // megabyte of HTML) used to embed the raw body in the thrown Error. That
+  // string then survived into humanizeError's toLowerCase copy, the status
+  // pill, and the debug log. Cap first; the status code stays on the Error
+  // so isApiKeyRejection / humanizeError still match.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("async function connectPeerSession");
+  assert.ok(fnStart !== -1, "renderer.js must define connectPeerSession");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("async function connectSingleRealtime"));
+  assert.match(
+    fnBody,
+    /Realtime call failed: \$\{response\.status\} \$\{capErrorBody\(await response\.text\(\)\)\}/,
+    "a failed Realtime call must cap the HTTP error body before throwing",
   );
 });
 

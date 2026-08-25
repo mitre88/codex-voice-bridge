@@ -1,4 +1,4 @@
-import { captionDisplayText, createDebugLogBuffer, hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, sameMediaDeviceList, truncateOutput } from "./renderer-utils.js";
+import { capErrorBody, captionDisplayText, createDebugLogBuffer, hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, sameMediaDeviceList, truncateOutput } from "./renderer-utils.js";
 
 // How long the Realtime SDP exchange may take before we give up. The main
 // process already times out the token fetch; this bounds the second network
@@ -749,7 +749,7 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
         controller?.signal,
       ].filter(Boolean)),
     });
-    if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${await response.text()}`);
+    if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${capErrorBody(await response.text())}`);
     const sdp = await response.text();
     // A 2xx non-SDP body (a captive portal or proxy answering with an HTML or
     // JSON page) would make setRemoteDescription fail with an opaque "not a

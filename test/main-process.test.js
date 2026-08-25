@@ -834,6 +834,29 @@ test("createRealtimeClientSecret trims the resolved API key so a whitespace-padd
   );
 });
 
+test("OpenAI token error bodies are capped before they land on Error.message", () => {
+  // A failed client_secrets fetch can return a megabyte of captive-portal
+  // HTML. Putting that raw body on Error.message copies it again in
+  // humanizeError (toLowerCase) and into the status pill. Cap first; the
+  // "reasoning" retry still sees the head of a real OpenAI JSON error.
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /const message = capErrorBody\(await response\.text\(\)\)/,
+    "the assistant token path must cap the error body before the reasoning check and the throw",
+  );
+  assert.match(
+    main,
+    /capErrorBody\(await response\.text\(\)\)/,
+    "token / translation / transcription failures must cap the HTTP error body",
+  );
+  assert.equal(
+    (main.match(/capErrorBody\(await response\.text\(\)\)/g) || []).length,
+    4,
+    "assistant retry, assistant fallback, translation, and transcription must all cap error bodies",
+  );
+});
+
 test("key-status does not report a whitespace-only OPENAI_API_KEY as a usable key", () => {
   // hasEnvKey hides the API key input field: a whitespace-only env var (the
   // same stray-whitespace class the trim fix addresses) would otherwise keep

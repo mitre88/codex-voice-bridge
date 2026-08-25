@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   accumulateOutput,
   applyEnvOverrides,
+  capErrorBody,
   captionDisplayText,
   createDebugLogBuffer,
   createOutputAccumulator,
@@ -1336,6 +1337,23 @@ test("humanizeError passes through unknown messages", () => {
   assert.equal(humanizeError("plain string"), "plain string");
   assert.equal(humanizeError(undefined), "undefined");
   assert.equal(humanizeError(null), "null");
+});
+
+test("capErrorBody keeps the head of a huge diagnostic string", () => {
+  // Failed Realtime/token fetches can return a megabyte of HTML from a
+  // captive portal. The HEAD carries the OpenAI error code; the tail is
+  // markup. Short strings must be the same reference so a typical JSON
+  // error body is not copied.
+  const short = '{"error":{"code":"invalid_api_key"}}';
+  assert.equal(capErrorBody(short), short);
+  assert.ok(capErrorBody(short) === short);
+  const huge = `${"A".repeat(5000)}TAIL`;
+  const out = capErrorBody(huge, 20);
+  assert.ok(out.startsWith("A".repeat(20)));
+  assert.ok(out.includes("truncated 4984 chars"));
+  assert.ok(!out.includes("TAIL"));
+  assert.equal(capErrorBody(null), null);
+  assert.equal(capErrorBody(undefined), undefined);
 });
 
 test("truncateOutput truncates long stdout and preserves metadata", () => {

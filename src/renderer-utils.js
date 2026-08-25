@@ -408,6 +408,16 @@ export function createDebugLogBuffer(maxChars = 50000) {
   };
 }
 
+// Cap an HTTP error body (or any diagnostic string) before it is copied
+// into Error.message, the status pill, or the debug log. A captive portal
+// or proxy can answer a failed Realtime/token fetch with a megabyte of
+// HTML; keeping the HEAD is enough to diagnose (OpenAI JSON errors put
+// code/type first) and matches serializeLogData's head-truncation.
+export function capErrorBody(text, maxChars = 4000) {
+  if (typeof text !== "string" || text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n...[truncated ${text.length - maxChars} chars]`;
+}
+
 export function truncateOutput(output, maxChars = 30000) {
   const out = { ...output };
   for (const key of ["stdout", "stderr"]) {
