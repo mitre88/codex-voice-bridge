@@ -546,7 +546,7 @@ test("log() serializes defensively so a non-serializable payload cannot loop the
   const fnBody = renderer.slice(fnStart, renderer.indexOf("function updateModeControls"));
   assert.match(
     fnBody,
-    /try \{[\s\S]*?JSON\.stringify\(logData, null, 2\)[\s\S]*?\} catch \{[\s\S]*?serialized = String\(data\);/,
+    /try \{[\s\S]*?JSON\.stringify\(logData,[\s\S]*?\} catch \{[\s\S]*?serialized = String\(data\);/,
     "log() must fall back to String(data) when JSON.stringify throws",
   );
 });
@@ -564,6 +564,11 @@ test("log() caps large payloads before pretty-printing and skips DOM writes whil
     fnBody,
     /truncateOutput\(data, 8000\)/,
     "log() must cap object payloads (stdout/stderr) before serializing them",
+  );
+  assert.match(
+    fnBody,
+    /capErrorBody\(value, 16000\)/,
+    "log() must cap non-stdout/stderr string fields in the stringify replacer so a Realtime error dump cannot allocate a megabyte pretty JSON",
   );
   assert.match(
     fnBody,

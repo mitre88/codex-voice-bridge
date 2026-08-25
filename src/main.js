@@ -219,7 +219,10 @@ function serializeLogData(data) {
     data && typeof data === "object" && !Array.isArray(data) ? truncateOutput(data, 16000) : data;
   let raw;
   try {
-    raw = typeof bounded === "string" ? bounded : JSON.stringify(bounded);
+    raw =
+      typeof bounded === "string"
+        ? bounded
+        : JSON.stringify(bounded, (_key, value) => capErrorBody(value, MAX_LOG_PAYLOAD_CHARS));
   } catch {
     raw = String(data);
   }

@@ -166,7 +166,11 @@ function log(message, data) {
     } else if (typeof data === "string" && data.length > 16000) {
       logData = `${data.slice(0, 16000)}\n...[truncated ${data.length - 16000} chars]`;
     }
-    serialized = JSON.stringify(logData, null, 2);
+    // truncateOutput only caps stdout/stderr. A Realtime error event (or
+    // any other object) can still carry a megabyte string field; pretty-
+    // printing that just to slice the result to 16KB spiked the same way
+    // formatPendingArgs used to. Cap strings in the replacer first.
+    serialized = JSON.stringify(logData, (_key, value) => capErrorBody(value, 16000), 2);
     if (typeof serialized === "string" && serialized.length > 16000) {
       serialized = `${serialized.slice(0, 16000)}\n...[truncated ${serialized.length - 16000} chars]`;
     }

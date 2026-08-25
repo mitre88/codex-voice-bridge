@@ -156,6 +156,11 @@ test("writeLog caps log payloads so a 1MB Codex result cannot be stringified who
   );
   assert.match(
     fnBody,
+    /capErrorBody\(value, MAX_LOG_PAYLOAD_CHARS\)/,
+    "serializeLogData must cap other large string fields in the stringify replacer, not only stdout/stderr",
+  );
+  assert.match(
+    fnBody,
     /MAX_LOG_PAYLOAD_CHARS/,
     "the serialized log line itself must be length-capped",
   );
