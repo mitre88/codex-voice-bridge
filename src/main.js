@@ -24,6 +24,7 @@ import {
   normalizeTone,
   normalizeToneKey,
   parseEnvFile,
+  readCappedResponseText,
   redactSecrets,
   requireMaxLength,
   requireNoNullBytes,
@@ -542,7 +543,7 @@ async function createAssistantClientSecret(apiKey, options = {}) {
     // Cap before the body lands on Error.message (and then in the status
     // pill / debug log). A captive-portal HTML dump would otherwise keep a
     // megabyte string alive through humanizeError's toLowerCase copy.
-    const message = capErrorBody(await response.text());
+    const message = await readCappedResponseText(response);
     if (response.status === 400 && message.toLowerCase().includes("reasoning")) {
       delete body.session.reasoning;
       response = await postOpenAIJson(apiKey, "https://api.openai.com/v1/realtime/client_secrets", body);
@@ -550,7 +551,7 @@ async function createAssistantClientSecret(apiKey, options = {}) {
       throw new Error(`OpenAI Realtime token failed: ${response.status} ${message}`);
     }
   }
-  if (!response.ok) throw new Error(`OpenAI Realtime token failed: ${response.status} ${capErrorBody(await response.text())}`);
+  if (!response.ok) throw new Error(`OpenAI Realtime token failed: ${response.status} ${await readCappedResponseText(response)}`);
 
   return normalizeRealtimeToken(await response.json(), {
     mode: "assistant",
@@ -575,7 +576,7 @@ async function createTranslationClientSecret(apiKey, options = {}) {
   };
   const response = await postOpenAIJson(apiKey, "https://api.openai.com/v1/realtime/translations/client_secrets", body);
   if (!response.ok) {
-    throw new Error(`OpenAI Realtime translation token failed: ${response.status} ${capErrorBody(await response.text())}`);
+    throw new Error(`OpenAI Realtime translation token failed: ${response.status} ${await readCappedResponseText(response)}`);
   }
   return normalizeRealtimeToken(await response.json(), {
     mode: "translate",
@@ -606,7 +607,7 @@ async function createTranscriptionClientSecret(apiKey, options = {}) {
   };
   const response = await postOpenAIJson(apiKey, "https://api.openai.com/v1/realtime/client_secrets", body);
   if (!response.ok) {
-    throw new Error(`OpenAI Realtime transcription token failed: ${response.status} ${capErrorBody(await response.text())}`);
+    throw new Error(`OpenAI Realtime transcription token failed: ${response.status} ${await readCappedResponseText(response)}`);
   }
   return normalizeRealtimeToken(await response.json(), {
     mode: "transcribe",

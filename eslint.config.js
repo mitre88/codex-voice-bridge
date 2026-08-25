@@ -54,6 +54,7 @@ export default [
         AbortSignal: "readonly",
         requestAnimationFrame: "readonly",
         AbortController: "readonly",
+        TextDecoder: "readonly",
       },
     },
   },

@@ -1,4 +1,4 @@
-import { capErrorBody, captionDisplayText, createDebugLogBuffer, hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, sameMediaDeviceList, truncateOutput } from "./renderer-utils.js";
+import { capErrorBody, captionDisplayText, createDebugLogBuffer, hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, readCappedResponseText, sameMediaDeviceList, truncateOutput } from "./renderer-utils.js";
 
 // How long the Realtime SDP exchange may take before we give up. The main
 // process already times out the token fetch; this bounds the second network
@@ -753,13 +753,16 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
         controller?.signal,
       ].filter(Boolean)),
     });
-    if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${capErrorBody(await response.text())}`);
-    const sdp = await response.text();
+    if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${await readCappedResponseText(response)}`);
+    // A 2xx HTML dump (captive portal) must not be buffered whole just to
+    // discover it is not SDP. A Realtime audio answer is a few KB; 32KB
+    // leaves headroom and is still tiny versus a megabyte portal page.
+    const sdp = await readCappedResponseText(response, 32768);
     // A 2xx non-SDP body (a captive portal or proxy answering with an HTML or
     // JSON page) would make setRemoteDescription fail with an opaque "not a
     // valid SDP" error that humanizeError passes through raw; fail with an
     // actionable message instead so the user can spot the interception.
-    if (!isSdpAnswer(sdp)) {
+    if (!isSdpAnswer(sdp) || sdp.includes("\n...[truncated]")) {
       throw new Error(`${label}: the Realtime server returned an unexpected response (HTTP ${response.status}) instead of an SDP answer — a proxy or captive portal may be intercepting the connection.`);
     }
     await pc.setRemoteDescription({ type: "answer", sdp });

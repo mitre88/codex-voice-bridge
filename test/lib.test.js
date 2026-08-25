@@ -8,6 +8,7 @@ import {
   applyEnvOverrides,
   capErrorBody,
   captionDisplayText,
+  readCappedResponseText,
   createDebugLogBuffer,
   createOutputAccumulator,
   escapeAppleScript,
@@ -1354,6 +1355,38 @@ test("capErrorBody keeps the head of a huge diagnostic string", () => {
   assert.ok(!out.includes("TAIL"));
   assert.equal(capErrorBody(null), null);
   assert.equal(capErrorBody(undefined), undefined);
+});
+
+test("readCappedResponseText stops reading once the budget is filled", async () => {
+  // response.text() would buffer a megabyte portal page. The stream reader
+  // must return only the head and cancel the rest. A body that fits the
+  // budget is returned unchanged (no truncation marker).
+  const encoder = new TextEncoder();
+  const streamBody = (text) => {
+    const bytes = encoder.encode(text);
+    let offset = 0;
+    return new Response(
+      new ReadableStream({
+        pull(controller) {
+          if (offset >= bytes.length) {
+            controller.close();
+            return;
+          }
+          const next = bytes.subarray(offset, offset + 32);
+          offset += next.length;
+          controller.enqueue(next);
+        },
+      }),
+    );
+  };
+  const short = '{"error":{"code":"invalid_api_key"}}';
+  assert.equal(await readCappedResponseText(streamBody(short)), short);
+  const huge = `${"A".repeat(5000)}TAIL`;
+  const out = await readCappedResponseText(streamBody(huge), 20);
+  assert.ok(out.startsWith("A".repeat(20)));
+  assert.ok(out.includes("truncated"));
+  assert.ok(!out.includes("TAIL"));
+  assert.equal(await readCappedResponseText(null), "");
 });
 
 test("truncateOutput truncates long stdout and preserves metadata", () => {

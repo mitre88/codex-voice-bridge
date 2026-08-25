@@ -847,18 +847,18 @@ test("OpenAI token error bodies are capped before they land on Error.message", (
   const main = readSource("main.js");
   assert.match(
     main,
-    /const message = capErrorBody\(await response\.text\(\)\)/,
-    "the assistant token path must cap the error body before the reasoning check and the throw",
+    /const message = await readCappedResponseText\(response\)/,
+    "the assistant token path must stream-cap the error body before the reasoning check and the throw",
   );
   assert.match(
     main,
-    /capErrorBody\(await response\.text\(\)\)/,
-    "token / translation / transcription failures must cap the HTTP error body",
+    /readCappedResponseText\(response\)/,
+    "token / translation / transcription failures must stream-cap the HTTP error body",
   );
   assert.equal(
-    (main.match(/capErrorBody\(await response\.text\(\)\)/g) || []).length,
+    (main.match(/readCappedResponseText\(response\)/g) || []).length,
     4,
-    "assistant retry, assistant fallback, translation, and transcription must all cap error bodies",
+    "assistant retry, assistant fallback, translation, and transcription must all stream-cap error bodies",
   );
 });
 

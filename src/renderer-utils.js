@@ -418,6 +418,66 @@ export function capErrorBody(text, maxChars = 4000) {
   return `${text.slice(0, maxChars)}\n...[truncated ${text.length - maxChars} chars]`;
 }
 
+// Read an HTTP body only up to maxChars, then cancel the stream. capErrorBody
+// after response.text() still allocated the full megabyte from a captive
+// portal; this keeps the peak at the budget. Falls back to text()+cap when
+// the body has no reader (already consumed, or a stub).
+export async function readCappedResponseText(response, maxChars = 4000) {
+  if (!response) return "";
+  let reader = null;
+  try {
+    reader = response.body?.getReader?.() ?? null;
+  } catch {
+    reader = null;
+  }
+  if (!reader) {
+    try {
+      return capErrorBody(await response.text(), maxChars);
+    } catch {
+      return "";
+    }
+  }
+
+  const decoder = new TextDecoder();
+  let out = "";
+  let overflowed = false;
+  try {
+    while (out.length < maxChars) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      out += decoder.decode(value, { stream: true });
+      if (out.length > maxChars) {
+        out = out.slice(0, maxChars);
+        overflowed = true;
+        break;
+      }
+    }
+    // Exact-size body: one more read so we do not mark a 4000-char OpenAI
+    // JSON error as truncated when it filled the budget exactly.
+    if (!overflowed && out.length === maxChars) {
+      const extra = await reader.read();
+      if (!extra.done && extra.value?.byteLength) overflowed = true;
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // Already closed or cancelled.
+    }
+  }
+  const flush = decoder.decode();
+  if (!overflowed && flush) {
+    if (out.length + flush.length > maxChars) {
+      out = `${out}${flush}`.slice(0, maxChars);
+      overflowed = true;
+    } else {
+      out += flush;
+    }
+  }
+  return overflowed ? `${out}\n...[truncated]` : out;
+}
+
 export function truncateOutput(output, maxChars = 30000) {
   const out = { ...output };
   for (const key of ["stdout", "stderr"]) {

@@ -296,6 +296,7 @@ test("lib.js re-exports the renderer helpers for a single import surface", async
   assert.equal(typeof lib.createDebugLogBuffer, "function");
   assert.equal(typeof lib.captionDisplayText, "function");
   assert.equal(typeof lib.capErrorBody, "function");
+  assert.equal(typeof lib.readCappedResponseText, "function");
   assert.ok(lib.VIRTUAL_AUDIO_LABEL instanceof RegExp);
 });
 
@@ -483,8 +484,18 @@ test("connectPeerSession caps failed Realtime HTTP bodies before they land on Er
   const fnBody = renderer.slice(fnStart, renderer.indexOf("async function connectSingleRealtime"));
   assert.match(
     fnBody,
-    /Realtime call failed: \$\{response\.status\} \$\{capErrorBody\(await response\.text\(\)\)\}/,
-    "a failed Realtime call must cap the HTTP error body before throwing",
+    /Realtime call failed: \$\{response\.status\} \$\{await readCappedResponseText\(response\)\}/,
+    "a failed Realtime call must stream-cap the HTTP error body before throwing",
+  );
+  assert.match(
+    fnBody,
+    /readCappedResponseText\(response, 32768\)/,
+    "a 2xx SDP answer must be stream-capped so a captive-portal HTML page cannot allocate a megabyte",
+  );
+  assert.match(
+    fnBody,
+    /sdp\.includes\("\\n\.\.\.\[truncated\]"\)/,
+    "a truncated 2xx body must be rejected even if it happens to start with v=",
   );
 });
 
