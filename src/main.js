@@ -297,14 +297,33 @@ function runProcess(command, args, options = {}) {
     // at the same size) or when the run settles, so the renderer still sees
     // the complete tail before the IPC call resolves.
     const OUTPUT_IPC_BATCH_CHARS = 4000;
+    // The renderer log() string cap is 16KB. A single cua-driver list_apps
+    // dump can be 1MB; cloning that across IPC just so the debug log slices
+    // it to 16KB spikes both processes on every type/press. Keep the TAIL
+    // (newest output, same convention as the accumulator) and drop the rest.
+    const OUTPUT_IPC_MAX_CHARS = 16000;
     let pendingOutput = "";
+    function sendOutput(payload) {
+      if (!payload || !options.onOutput) return;
+      if (payload.length > OUTPUT_IPC_MAX_CHARS) {
+        payload = payload.slice(-OUTPUT_IPC_MAX_CHARS);
+      }
+      options.onOutput(payload);
+    }
     function forwardOutput(text) {
       if (!text || settled || !options.onOutput) return;
+      // A megabyte chunk must not land in pendingOutput first: += would
+      // copy it, and the later slice would still have paid the allocation.
+      if (text.length >= OUTPUT_IPC_MAX_CHARS) {
+        pendingOutput = "";
+        sendOutput(text);
+        return;
+      }
       pendingOutput += text;
       if (pendingOutput.length >= OUTPUT_IPC_BATCH_CHARS) {
         const payload = pendingOutput;
         pendingOutput = "";
-        options.onOutput(payload);
+        sendOutput(payload);
       }
     }
     function flushPendingOutput() {
@@ -314,7 +333,7 @@ function runProcess(command, args, options = {}) {
       }
       const payload = pendingOutput;
       pendingOutput = "";
-      options.onOutput(payload);
+      sendOutput(payload);
     }
 
     function killProcessGroup(signal) {

@@ -242,6 +242,21 @@ test("runProcess batches streamed output IPC and flushes before settling", () =>
     /OUTPUT_IPC_BATCH_CHARS = 4000/,
     "streamed IPC must batch instead of sending every tiny stdout chunk",
   );
+  assert.match(
+    fnBody,
+    /OUTPUT_IPC_MAX_CHARS = 16000/,
+    "streamed IPC must cap a single dump at the renderer log string budget",
+  );
+  assert.match(
+    fnBody,
+    /payload\.slice\(-OUTPUT_IPC_MAX_CHARS\)/,
+    "an oversized debug-log payload must keep the tail, not the head",
+  );
+  assert.match(
+    fnBody,
+    /if \(text\.length >= OUTPUT_IPC_MAX_CHARS\)/,
+    "a megabyte stdout chunk must not be concatenated into pendingOutput before the cap",
+  );
   assert.ok(
     fnBody.indexOf("flushPendingOutput()") < fnBody.indexOf("resolve({"),
     "the leftover IPC batch must flush before the runProcess promise resolves",
