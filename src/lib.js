@@ -859,6 +859,29 @@ export function requireTypeableLength(textLength, budgetMs = 48000) {
 // or the input is not a string.
 export function extractFirstJsonObject(text) {
   if (typeof text !== "string") return null;
+  // Fast path: cua-driver's list_apps usually prints one JSON object, maybe
+  // with a trailing newline. JSON.parse of the original buffer avoids the
+  // brace scan and the slice() copy of up to 1MB that the matcher would make
+  // before parsing — type/press call this on every keystroke. Only try when
+  // the trimmed buffer starts with '{' and ends with '}': a barrage of
+  // unclosed '{' does not end with '}', so it skips this and hits the
+  // budgeted scan below. JSON.parse itself accepts surrounding whitespace,
+  // so the original string is parsed (no slice) when the ends match.
+  let start = 0;
+  while (start < text.length && (text[start] === " " || text[start] === "\n" || text[start] === "\r" || text[start] === "\t")) {
+    start++;
+  }
+  let end = text.length - 1;
+  while (end >= start && (text[end] === " " || text[end] === "\n" || text[end] === "\r" || text[end] === "\t")) {
+    end--;
+  }
+  if (start <= end && text[start] === "{" && text[end] === "}") {
+    try {
+      return JSON.parse(text);
+    } catch {
+      // Concatenated values or a truncated object — fall through to scan.
+    }
+  }
   // The inner scan restarts from every '{', so a pathological input turns
   // this quadratic: each unclosed candidate re-scans nearly the whole buffer.
   // That is reachable in practice — the model can type a barrage of '{' into

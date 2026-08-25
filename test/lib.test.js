@@ -1816,6 +1816,15 @@ test("rotateLogIfNeeded keeps only the previous oversized file as .1", () => {
 
 test("extractFirstJsonObject finds the first JSON object amid log noise", () => {
   assert.deepEqual(extractFirstJsonObject('{"apps":[]}'), { apps: [] });
+  // Surrounding whitespace must take the no-slice JSON.parse fast path
+  // (list_apps often ends with a trailing newline) and still parse.
+  assert.deepEqual(extractFirstJsonObject('{"apps":[]}\n'), { apps: [] });
+  assert.deepEqual(extractFirstJsonObject('  {"apps":[{"pid":1,"active":true}]}  '), {
+    apps: [{ pid: 1, active: true }],
+  });
+  // Concatenated values start and end with braces, so JSON.parse of the
+  // whole buffer fails; the scanner must still return the first object.
+  assert.deepEqual(extractFirstJsonObject('{"a":1}{"b":2}'), { a: 1 });
   assert.deepEqual(extractFirstJsonObject('2026-08-13 23:00:00 INFO starting\n{"apps":[{"pid":1,"active":true}]}'), {
     apps: [{ pid: 1, active: true }],
   });
@@ -1836,6 +1845,26 @@ test("extractFirstJsonObject returns null for non-JSON or non-string input", () 
   assert.equal(extractFirstJsonObject(undefined), null);
   assert.equal(extractFirstJsonObject(42), null);
 });
+test("extractFirstJsonObject parses a prefix-free object without slicing the buffer", () => {
+  // type/press call this on list_apps stdout (up to 1MB). A whole-buffer
+  // JSON.parse of a single object must not copy the string first; the
+  // scanner's slice() is only for prefixed or concatenated payloads.
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function extractFirstJsonObject");
+  assert.ok(fnStart !== -1, "lib.js must export extractFirstJsonObject");
+  const fnBody = src.slice(fnStart, src.indexOf("export function parseEnvFile"));
+  assert.match(
+    fnBody,
+    /text\[start\] === "\{" && text\[end\] === "\}"/,
+    "the fast path must only run when the trimmed buffer is a single brace-wrapped value",
+  );
+  assert.match(
+    fnBody,
+    /return JSON\.parse\(text\)/,
+    "a prefix-free list_apps payload must be parsed in place, not sliced",
+  );
+});
+
 test("extractFirstJsonObject bails out in linear time on a barrage of unclosed braces", () => {
   // A window title full of '{' (text the model typed into an app, surfaced by
   // cua-driver's list_apps stdout) would make every '{' start a fresh O(n)
