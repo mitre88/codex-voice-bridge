@@ -742,6 +742,23 @@ function assistantTools() {
 
 // Keep the model inside the configured workspace (see resolveWorkdir in lib.js).
 
+// Streamed Codex/CUA stdout used to bounce renderer -> main just to land
+// in bridge.log: main sent the chunk, the renderer flushed it through
+// log(), and log() ipcRenderer.send("log:renderer") cloned the same
+// 4–16KB string back. Write the identical renderer:ui payload here
+// (same message/data the debug panel used to bounce) and let the
+// renderer skip that IPC on flush. Quiet list_apps never reaches this
+// helper, so type/press lookups stay silent.
+// A run can outlive the window (Cmd+W while Codex streams output): sending
+// to a destroyed webContents throws "Object has been destroyed", so guard
+// the same way toggleWindow/second-instance/activate do instead of relying
+// on the optional chain alone (mainWindow is only nulled on "closed").
+function sendCodexOutput(chunk) {
+  writeLog("renderer:ui", { message: "codex output", data: String(chunk) });
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("codex-output", chunk);
+}
+
 function runCodex(input) {
   // The model may omit the required prompt field (or send a non-string). A
   // missing prompt would otherwise reach spawn() as the literal string
@@ -779,13 +796,7 @@ function runCodex(input) {
   return runProcess("codex", ["exec", "--cd", workdir, "--sandbox", "read-only", "--skip-git-repo-check", "--", prompt], {
     cwd: workdir,
     timeoutMs: CODEX_TIMEOUT_MS,
-    // A run can outlive the window (Cmd+W while Codex streams output): sending
-    // to a destroyed webContents throws "Object has been destroyed", so guard
-    // the same way toggleWindow/second-instance/activate do instead of relying
-    // on the optional chain alone (mainWindow is only nulled on "closed").
-    onOutput: (chunk) => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("codex-output", chunk);
-    },
+    onOutput: sendCodexOutput,
   });
 }
 
@@ -876,13 +887,7 @@ function runCuaDriver(input = {}, options = {}) {
     // model never sees it, and the panel already has the type/press result.
     // A model-facing cua:run must keep streaming (options.quiet is a
     // second argument so a json_args.quiet from the model cannot silence it).
-    onOutput: options.quiet
-      ? undefined
-      : (chunk) => {
-          // Same destroyed-window guard as runCodex: a cua-driver call streaming
-          // output while the window is closing must not throw on webContents.send.
-          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("codex-output", chunk);
-        },
+    onOutput: options.quiet ? undefined : sendCodexOutput,
   });
 }
 

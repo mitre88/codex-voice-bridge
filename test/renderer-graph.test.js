@@ -553,7 +553,7 @@ test("log() serializes defensively so a non-serializable payload cannot loop the
   // a log failure. main.js writeLog already guards its own stringify for
   // exactly this reason; the renderer log must not be the one unguarded link.
   const renderer = readSource("renderer.js");
-  const fnStart = renderer.indexOf("function log(message, data)");
+  const fnStart = renderer.indexOf("function log(message, data");
   assert.ok(fnStart !== -1, "renderer.js must define log()");
   const fnBody = renderer.slice(fnStart, renderer.indexOf("function updateModeControls"));
   assert.match(
@@ -569,7 +569,7 @@ test("log() caps large payloads before pretty-printing and skips DOM writes whil
   // every "Local action finished" line. Truncate before stringify, and do
   // not rewrite textContent while the user is not looking at the log.
   const renderer = readSource("renderer.js");
-  const fnStart = renderer.indexOf("function log(message, data)");
+  const fnStart = renderer.indexOf("function log(message, data");
   assert.ok(fnStart !== -1, "renderer.js must define log()");
   const fnBody = renderer.slice(fnStart, renderer.indexOf("function updateModeControls"));
   assert.match(
@@ -802,5 +802,28 @@ test("refreshMediaDevices skips rebuilding selects when the device list is uncha
     refreshBody.indexOf("sameMediaDeviceList(lastMediaDevices, devices)") <
       refreshBody.indexOf("setSelectOptions"),
     "the unchanged-list check must run before any <select> rebuild",
+  );
+});
+
+test("streamed Codex/CUA output skips the renderer-to-main log bounce", () => {
+  // main sendCodexOutput already writes the renderer:ui payload to
+  // bridge.log. Flushing those chunks through log() without skipIpc would
+  // clone the same 4–16KB string back across IPC and duplicate the file line.
+  const renderer = readSource("renderer.js");
+  const logStart = renderer.indexOf("function log(message, data");
+  assert.ok(logStart !== -1, "renderer.js must define log()");
+  const logBody = renderer.slice(logStart, renderer.indexOf("function updateModeControls"));
+  assert.match(
+    logBody,
+    /if \(!options\.skipIpc\)/,
+    "log() must skip the renderer-to-main bounce when skipIpc is set",
+  );
+  const flushStart = renderer.indexOf("function flushCodexOutput");
+  assert.ok(flushStart !== -1, "renderer.js must define flushCodexOutput");
+  const flushBody = renderer.slice(flushStart, flushStart + 250);
+  assert.match(
+    flushBody,
+    /log\("codex output", codexOutputBuffer, \{ skipIpc: true \}\)/,
+    "flushCodexOutput must skip IPC because main already wrote bridge.log",
   );
 });

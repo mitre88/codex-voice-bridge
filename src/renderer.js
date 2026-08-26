@@ -146,7 +146,7 @@ function pushLogLine(line) {
   debugLog.push(line);
 }
 
-function log(message, data) {
+function log(message, data, options = {}) {
   // Serialize defensively: log() runs inside the window error/unhandled
   // rejection handlers too, and a non-serializable payload (a circular
   // reason object, a throwing toJSON, a BigInt) would make JSON.stringify
@@ -188,7 +188,12 @@ function log(message, data) {
     logBuffer = joinLogLines();
     logEl.textContent = logBuffer;
   }
-  tryBridge()?.log("ui", { message, data: logData }).catch(() => {});
+  // Streamed Codex/CUA chunks are already written to bridge.log in main
+  // (sendCodexOutput). Re-sending them here would clone the same 4–16KB
+  // string back across IPC for a duplicate file line.
+  if (!options.skipIpc) {
+    tryBridge()?.log("ui", { message, data: logData }).catch(() => {});
+  }
 }
 
 function updateModeControls() {
@@ -1089,7 +1094,7 @@ let codexOutputBuffer = "";
 
 function flushCodexOutput() {
   if (!codexOutputBuffer) return;
-  log("codex output", codexOutputBuffer);
+  log("codex output", codexOutputBuffer, { skipIpc: true });
   codexOutputBuffer = "";
 }
 

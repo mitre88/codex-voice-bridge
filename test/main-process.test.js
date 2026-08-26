@@ -26,8 +26,30 @@ test("runCodex and runCuaDriver guard codex-output sends against a destroyed win
   // close sequence webContents.send on a destroyed webContents throws "Object
   // has been destroyed" — an uncaught exception from inside the child output
   // handler. Every other mainWindow touch in main.js checks
-  // !mainWindow.isDestroyed(); the onOutput callbacks must do the same.
+  // !mainWindow.isDestroyed(); sendCodexOutput must do the same.
   const main = readSource("main.js");
+  const helperStart = main.indexOf("function sendCodexOutput");
+  assert.ok(helperStart !== -1, "main.js must define sendCodexOutput");
+  const helper = main.slice(helperStart, main.indexOf("function runCodex"));
+  assert.match(
+    helper,
+    /writeLog\("renderer:ui", \{ message: "codex output", data: String\(chunk\) \}\)/,
+    "sendCodexOutput must write the same renderer:ui payload the debug log used to bounce",
+  );
+  assert.match(
+    helper,
+    /if \(!mainWindow \|\| mainWindow\.isDestroyed\(\)\) return;/,
+    "sendCodexOutput must skip webContents.send when the window is gone",
+  );
+  assert.match(
+    helper,
+    /mainWindow\.webContents\.send\("codex-output", chunk\)/,
+    "sendCodexOutput must still stream the chunk to the renderer debug panel",
+  );
+  assert.ok(
+    helper.indexOf('writeLog("renderer:ui"') < helper.indexOf("isDestroyed"),
+    "bridge.log must be written before the destroyed-window send guard so a run that outlives Cmd+W is still recorded",
+  );
   for (const [label, fnStart, fnEnd] of [
     ["runCodex", "function runCodex", "function runCuaDriver"],
     ["runCuaDriver", "function runCuaDriver", "async function runMacAction"],
@@ -37,8 +59,8 @@ test("runCodex and runCuaDriver guard codex-output sends against a destroyed win
     const fnBody = main.slice(start, main.indexOf(fnEnd));
     assert.match(
       fnBody,
-      /mainWindow && !mainWindow\.isDestroyed\(\)\) mainWindow\.webContents\.send\("codex-output", chunk\)/,
-      `${label} must guard the codex-output send with !mainWindow.isDestroyed()`,
+      /sendCodexOutput/,
+      `${label} must stream through sendCodexOutput`,
     );
   }
 });
