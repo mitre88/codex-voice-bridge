@@ -4,7 +4,7 @@
 // with a timeout error, but the child keeps running (up to 3s until the
 // SIGKILL) and can keep emitting stdout/stderr. If those late chunks were
 // still forwarded via options.onOutput, the renderer would batch a dead run's
-// tail into codexOutputBuffer and flush it into the NEXT run's debug log —
+// tail into the debug log of the NEXT run —
 // misattributing output. The data handlers must stop streaming once the run
 // has settled, so everything the renderer receives belongs to the run it is
 // currently displaying. Pure-Node `npm test` cannot exercise the real child

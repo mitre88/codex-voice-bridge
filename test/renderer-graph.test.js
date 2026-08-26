@@ -818,13 +818,15 @@ test("streamed Codex/CUA output skips the renderer-to-main log bounce", () => {
     /if \(!options\.skipIpc\)/,
     "log() must skip the renderer-to-main bounce when skipIpc is set",
   );
-  const flushStart = renderer.indexOf("function flushCodexOutput");
-  assert.ok(flushStart !== -1, "renderer.js must define flushCodexOutput");
-  const flushBody = renderer.slice(flushStart, flushStart + 250);
   assert.match(
-    flushBody,
-    /log\("codex output", codexOutputBuffer, \{ skipIpc: true \}\)/,
-    "flushCodexOutput must skip IPC because main already wrote bridge.log",
+    renderer,
+    /onCodexOutput\(\(chunk\) => \{\s*log\("codex output", chunk, \{ skipIpc: true \}\)/,
+    "each streamed chunk must go to the debug panel without bouncing back to main",
+  );
+  assert.doesNotMatch(
+    renderer,
+    /codexOutputBuffer/,
+    "main already batches at 4KB; a second renderer buffer only copied each chunk again",
   );
 });
 

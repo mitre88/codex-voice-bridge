@@ -483,12 +483,9 @@ async function executeAction(action) {
     result = { ok: false, code: -99, stdout: "", stderr: error?.message || String(error) };
     log("Local action error.", error);
   }
-  // Streamed output is batched to avoid DOM spam and only flushed at 4000
-  // chars or on disconnect; without this the tail of a finished run (final
-  // lines, error summaries) would stay invisible in the debug log until the
-  // user disconnects. All "codex-output" chunks are posted before the IPC
-  // call resolves, so flushing here captures the complete run.
-  flushCodexOutput();
+  // Main batches streamed chunks (4KB) and flushes the remainder before
+  // this invoke resolves. onCodexOutput logs each chunk as it arrives, so
+  // there is no renderer-side tail left to flush.
   sendFunctionOutput(action.callId, result, channel);
   // The user may have disconnected while the local action ran (the child
   // process keeps running in the main process, so the IPC call still
@@ -964,7 +961,6 @@ function disconnectRealtime(options = {}) {
     session.pc?.close();
     if (session.audio) session.audio.srcObject = null;
   });
-  flushCodexOutput();
   actionDataChannel = undefined;
   // A tool call awaiting approval is meaningless once the session is gone;
   // leaving it would strand a stale Run/Reject panel on screen.
@@ -1099,14 +1095,6 @@ navigator.mediaDevices?.addEventListener?.("devicechange", () => {
   refreshMediaDevices(false).catch(() => {});
 });
 
-let codexOutputBuffer = "";
-
-function flushCodexOutput() {
-  if (!codexOutputBuffer) return;
-  log("codex output", codexOutputBuffer, { skipIpc: true });
-  codexOutputBuffer = "";
-}
-
 try {
   getBridge().config().then((config) => {
     if (config.reasoningEffort) reasoningInput.value = config.reasoningEffort;
@@ -1128,10 +1116,11 @@ try {
     applyKeyStatus(status);
     if (status.hasEnvKey || status.hasSavedKey) log(status.hasSavedKey ? "Using saved OpenAI key from Keychain." : "Using OPENAI_API_KEY.");
   });
-  // Stream Codex/CUA progress into the debug log (batched to avoid DOM spam).
+  // Main already batches at 4KB (and flushes the remainder on settle). A
+  // second renderer buffer only copied each chunk again before the same
+  // log() call. skipIpc: main sendCodexOutput already wrote bridge.log.
   getBridge().onCodexOutput((chunk) => {
-    codexOutputBuffer += chunk;
-    if (codexOutputBuffer.length >= 4000) flushCodexOutput();
+    log("codex output", chunk, { skipIpc: true });
   });
   refreshMediaDevices(false).catch(() => {});
   updateModeControls();
