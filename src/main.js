@@ -789,7 +789,7 @@ function runCodex(input) {
   });
 }
 
-function runCuaDriver(input = {}) {
+function runCuaDriver(input = {}, options = {}) {
   // Same optional chaining as runCodex: a null IPC payload must settle with
   // the clean "Missing cua-driver tool_name." error below instead of throwing
   // a TypeError that bypasses the model-facing error path entirely.
@@ -870,11 +870,19 @@ function runCuaDriver(input = {}) {
   const args = ["call", toolName, argsBlob, "--compact"];
   return runProcess("cua-driver", args, {
     timeoutMs: CUA_TIMEOUT_MS,
-    // Same destroyed-window guard as runCodex: a cua-driver call streaming
-    // output while the window is closing must not throw on webContents.send.
-    onOutput: (chunk) => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("codex-output", chunk);
-    },
+    // Internal list_apps (type/press front-app lookup) only needs the
+    // captured stdout for extractFirstJsonObject. Streaming that dump to
+    // the debug log still paid a 16KB IPC clone on every keystroke — the
+    // model never sees it, and the panel already has the type/press result.
+    // A model-facing cua:run must keep streaming (options.quiet is a
+    // second argument so a json_args.quiet from the model cannot silence it).
+    onOutput: options.quiet
+      ? undefined
+      : (chunk) => {
+          // Same destroyed-window guard as runCodex: a cua-driver call streaming
+          // output while the window is closing must not throw on webContents.send.
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("codex-output", chunk);
+        },
   });
 }
 
@@ -1105,7 +1113,7 @@ async function pressKeyInFrontApp(input = {}) {
 }
 
 async function getActiveAppFromCua() {
-  const result = await runCuaDriver({ tool_name: "list_apps", json_args: {} });
+  const result = await runCuaDriver({ tool_name: "list_apps", json_args: {} }, { quiet: true });
   if (!result.ok) {
     // Surface the real driver failure (e.g. cua-driver not installed) instead
     // of collapsing it into a misleading "no active app" message: the model

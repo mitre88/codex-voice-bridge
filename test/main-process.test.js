@@ -403,6 +403,34 @@ test("getActiveAppFromCua distinguishes a malformed list_apps payload from a gen
   );
 });
 
+test("getActiveAppFromCua does not stream list_apps into the debug-log IPC", () => {
+  // type/press look up the frontmost pid via list_apps. That dump (even the
+  // 16KB tail cap) used to cross IPC on every keystroke for a debug line
+  // the model never sees. The lookup must pass quiet so runCuaDriver
+  // skips onOutput; a model-facing cua:run still streams.
+  const main = readSource("main.js");
+  const lookup = main.slice(
+    main.indexOf("async function getActiveAppFromCua"),
+    main.indexOf("function activateApp"),
+  );
+  assert.match(
+    lookup,
+    /runCuaDriver\(\{ tool_name: "list_apps", json_args: \{\} \}, \{ quiet: true \}\)/,
+    "the internal list_apps lookup must be quiet so type/press do not clone the dump into the renderer log",
+  );
+  const cua = main.slice(main.indexOf("function runCuaDriver"), main.indexOf("async function runMacAction"));
+  assert.match(
+    cua,
+    /function runCuaDriver\(input = \{\}, options = \{\}\)/,
+    "quiet must be a second argument so a model-supplied json_args.quiet cannot silence cua:run",
+  );
+  assert.match(
+    cua,
+    /onOutput: options\.quiet\s*\? undefined/,
+    "runCuaDriver must skip streamed IPC when quiet",
+  );
+});
+
 test("pressKeyInFrontApp normalizes modifiers so a bare string is never silently dropped", () => {
   // cua-driver's press_key expects a modifiers array of strings; a malformed
   // model call carrying non-string entries (e.g. modifiers: ["cmd", 42] or
