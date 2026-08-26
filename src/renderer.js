@@ -142,6 +142,16 @@ function joinLogLines() {
   return debugLog.joinNewestFirst();
 }
 
+function paintDebugLog() {
+  // hide() keeps the renderer alive. Joining 50KB and rewriting <pre>
+  // on every streamed chunk while the window is hidden is compositor
+  // work the user cannot see — same class as the caption skip.
+  // Closed panel already skips; this covers the open-panel + hidden case.
+  if (!debugPanel?.open || document.hidden) return;
+  logBuffer = joinLogLines();
+  logEl.textContent = logBuffer;
+}
+
 function pushLogLine(line) {
   debugLog.push(line);
 }
@@ -184,10 +194,7 @@ function log(message, data, options = {}) {
   // copied the whole buffer (and then sliced it) even while the debug panel
   // was closed. Join only when the user can see it.
   pushLogLine(line);
-  if (debugPanel?.open) {
-    logBuffer = joinLogLines();
-    logEl.textContent = logBuffer;
-  }
+  paintDebugLog();
   // Streamed Codex/CUA chunks are already written to bridge.log in main
   // (sendCodexOutput). Re-sending them here would clone the same 4–16KB
   // string back across IPC for a duplicate file line.
@@ -1049,8 +1056,7 @@ autoRunInput.addEventListener("change", () => {
 });
 debugPanel?.addEventListener("toggle", () => {
   if (debugPanel.open) {
-    logBuffer = joinLogLines();
-    logEl.textContent = logBuffer;
+    paintDebugLog();
   } else {
     // The line list already holds the capped log. Leaving the joined 50KB
     // in the <pre> (and in logBuffer) after the user closes the panel is a
@@ -1068,13 +1074,16 @@ function syncWindowVisibility() {
   // devicechange arrived during the hide (or the list was never filled):
   // a no-op enumerateDevices() is still a native hop, and Bluetooth flaps
   // that never happened should not pay it on every show. Caption parts
-  // that were not painted still flush below.
+  // that were not painted still flush below. The debug log is the same:
+  // streamed Codex chunks while hide()'d skip the 50KB join, then one
+  // paint here if the panel is still open.
   if (devicesChangedWhileHidden || lastMediaDevices.length === 0) {
     devicesChangedWhileHidden = false;
     refreshMediaDevices(false).catch(() => {});
   }
   captionsDirty = false;
   renderCaptions();
+  paintDebugLog();
 }
 
 document.addEventListener("visibilitychange", syncWindowVisibility);

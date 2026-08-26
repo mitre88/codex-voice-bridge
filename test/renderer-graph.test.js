@@ -584,8 +584,8 @@ test("log() caps large payloads before pretty-printing and skips DOM writes whil
   );
   assert.match(
     fnBody,
-    /if \(debugPanel\?\.open\) \{[\s\S]*?logEl\.textContent = logBuffer/,
-    "log() must not rewrite the debug <pre> while the panel is closed",
+    /paintDebugLog\(\)/,
+    "log() must paint through paintDebugLog so a closed or hidden panel skips the 50KB join",
   );
   assert.match(
     renderer,
@@ -825,5 +825,32 @@ test("streamed Codex/CUA output skips the renderer-to-main log bounce", () => {
     flushBody,
     /log\("codex output", codexOutputBuffer, \{ skipIpc: true \}\)/,
     "flushCodexOutput must skip IPC because main already wrote bridge.log",
+  );
+});
+
+test("debug log skips the 50KB join while the shortcut-hidden window is in the background", () => {
+  // hide() does not destroy the renderer. An open debug <details> used to
+  // joinNewestFirst + rewrite <pre> on every streamed chunk even though
+  // the user cannot see it — the same wasted compositor work captions
+  // already skip. Catch up once on show if the panel is still open.
+  const renderer = readSource("renderer.js");
+  const paintStart = renderer.indexOf("function paintDebugLog");
+  assert.ok(paintStart !== -1, "renderer.js must define paintDebugLog");
+  const paintBody = renderer.slice(paintStart, renderer.indexOf("function pushLogLine"));
+  assert.match(
+    paintBody,
+    /if \(!debugPanel\?\.open \|\| document\.hidden\) return/,
+    "paintDebugLog must skip the join while the panel is closed or the window is hidden",
+  );
+  const syncStart = renderer.indexOf("function syncWindowVisibility");
+  const syncBody = renderer.slice(syncStart, renderer.indexOf("document.addEventListener(\"visibilitychange\""));
+  assert.match(
+    syncBody,
+    /paintDebugLog\(\)/,
+    "becoming visible must catch up the debug log skipped while hidden",
+  );
+  assert.ok(
+    syncBody.indexOf("renderCaptions()") < syncBody.indexOf("paintDebugLog()"),
+    "debug-log catch-up must run after the caption catch-up on show",
   );
 });
