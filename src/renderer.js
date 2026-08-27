@@ -176,13 +176,17 @@ function log(message, data, options = {}) {
     } else if (typeof data === "string" && data.length > 16000) {
       logData = `${data.slice(0, 16000)}\n...[truncated ${data.length - 16000} chars]`;
     }
-    // truncateOutput only caps stdout/stderr. A Realtime error event (or
-    // any other object) can still carry a megabyte string field; pretty-
-    // printing that just to slice the result to 16KB spiked the same way
-    // formatPendingArgs used to. Cap strings in the replacer first.
-    serialized = JSON.stringify(logData, (_key, value) => capErrorBody(value, 16000), 2);
-    if (typeof serialized === "string" && serialized.length > 16000) {
-      serialized = `${serialized.slice(0, 16000)}\n...[truncated ${serialized.length - 16000} chars]`;
+    // The suffix below uses logData when it is already a string. Streamed
+    // Codex/CUA chunks (4–16KB) take that path: JSON.stringify would only
+    // allocate an escaped copy that is thrown away. Objects still need the
+    // pretty-print (and the replacer cap — truncateOutput only hits
+    // stdout/stderr, so a Realtime error dump could otherwise allocate a
+    // megabyte pretty JSON just to slice it to 16KB).
+    if (typeof logData !== "string") {
+      serialized = JSON.stringify(logData, (_key, value) => capErrorBody(value, 16000), 2);
+      if (typeof serialized === "string" && serialized.length > 16000) {
+        serialized = `${serialized.slice(0, 16000)}\n...[truncated ${serialized.length - 16000} chars]`;
+      }
     }
   } catch {
     serialized = String(data);

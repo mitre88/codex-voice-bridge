@@ -584,6 +584,11 @@ test("log() caps large payloads before pretty-printing and skips DOM writes whil
   );
   assert.match(
     fnBody,
+    /if \(typeof logData !== "string"\) \{[\s\S]*?JSON\.stringify\(logData/,
+    "log() must not JSON.stringify streamed string chunks — the suffix already uses logData",
+  );
+  assert.match(
+    fnBody,
     /paintDebugLog\(\)/,
     "log() must paint through paintDebugLog so a closed or hidden panel skips the 50KB join",
   );
