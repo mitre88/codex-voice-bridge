@@ -359,7 +359,7 @@ function formatPendingArgs(args) {
   return `${text.slice(0, MAX_PENDING_ARGS_CHARS)}\n...[truncated ${text.length - MAX_PENDING_ARGS_CHARS} chars]`;
 }
 
-function setPendingAction(action) {
+function setPendingAction(action, options = {}) {
   clearPendingActionTimer();
   // The Realtime API can emit several function calls in one turn (parallel
   // tool use). If a second call arrives while the first still awaits a human
@@ -376,6 +376,11 @@ function setPendingAction(action) {
     });
   }
   pendingAction = action;
+  // Auto-run calls executeAction on the next line, which immediately
+  // setPendingAction(null). Pretty-printing up to 200KB of args into the
+  // textarea (and flashing the panel) is compositor work the human never
+  // sees. Keep supersede + pendingAction; skip the display writes.
+  if (options.skipDisplay) return;
   pendingPanel.hidden = !action;
   if (!action) pendingPromptEl.value = "";
   // Display-only caps for both branches: the codex prompt and the args JSON
@@ -566,8 +571,12 @@ async function handleToolEvent(event) {
     callId: functionCall.callId,
     args: isMacAction ? { ...args, action: functionCall.name } : args,
   };
-  setPendingAction(action);
-  if (autoRunInput.checked) executeAction(action);
+  if (autoRunInput.checked) {
+    setPendingAction(action, { skipDisplay: true });
+    executeAction(action);
+  } else {
+    setPendingAction(action);
+  }
 }
 
 function deviceConstraint(deviceId, options = {}) {

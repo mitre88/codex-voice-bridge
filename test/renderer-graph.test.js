@@ -683,6 +683,36 @@ test("captions coalesce to one DOM write per frame", () => {
   );
 });
 
+test("auto-run skips the pending-panel pretty-print that executeAction immediately discards", () => {
+  // With auto-run checked, handleToolEvent paints the pending panel and then
+  // executeAction hides it on the next line. formatPendingArgs pretty-prints
+  // up to 200KB of model args for a textarea the human never sees — the same
+  // class of wasted display work as joining captions while #captionPanel is
+  // hidden. Supersede + pendingAction still run; only the DOM writes skip.
+  const renderer = readSource("renderer.js");
+  const toolStart = renderer.indexOf("async function handleToolEvent");
+  assert.ok(toolStart !== -1, "renderer.js must define handleToolEvent");
+  const toolBody = renderer.slice(toolStart, renderer.indexOf("function deviceConstraint"));
+  assert.match(
+    toolBody,
+    /setPendingAction\(action, \{ skipDisplay: true \}\)/,
+    "handleToolEvent must skip the pending-panel paint when auto-run will execute immediately",
+  );
+  const setStart = renderer.indexOf("function setPendingAction");
+  assert.ok(setStart !== -1, "renderer.js must define setPendingAction");
+  const setBody = renderer.slice(setStart, renderer.indexOf("function clearPendingActionTimer"));
+  assert.match(
+    setBody,
+    /options\.skipDisplay/,
+    "setPendingAction must honor skipDisplay so auto-run can skip formatPendingArgs",
+  );
+  assert.ok(
+    setBody.indexOf("skipDisplay") !== -1 &&
+      setBody.indexOf("skipDisplay") < setBody.indexOf("formatPendingArgs"),
+    "skipDisplay must return before formatPendingArgs so auto-run cannot pretty-print a 200KB preview",
+  );
+});
+
 test("enabling auto-run executes a pending action instead of letting its auto-reject timer fire", () => {
   // When a tool call arrives while auto-run is OFF, setPendingAction arms an
   // auto-reject timer. If the human then ticks the auto-run checkbox, the
