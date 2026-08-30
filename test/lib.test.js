@@ -980,12 +980,37 @@ test("isPlausibleApiKey accepts sk- keys and rejects obvious non-keys", () => {
 test("requireNonEmptyString accepts non-empty strings and rejects the rest", () => {
   assert.equal(requireNonEmptyString("run the tests", "prompt"), null);
   assert.equal(requireNonEmptyString("  spaced  ", "prompt"), null);
+  assert.equal(requireNonEmptyString("hello\n", "prompt"), null);
   assert.equal(requireNonEmptyString("", "prompt"), "prompt must be a non-empty string.");
   assert.equal(requireNonEmptyString("   ", "prompt"), "prompt must be a non-empty string.");
+  assert.equal(requireNonEmptyString("\n\t  \r", "prompt"), "prompt must be a non-empty string.");
+  // NBSP is trim()-whitespace in JS; a prompt of only that is still empty.
+  assert.equal(requireNonEmptyString("\u00A0\u00A0", "prompt"), "prompt must be a non-empty string.");
+  assert.equal(requireNonEmptyString("\u00A0hello\u00A0", "prompt"), null);
   assert.equal(requireNonEmptyString(undefined, "prompt"), "prompt must be a non-empty string.");
   assert.equal(requireNonEmptyString(null, "prompt"), "prompt must be a non-empty string.");
   assert.equal(requireNonEmptyString(42, "text"), "text must be a non-empty string.");
   assert.equal(requireNonEmptyString({ a: 1 }, "key"), "key must be a non-empty string.");
+  // The common path is a large model prompt with no edge whitespace. The
+  // helper must still accept it (and must not copy it — see the source guard).
+  assert.equal(requireNonEmptyString(`run ${"x".repeat(200000)}`, "prompt"), null);
+});
+
+test("requireNonEmptyString does not trim() a large prompt just to check emptiness", () => {
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function requireNonEmptyString");
+  assert.ok(fnStart !== -1, "lib.js must export requireNonEmptyString");
+  const fnBody = src.slice(fnStart, src.indexOf("export function requireMaxLength"));
+  assert.doesNotMatch(
+    fnBody,
+    /\.trim\s*\(/,
+    "requireNonEmptyString must not copy a 200KB prompt with trim() — it does not return the trimmed value",
+  );
+  assert.match(
+    fnBody,
+    /\/\\S\/\.test\(value\)/,
+    "emptiness must be a non-allocating /\\S/ test, not a trimmed copy",
+  );
 });
 
 test("requireMaxLength caps oversized argv-bound values", () => {

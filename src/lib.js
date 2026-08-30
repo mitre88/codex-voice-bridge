@@ -677,7 +677,12 @@ export function isSafeLaunchUrl(value) {
 // missing prompt would reach spawn() as the literal string "undefined" and a
 // null IPC payload would throw a TypeError while destructuring.
 export function requireNonEmptyString(value, label) {
-  if (typeof value !== "string" || !value.trim()) return `${label} must be a non-empty string.`;
+  // A 200KB voice prompt used to pay a full trim() copy just to check
+  // emptiness — this helper does not return the trimmed value. /\S/.test
+  // walks until the first non-whitespace character and allocates nothing.
+  if (typeof value !== "string" || !/\S/.test(value)) {
+    return `${label} must be a non-empty string.`;
+  }
   return null;
 }
 
