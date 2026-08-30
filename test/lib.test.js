@@ -1994,6 +1994,24 @@ test("extractActiveAppFromListApps returns the first active app without requirin
     extractActiveAppFromListApps('{"ok":true,"apps" : [ {"pid":9,"active":true} ]}').app.pid,
     9,
   );
+  // Pretty-printed `active: true` (newline after the colon) must still parse.
+  assert.equal(
+    extractActiveAppFromListApps('{"apps":[{"pid":10,"active":\ntrue}]}').app.pid,
+    10,
+  );
+  // Fat inactive entries before the frontmost app must not hide it — and
+  // must not force JSON.parse of those window-title blobs.
+  const fatInactive = {
+    pid: 1,
+    active: false,
+    windows: [{ title: "x".repeat(8000) }],
+  };
+  assert.equal(
+    extractActiveAppFromListApps(
+      JSON.stringify({ apps: [fatInactive, fatInactive, { pid: 11, active: true }] }),
+    ).app.pid,
+    11,
+  );
   // A window title that literally contains "active":true must not steal the pid.
   assert.equal(
     extractActiveAppFromListApps(
@@ -2023,6 +2041,15 @@ test("extractActiveAppFromListApps parses one app object at a time and falls bac
   const fnStart = src.indexOf("// Scan a list_apps dump for the active app without parsing the forest.");
   assert.ok(fnStart !== -1, "lib.js must document the list_apps active-app scanner");
   const fnBody = src.slice(fnStart, src.indexOf("export function parseEnvFile"));
+  assert.match(
+    fnBody,
+    /sliceHasActiveTrue\(/,
+    "inactive app objects must not be JSON.parse'd just to read active:false",
+  );
+  assert.ok(
+    fnBody.indexOf("sliceHasActiveTrue(") < fnBody.indexOf("JSON.parse(text.slice"),
+    "the active:true peek must run before JSON.parse of an app object",
+  );
   assert.match(
     fnBody,
     /JSON\.parse\(text\.slice\(/,

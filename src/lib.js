@@ -1024,6 +1024,27 @@ function skipJsonValue(text, i, end, budgetRef) {
   return i;
 }
 
+// JSON boolean true after an "active" key, with legal JSON whitespace.
+// A window title that embeds the same characters is a false positive: the
+// caller still JSON.parse's that one object and checks app.active.
+function sliceHasActiveTrue(text, start, end) {
+  let idx = start;
+  while (idx < end) {
+    const at = text.indexOf('"active"', idx);
+    if (at < 0 || at >= end) return false;
+    let k = skipJsonWs(text, at + 8, end);
+    if (k < end && text[k] === ":") {
+      k = skipJsonWs(text, k + 1, end);
+      if (k + 4 <= end && text.startsWith("true", k)) {
+        const after = k + 4 < end ? text[k + 4] : ",";
+        if (isJsonWs(after) || after === "," || after === "}" || after === "]") return true;
+      }
+    }
+    idx = at + 8;
+  }
+  return false;
+}
+
 function walkAppsArray(text, from, end, budgetRef) {
   let i = from;
   while (i < end && budgetRef.budget > 0) {
@@ -1038,6 +1059,13 @@ function walkAppsArray(text, from, end, budgetRef) {
       const closed = closeJsonObject(text, i, end, budgetRef.budget);
       budgetRef.budget = closed.budget;
       if (closed.end < 0) return { kind: "miss" };
+      // Inactive apps still carry window-title arrays. Skip JSON.parse
+      // unless this slice has a JSON `true` after an "active" key —
+      // cua-driver emits a boolean, and type/press only need that pid.
+      if (!sliceHasActiveTrue(text, i, closed.end + 1)) {
+        i = closed.end + 1;
+        continue;
+      }
       let appInfo;
       try {
         // One app object, not the 1MB forest. type/press only need the
@@ -1119,9 +1147,10 @@ function scanListAppsActive(text) {
 // Find the active app in a cua-driver list_apps dump without JSON.parse of
 // the whole 1MB forest. type/press call this on every keystroke and only
 // need { pid, active } from one entry; materializing every window title is
-// the remaining memory peak. Parses one app object at a time and stops at
-// the first truthy `active`. Falls back to extractFirstJsonObject when the
-// scanner cannot see an apps array, so odd/prefixed shapes stay correct.
+// the remaining memory peak. Skips JSON.parse of slices without `active: true`,
+// then parses one matching app object and stops. Falls back to
+// extractFirstJsonObject when the scanner cannot see an apps array, so
+// odd/prefixed shapes stay correct.
 // Returns { app } (app may be null when the array is valid but none is
 // active) or { error: "unexpected" } when there is no apps list.
 export function extractActiveAppFromListApps(text) {
