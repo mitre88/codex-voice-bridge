@@ -1055,7 +1055,8 @@ function readJsonBoolean(text, i, end) {
 
 // Depth-1 pid + active only. type/press never read windows/titles; parsing
 // the frontmost app object used to materialize that whole array. Returns
-// { pid, active: true }, { inactive: true } (skip parse), or null (fall back).
+// as soon as both fields are known so a trailing windows array is not
+// scanned. { pid, active: true }, { inactive: true } (skip parse), or null.
 function extractAppPidIfActive(text, start, end) {
   let i = start + 1;
   let inString = false;
@@ -1085,6 +1086,9 @@ function extractAppPidIfActive(text, start, end) {
             const num = readJsonPositiveInt(text, k, end);
             if (!num) return null;
             pid = num.value;
+            // Keys are typically before the windows array — stop so we
+            // never walk those titles after we already have the pid.
+            if (active) return { pid, active: true };
             i = num.next;
             continue;
           }
@@ -1093,6 +1097,7 @@ function extractAppPidIfActive(text, start, end) {
             if (!bool) return null;
             if (!bool.value) return { inactive: true };
             active = true;
+            if (pid !== undefined) return { pid, active: true };
             i = bool.next;
             continue;
           }

@@ -2071,6 +2071,16 @@ test("extractActiveAppFromListApps parses one app object at a time and falls bac
   );
   assert.match(
     fnBody,
+    /if \(active\) return \{ pid, active: true \}/,
+    "once pid and active are both known the walk must stop before the windows array",
+  );
+  assert.match(
+    fnBody,
+    /if \(pid !== undefined\) return \{ pid, active: true \}/,
+    "key order (active before pid) must also stop the walk as soon as both are known",
+  );
+  assert.match(
+    fnBody,
     /JSON\.parse\(text\.slice\(/,
     "the scan path must parse one app object slice, not the whole dump",
   );
