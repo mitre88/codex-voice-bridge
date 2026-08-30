@@ -279,6 +279,16 @@ test("runProcess batches streamed output IPC and flushes before settling", () =>
     /if \(text\.length >= OUTPUT_IPC_MAX_CHARS\)/,
     "a megabyte stdout chunk must not be concatenated into pendingOutput before the cap",
   );
+  assert.match(
+    fnBody,
+    /trimSettledOutput = options\.trimOutput !== false/,
+    "runProcess must allow callers to skip trim() of a megabyte settled tail",
+  );
+  assert.match(
+    fnBody,
+    /trimSettledOutput \? text\.trim\(\) : text/,
+    "settled stdout/stderr must only trim when trimOutput is not disabled",
+  );
   assert.ok(
     fnBody.indexOf("flushPendingOutput()") < fnBody.indexOf("resolve({"),
     "the leftover IPC batch must flush before the runProcess promise resolves",
@@ -450,6 +460,11 @@ test("getActiveAppFromCua does not stream list_apps into the debug-log IPC", () 
     cua,
     /onOutput: options\.quiet\s*\? undefined/,
     "runCuaDriver must skip streamed IPC when quiet",
+  );
+  assert.match(
+    cua,
+    /trimOutput: !options\.quiet/,
+    "quiet list_apps must not trim() a 1MB dump — extractFirstJsonObject accepts the trailing newline",
   );
 });
 

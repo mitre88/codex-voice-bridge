@@ -356,6 +356,17 @@ function runProcess(command, args, options = {}) {
       }
     }
 
+    // Model-facing runs trim the settled tail (Codex/CUA stdout usually
+    // ends with a newline). Internal quiet list_apps skips it: type/press
+    // parse the dump with extractFirstJsonObject, which already accepts
+    // surrounding whitespace, and trim() of a 1MB buffer is a full copy
+    // on every keystroke. Default stays true so existing callers are unchanged.
+    const trimSettledOutput = options.trimOutput !== false;
+    function settleText(value) {
+      const text = String(value ?? "");
+      return trimSettledOutput ? text.trim() : text;
+    }
+
     const timeout = setTimeout(() => {
       killProcessGroup("SIGTERM");
       // Give children a moment to exit, then force-kill the whole group.
@@ -370,7 +381,7 @@ function runProcess(command, args, options = {}) {
       finish({
         ok: false,
         code: -2,
-        stdout: stdoutAcc.text().trim(),
+        stdout: stdoutAcc.text(),
         stderr: `${command} timed out after ${Math.round((options.timeoutMs || 60000) / 1000)} seconds.`,
       });
     }, options.timeoutMs || 60000);
@@ -388,7 +399,7 @@ function runProcess(command, args, options = {}) {
       // (final result, error summary), the same convention truncateOutput uses.
       if (stdoutAcc.capped && typeof out === "string") out = "...[stdout truncated at 1MB]\n" + out;
       if (stderrAcc.capped && typeof err === "string") err = "...[stderr truncated at 1MB]\n" + err;
-      resolve({ ...result, stdout: String(out ?? "").trim(), stderr: String(err ?? "").trim() });
+      resolve({ ...result, stdout: settleText(out), stderr: settleText(err) });
     }
 
     child.stdout.on("data", (chunk) => {
@@ -888,6 +899,10 @@ function runCuaDriver(input = {}, options = {}) {
     // A model-facing cua:run must keep streaming (options.quiet is a
     // second argument so a json_args.quiet from the model cannot silence it).
     onOutput: options.quiet ? undefined : sendCodexOutput,
+    // extractFirstJsonObject already accepts a trailing newline. trim() of
+    // a 1MB list_apps dump on every type/press is a full copy the pid
+    // lookup never needs. Model-facing cua:run still trims.
+    trimOutput: !options.quiet,
   });
 }
 
