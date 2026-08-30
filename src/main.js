@@ -11,7 +11,7 @@ import {
   capErrorBody,
   createOutputAccumulator,
   escapeAppleScript,
-  extractFirstJsonObject,
+  extractActiveAppFromListApps,
   humanizeSpawnError,
   isPlausibleApiKey,
   isSafeAppIdentity,
@@ -358,7 +358,7 @@ function runProcess(command, args, options = {}) {
 
     // Model-facing runs trim the settled tail (Codex/CUA stdout usually
     // ends with a newline). Internal quiet list_apps skips it: type/press
-    // parse the dump with extractFirstJsonObject, which already accepts
+    // parse the dump with extractActiveAppFromListApps, which already accepts
     // surrounding whitespace, and trim() of a 1MB buffer is a full copy
     // on every keystroke. Default stays true so existing callers are unchanged.
     const trimSettledOutput = options.trimOutput !== false;
@@ -893,13 +893,13 @@ function runCuaDriver(input = {}, options = {}) {
   return runProcess("cua-driver", args, {
     timeoutMs: CUA_TIMEOUT_MS,
     // Internal list_apps (type/press front-app lookup) only needs the
-    // captured stdout for extractFirstJsonObject. Streaming that dump to
+    // captured stdout for extractActiveAppFromListApps. Streaming that dump to
     // the debug log still paid a 16KB IPC clone on every keystroke — the
     // model never sees it, and the panel already has the type/press result.
     // A model-facing cua:run must keep streaming (options.quiet is a
     // second argument so a json_args.quiet from the model cannot silence it).
     onOutput: options.quiet ? undefined : sendCodexOutput,
-    // extractFirstJsonObject already accepts a trailing newline. trim() of
+    // extractActiveAppFromListApps already accepts a trailing newline. trim() of
     // a 1MB list_apps dump on every type/press is a full copy the pid
     // lookup never needs. Model-facing cua:run still trims.
     trimOutput: !options.quiet,
@@ -1143,9 +1143,10 @@ async function getActiveAppFromCua() {
   }
   // cua-driver may prefix its JSON payload with log lines; a strict parse of
   // the whole stdout would fail and make type/press tools report "No active
-  // app" for a valid response.
+  // app" for a valid response. extractActiveAppFromListApps also avoids
+  // JSON.parse of the entire 1MB apps forest — type/press only need one pid.
   try {
-    const parsed = extractFirstJsonObject(result.stdout);
+    const extracted = extractActiveAppFromListApps(result.stdout);
     // The driver responded but the payload is not the expected shape (a
     // crash mid-print, a version mismatch, an empty stdout, a proxied
     // response): collapsing that into the generic "No active app pid found."
@@ -1154,13 +1155,10 @@ async function getActiveAppFromCua() {
     // failure branch above exists to prevent. Only a valid apps array with
     // no active entry means "no active app": that one still returns null so
     // callers report the accurate generic message.
-    if (!parsed || !Array.isArray(parsed.apps)) {
+    if (extracted.error) {
       return { pid: null, error: "cua-driver list_apps returned an unexpected payload (no apps list)." };
     }
-    // Guard each entry too: a malformed apps array (a null or non-object
-    // entry) would otherwise throw inside .find and collapse into the same
-    // misleading generic message via the catch below.
-    return parsed.apps.find((appInfo) => appInfo && typeof appInfo === "object" && appInfo.active) || null;
+    return extracted.app;
   } catch {
     return { pid: null, error: "cua-driver list_apps returned an unreadable payload." };
   }

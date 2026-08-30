@@ -13,6 +13,7 @@ import {
   createDebugLogBuffer,
   createOutputAccumulator,
   escapeAppleScript,
+  extractActiveAppFromListApps,
   extractFirstJsonObject,
   typeDelayMs,
   hasVirtualAudioDevice,
@@ -1966,6 +1967,88 @@ test("extractFirstJsonObject still finds a real object after an unterminated can
   assert.deepEqual(extractFirstJsonObject('{"log":"unterminated\n{"apps":[{"pid":1,"active":true}]}'), {
     apps: [{ pid: 1, active: true }],
   });
+});
+
+test("extractActiveAppFromListApps returns the first active app without requiring a full forest parse", () => {
+  assert.deepEqual(extractActiveAppFromListApps('{"apps":[{"pid":1,"active":true}]}').app, {
+    pid: 1,
+    active: true,
+  });
+  assert.deepEqual(extractActiveAppFromListApps('{"apps":[]}\n').app, null);
+  assert.deepEqual(
+    extractActiveAppFromListApps('  {"apps":[{"pid":1,"active":false},{"pid":2,"active":true}]}  ').app,
+    { pid: 2, active: true },
+  );
+  // Prefix log lines: same tolerance as extractFirstJsonObject.
+  assert.equal(
+    extractActiveAppFromListApps('2026-08-13 23:00:00 INFO starting\n{"apps":[{"pid":7,"active":true}]}').app.pid,
+    7,
+  );
+  // Unterminated log object before the real payload.
+  assert.equal(
+    extractActiveAppFromListApps('{"log":"unterminated\n{"apps":[{"pid":8,"active":true}]}').app.pid,
+    8,
+  );
+  // "apps" is not required to be the first key; whitespace around ":" is JSON-legal.
+  assert.equal(
+    extractActiveAppFromListApps('{"ok":true,"apps" : [ {"pid":9,"active":true} ]}').app.pid,
+    9,
+  );
+  // A window title that literally contains "active":true must not steal the pid.
+  assert.equal(
+    extractActiveAppFromListApps(
+      '{"apps":[{"pid":1,"active":false,"windows":[{"title":"{\\"active\\":true}"}]},{"pid":2,"active":true}]}',
+    ).app.pid,
+    2,
+  );
+  // Malformed entries are skipped (null / non-object), same as the old find() guard.
+  assert.equal(
+    extractActiveAppFromListApps('{"apps":[null,{"pid":3,"active":true},42]}').app.pid,
+    3,
+  );
+  // Empty / missing apps list is unexpected, not a silent "no active app".
+  assert.equal(extractActiveAppFromListApps("no json here").error, "unexpected");
+  assert.equal(extractActiveAppFromListApps("").error, "unexpected");
+  assert.equal(extractActiveAppFromListApps(null).error, "unexpected");
+  assert.equal(extractActiveAppFromListApps('{"a":1}').error, "unexpected");
+  // Concatenated values: the first complete object has no apps array.
+  assert.equal(extractActiveAppFromListApps('{"a":1}{"apps":[{"pid":1,"active":true}]}').error, "unexpected");
+});
+
+test("extractActiveAppFromListApps parses one app object at a time and falls back only on a miss", () => {
+  // type/press used to JSON.parse the whole 1MB list_apps tree to find one
+  // pid. The scanner must slice+parse individual app objects first;
+  // extractFirstJsonObject is only the fallback when no apps array is seen.
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("// Scan a list_apps dump for the active app without parsing the forest.");
+  assert.ok(fnStart !== -1, "lib.js must document the list_apps active-app scanner");
+  const fnBody = src.slice(fnStart, src.indexOf("export function parseEnvFile"));
+  assert.match(
+    fnBody,
+    /JSON\.parse\(text\.slice\(/,
+    "the scan path must parse one app object slice, not the whole dump",
+  );
+  assert.match(
+    fnBody,
+    /extractFirstJsonObject\(text\)/,
+    "odd shapes the scanner misses must still fall back to extractFirstJsonObject",
+  );
+  assert.ok(
+    fnBody.indexOf("JSON.parse(text.slice") < fnBody.indexOf("extractFirstJsonObject(text)"),
+    "the full-forest parse must not run before the per-app scan",
+  );
+  assert.match(
+    fnBody,
+    /appInfo && typeof appInfo === "object" && appInfo\.active/,
+    "malformed apps entries must be skipped instead of throwing inside find",
+  );
+});
+
+test("extractActiveAppFromListApps bails out in linear time on a barrage of unclosed braces", () => {
+  const barrage = "{".repeat(200000);
+  const started = Date.now();
+  assert.equal(extractActiveAppFromListApps(barrage).error, "unexpected");
+  assert.ok(Date.now() - started < 2000, "a brace barrage must not stall the active-app scanner");
 });
 
 test("typeDelayMs scales the per-character delay so long texts fit the timeout", () => {

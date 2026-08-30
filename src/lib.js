@@ -940,6 +940,204 @@ export function extractFirstJsonObject(text) {
   return null;
 }
 
+// Scan a list_apps dump for the active app without parsing the forest.
+function isJsonWs(ch) {
+  return ch === " " || ch === "\n" || ch === "\r" || ch === "\t";
+}
+
+function skipJsonWs(text, i, end) {
+  while (i < end && isJsonWs(text[i])) i++;
+  return i;
+}
+
+function closeJsonString(text, open, end) {
+  let escaped = false;
+  for (let j = open + 1; j < end; j++) {
+    const ch = text[j];
+    if (escaped) escaped = false;
+    else if (ch === "\\") escaped = true;
+    else if (ch === '"') return j;
+  }
+  return -1;
+}
+
+function closeJsonObject(text, start, end, budget) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let remaining = budget;
+  for (let j = start; j < end && remaining > 0; j++, remaining--) {
+    const ch = text[j];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return { end: j, budget: remaining };
+    }
+  }
+  return { end: -1, budget: remaining };
+}
+
+function skipJsonValue(text, i, end, budgetRef) {
+  i = skipJsonWs(text, i, end);
+  if (i >= end) return -1;
+  const ch = text[i];
+  if (ch === '"') {
+    const close = closeJsonString(text, i, end);
+    return close < 0 ? -1 : close + 1;
+  }
+  if (ch === "{") {
+    const closed = closeJsonObject(text, i, end, budgetRef.budget);
+    budgetRef.budget = closed.budget;
+    return closed.end < 0 ? -1 : closed.end + 1;
+  }
+  if (ch === "[") {
+    let depth = 1;
+    let inString = false;
+    let escaped = false;
+    for (let j = i + 1; j < end && budgetRef.budget > 0; j++, budgetRef.budget--) {
+      const c = text[j];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (c === "\\") escaped = true;
+        else if (c === '"') inString = false;
+        continue;
+      }
+      if (c === '"') inString = true;
+      else if (c === "[" || c === "{") depth++;
+      else if (c === "]" || c === "}") {
+        depth--;
+        if (depth === 0) return j + 1;
+      }
+    }
+    return -1;
+  }
+  while (i < end && !isJsonWs(text[i]) && text[i] !== "," && text[i] !== "]" && text[i] !== "}") {
+    i++;
+  }
+  return i;
+}
+
+function walkAppsArray(text, from, end, budgetRef) {
+  let i = from;
+  while (i < end && budgetRef.budget > 0) {
+    i = skipJsonWs(text, i, end);
+    if (i >= end) return { kind: "miss" };
+    if (text[i] === "]") return { kind: "apps", app: null };
+    if (text[i] === ",") {
+      i++;
+      continue;
+    }
+    if (text[i] === "{") {
+      const closed = closeJsonObject(text, i, end, budgetRef.budget);
+      budgetRef.budget = closed.budget;
+      if (closed.end < 0) return { kind: "miss" };
+      let appInfo;
+      try {
+        // One app object, not the 1MB forest. type/press only need the
+        // first { active: true } entry; later apps stay unparsed.
+        appInfo = JSON.parse(text.slice(i, closed.end + 1));
+      } catch {
+        return { kind: "miss" };
+      }
+      if (appInfo && typeof appInfo === "object" && appInfo.active) {
+        return { kind: "apps", app: appInfo };
+      }
+      i = closed.end + 1;
+      continue;
+    }
+    const skipped = skipJsonValue(text, i, end, budgetRef);
+    if (skipped < 0) return { kind: "miss" };
+    i = skipped;
+  }
+  return { kind: "miss" };
+}
+
+function findActiveInAppsObject(text, from, end, budgetRef) {
+  let i = from;
+  let inString = false;
+  let escaped = false;
+  let depth = 1;
+  while (i < end && budgetRef.budget > 0) {
+    budgetRef.budget--;
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      const close = closeJsonString(text, i, end);
+      if (close < 0) return { kind: "miss" };
+      if (depth === 1 && close === i + 5 && text.startsWith("apps", i + 1)) {
+        let k = skipJsonWs(text, close + 1, end);
+        if (k < end && text[k] === ":") {
+          k = skipJsonWs(text, k + 1, end);
+          if (k < end && text[k] === "[") {
+            return walkAppsArray(text, k + 1, end, budgetRef);
+          }
+          return { kind: "miss" };
+        }
+      }
+      i = close + 1;
+      continue;
+    }
+    if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") depth--;
+    i++;
+  }
+  return { kind: "miss" };
+}
+
+function scanListAppsActive(text) {
+  if (typeof text !== "string" || !text) return { kind: "miss" };
+  const end = text.length;
+  const budgetRef = { budget: end * 2 };
+  for (let i = 0; i < end && budgetRef.budget > 0; i++) {
+    if (text[i] !== "{") continue;
+    const closed = closeJsonObject(text, i, end, budgetRef.budget);
+    budgetRef.budget = closed.budget;
+    if (closed.end < 0) continue;
+    const found = findActiveInAppsObject(text, i + 1, closed.end, budgetRef);
+    if (found.kind === "apps") return found;
+    // First complete object is not a list_apps payload — same as
+    // extractFirstJsonObject returning that object and the caller seeing
+    // no apps array. Do not walk a later concatenated value.
+    return { kind: "miss" };
+  }
+  return { kind: "miss" };
+}
+
+// Find the active app in a cua-driver list_apps dump without JSON.parse of
+// the whole 1MB forest. type/press call this on every keystroke and only
+// need { pid, active } from one entry; materializing every window title is
+// the remaining memory peak. Parses one app object at a time and stops at
+// the first truthy `active`. Falls back to extractFirstJsonObject when the
+// scanner cannot see an apps array, so odd/prefixed shapes stay correct.
+// Returns { app } (app may be null when the array is valid but none is
+// active) or { error: "unexpected" } when there is no apps list.
+export function extractActiveAppFromListApps(text) {
+  const scanned = scanListAppsActive(text);
+  if (scanned.kind === "apps") {
+    return { app: scanned.app };
+  }
+  const parsed = extractFirstJsonObject(text);
+  if (!parsed || !Array.isArray(parsed.apps)) {
+    return { error: "unexpected" };
+  }
+  return {
+    app: parsed.apps.find((appInfo) => appInfo && typeof appInfo === "object" && appInfo.active) || null,
+  };
+}
+
 // Parse a dotenv-style file (KEY=VALUE lines, # comments, optional quotes)
 // into a plain object. Never throws: blank lines, comments, and malformed
 // lines are skipped. Inline comments (" # ...") are stripped from unquoted

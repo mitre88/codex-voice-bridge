@@ -415,8 +415,8 @@ test("getActiveAppFromCua distinguishes a malformed list_apps payload from a gen
   const fnBody = main.slice(fnStart, main.indexOf("function activateApp"));
   assert.match(
     fnBody,
-    /Array\.isArray\(parsed\.apps\)/,
-    "getActiveAppFromCua must verify the payload carries an apps array",
+    /extractActiveAppFromListApps\(result\.stdout\)/,
+    "getActiveAppFromCua must extract the active app without JSON.parse of the whole list_apps forest",
   );
   assert.match(
     fnBody,
@@ -425,8 +425,8 @@ test("getActiveAppFromCua distinguishes a malformed list_apps payload from a gen
   );
   assert.match(
     fnBody,
-    /appInfo && typeof appInfo === "object" && appInfo\.active/,
-    "getActiveAppFromCua must skip malformed entries instead of throwing inside find",
+    /extracted\.error/,
+    "getActiveAppFromCua must treat a missing apps list as unexpected, not as no active app",
   );
   assert.match(
     fnBody,
@@ -464,7 +464,7 @@ test("getActiveAppFromCua does not stream list_apps into the debug-log IPC", () 
   assert.match(
     cua,
     /trimOutput: !options\.quiet/,
-    "quiet list_apps must not trim() a 1MB dump — extractFirstJsonObject accepts the trailing newline",
+    "quiet list_apps must not trim() a 1MB dump — extractActiveAppFromListApps accepts the trailing newline",
   );
 });
 
