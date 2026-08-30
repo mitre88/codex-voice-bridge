@@ -2012,6 +2012,20 @@ test("extractActiveAppFromListApps returns the first active app without requirin
     ).app.pid,
     11,
   );
+  // The frontmost app's own windows must not be JSON.parse'd either: type/press
+  // only need pid, read at depth 1.
+  assert.deepEqual(
+    extractActiveAppFromListApps(
+      JSON.stringify({
+        apps: [{ pid: 12, active: true, windows: [{ title: "y".repeat(8000) }] }],
+      }),
+    ).app,
+    { pid: 12, active: true },
+  );
+  // A string pid is an odd shape: fall back to JSON.parse of that one object.
+  assert.equal(extractActiveAppFromListApps('{"apps":[{"pid":"13","active":true}]}').app.pid, "13");
+  // pid after active (key order must not matter).
+  assert.equal(extractActiveAppFromListApps('{"apps":[{"active":true,"pid":14}]}').app.pid, 14);
   // A window title that literally contains "active":true must not steal the pid.
   assert.equal(
     extractActiveAppFromListApps(
@@ -2046,9 +2060,14 @@ test("extractActiveAppFromListApps parses one app object at a time and falls bac
     /sliceHasActiveTrue\(/,
     "inactive app objects must not be JSON.parse'd just to read active:false",
   );
+  assert.match(
+    fnBody,
+    /extractAppPidIfActive\(/,
+    "the frontmost app must yield pid/active at depth 1 without parsing windows",
+  );
   assert.ok(
-    fnBody.indexOf("sliceHasActiveTrue(") < fnBody.indexOf("JSON.parse(text.slice"),
-    "the active:true peek must run before JSON.parse of an app object",
+    fnBody.indexOf("extractAppPidIfActive(") < fnBody.indexOf("JSON.parse(text.slice"),
+    "depth-1 pid/active must run before JSON.parse of an app object",
   );
   assert.match(
     fnBody,

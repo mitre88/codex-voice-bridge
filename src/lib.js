@@ -1024,9 +1024,94 @@ function skipJsonValue(text, i, end, budgetRef) {
   return i;
 }
 
+function readJsonPositiveInt(text, i, end) {
+  i = skipJsonWs(text, i, end);
+  if (i >= end || text[i] < "0" || text[i] > "9") return null;
+  let j = i;
+  while (j < end && text[j] >= "0" && text[j] <= "9") j++;
+  // JSON integers cannot have a leading zero (012 is invalid); fall back.
+  if (text[i] === "0" && j > i + 1) return null;
+  const after = j < end ? text[j] : ",";
+  if (after === "." || after === "e" || after === "E" || (after >= "a" && after <= "z") || after === "-") {
+    return null;
+  }
+  const n = Number(text.slice(i, j));
+  if (!Number.isInteger(n) || n <= 0) return null;
+  return { value: n, next: j };
+}
+
+function readJsonBoolean(text, i, end) {
+  i = skipJsonWs(text, i, end);
+  if (i + 4 <= end && text.startsWith("true", i)) {
+    const after = i + 4 < end ? text[i + 4] : ",";
+    if (isJsonWs(after) || after === "," || after === "}" || after === "]") return { value: true, next: i + 4 };
+  }
+  if (i + 5 <= end && text.startsWith("false", i)) {
+    const after = i + 5 < end ? text[i + 5] : ",";
+    if (isJsonWs(after) || after === "," || after === "}" || after === "]") return { value: false, next: i + 5 };
+  }
+  return null;
+}
+
+// Depth-1 pid + active only. type/press never read windows/titles; parsing
+// the frontmost app object used to materialize that whole array. Returns
+// { pid, active: true }, { inactive: true } (skip parse), or null (fall back).
+function extractAppPidIfActive(text, start, end) {
+  let i = start + 1;
+  let inString = false;
+  let escaped = false;
+  let depth = 1;
+  let pid;
+  let active;
+  while (i < end) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      const close = closeJsonString(text, i, end);
+      if (close < 0) return null;
+      if (depth === 1) {
+        const keyStart = i + 1;
+        const keyLen = close - keyStart;
+        let k = skipJsonWs(text, close + 1, end);
+        if (k < end && text[k] === ":") {
+          k = skipJsonWs(text, k + 1, end);
+          if (keyLen === 3 && text.startsWith("pid", keyStart)) {
+            const num = readJsonPositiveInt(text, k, end);
+            if (!num) return null;
+            pid = num.value;
+            i = num.next;
+            continue;
+          }
+          if (keyLen === 6 && text.startsWith("active", keyStart)) {
+            const bool = readJsonBoolean(text, k, end);
+            if (!bool) return null;
+            if (!bool.value) return { inactive: true };
+            active = true;
+            i = bool.next;
+            continue;
+          }
+        }
+      }
+      i = close + 1;
+      continue;
+    }
+    if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") depth--;
+    i++;
+  }
+  if (active && pid !== undefined) return { pid, active: true };
+  return null;
+}
+
 // JSON boolean true after an "active" key, with legal JSON whitespace.
-// A window title that embeds the same characters is a false positive: the
-// caller still JSON.parse's that one object and checks app.active.
+// A window title that embeds the same characters is a false positive:
+// extractAppPidIfActive then sees depth-1 active:false and skips parse.
 function sliceHasActiveTrue(text, start, end) {
   let idx = start;
   while (idx < end) {
@@ -1066,10 +1151,16 @@ function walkAppsArray(text, from, end, budgetRef) {
         i = closed.end + 1;
         continue;
       }
+      const slim = extractAppPidIfActive(text, i, closed.end + 1);
+      if (slim?.inactive) {
+        i = closed.end + 1;
+        continue;
+      }
+      if (slim?.pid) return { kind: "apps", app: slim };
       let appInfo;
       try {
-        // One app object, not the 1MB forest. type/press only need the
-        // first { active: true } entry; later apps stay unparsed.
+        // Odd pid/active shapes (string pid, active:1): parse this one
+        // object only. The common path already returned a slim { pid }.
         appInfo = JSON.parse(text.slice(i, closed.end + 1));
       } catch {
         return { kind: "miss" };
@@ -1148,9 +1239,9 @@ function scanListAppsActive(text) {
 // the whole 1MB forest. type/press call this on every keystroke and only
 // need { pid, active } from one entry; materializing every window title is
 // the remaining memory peak. Skips JSON.parse of slices without `active: true`,
-// then parses one matching app object and stops. Falls back to
-// extractFirstJsonObject when the scanner cannot see an apps array, so
-// odd/prefixed shapes stay correct.
+// then reads depth-1 pid/active so the frontmost app's windows stay unparsed.
+// Falls back to extractFirstJsonObject when the scanner cannot see an apps
+// array, so odd/prefixed shapes stay correct.
 // Returns { app } (app may be null when the array is valid but none is
 // active) or { error: "unexpected" } when there is no apps list.
 export function extractActiveAppFromListApps(text) {
