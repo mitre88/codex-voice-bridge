@@ -697,7 +697,17 @@ export function requireNonEmptyString(value, label) {
 // when valid, or a short human-readable error message. Non-strings pass
 // through: type checks are the caller's job (see requireNonEmptyString).
 export function requireMaxLength(value, label, maxBytes = 200000) {
-  if (typeof value === "string" && Buffer.byteLength(value, "utf8") > maxBytes) {
+  if (typeof value !== "string") return null;
+  // UTF-8 is at least 1 byte per UTF-16 code unit and at most 3 (BMP;
+  // a surrogate pair is 4 bytes over 2 units). A typical voice prompt is
+  // thousands of characters — far under 200000/3 — so skip the
+  // Buffer.byteLength walk on the common path. Still walk the gray band
+  // where a run of 2–3 byte characters could overflow the byte cap.
+  if (value.length > maxBytes) {
+    return `${label} exceeds the maximum length of ${maxBytes} bytes.`;
+  }
+  if (value.length * 3 <= maxBytes) return null;
+  if (Buffer.byteLength(value, "utf8") > maxBytes) {
     return `${label} exceeds the maximum length of ${maxBytes} bytes.`;
   }
   return null;

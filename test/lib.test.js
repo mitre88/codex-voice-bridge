@@ -1023,9 +1023,30 @@ test("requireMaxLength caps oversized argv-bound values", () => {
   // character count under the limit, so they must be rejected too.
   assert.equal(requireMaxLength("á".repeat(100001), "prompt"), "prompt exceeds the maximum length of 200000 bytes.");
   assert.equal(requireMaxLength("á".repeat(99999), "prompt"), null);
+  // The cheap length*3 bound must not reject a string that still fits:
+  // 66667 three-byte chars are 200001 bytes (over) but 66666 fit in 200000.
+  assert.equal(requireMaxLength("\u20ac".repeat(66666), "prompt"), null);
+  assert.equal(requireMaxLength("\u20ac".repeat(66667), "prompt"), "prompt exceeds the maximum length of 200000 bytes.");
   // Non-strings pass through: type checks are the caller's job.
   assert.equal(requireMaxLength(undefined, "prompt"), null);
   assert.equal(requireMaxLength({ a: 1 }, "prompt"), null);
+});
+
+test("requireMaxLength skips Buffer.byteLength when the character count already decides", () => {
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function requireMaxLength");
+  assert.ok(fnStart !== -1, "lib.js must export requireMaxLength");
+  const fnBody = src.slice(fnStart, src.indexOf("export function requireNoNullBytes"));
+  assert.match(
+    fnBody,
+    /value\.length > maxBytes/,
+    "a character count above the byte cap cannot fit UTF-8 — reject without walking the string",
+  );
+  assert.match(
+    fnBody,
+    /value\.length \* 3 <= maxBytes/,
+    "a typical prompt is far under 200000/3 bytes — skip Buffer.byteLength on the common path",
+  );
 });
 
 test("requireNoNullBytes rejects argv-bound strings containing a null byte", () => {
