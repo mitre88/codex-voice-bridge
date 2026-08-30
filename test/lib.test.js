@@ -1415,6 +1415,44 @@ test("readCappedResponseText stops reading once the budget is filled", async () 
   assert.equal(await readCappedResponseText(null), "");
 });
 
+test("readCappedResponseText does not decode a megabyte reader chunk", async () => {
+  // The 32-byte pull helper above never hits the one-chunk portal case:
+  // fetch can deliver the whole body as a single Uint8Array, and decoding
+  // that megabyte just to keep 20 characters is the allocation the stream
+  // cap exists to avoid.
+  const encoder = new TextEncoder();
+  const huge = `${"A".repeat(1_000_000)}TAIL`;
+  const response = new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(huge));
+        controller.close();
+      },
+    }),
+  );
+  const out = await readCappedResponseText(response, 20);
+  assert.ok(out.startsWith("A".repeat(20)));
+  assert.ok(out.includes("truncated"));
+  assert.ok(!out.includes("TAIL"));
+});
+
+test("readCappedResponseText decodes only the bytes that can fill the budget", () => {
+  const src = fs.readFileSync(new URL("../src/renderer-utils.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export async function readCappedResponseText");
+  assert.ok(fnStart !== -1, "renderer-utils.js must export readCappedResponseText");
+  const fnBody = src.slice(fnStart, src.indexOf("export async function readCappedJson"));
+  assert.match(
+    fnBody,
+    /remaining \* 4/,
+    "a megabyte reader chunk must not be decoded whole — UTF-8 is at most 4 bytes per kept character",
+  );
+  assert.match(
+    fnBody,
+    /subarray\(0, maxBytes\)/,
+    "the decoder must see only a prefix of an oversized chunk",
+  );
+});
+
 test("readCappedJson parses a small body and refuses a huge 2xx dump", async () => {
   // response.json() buffers the whole stream. A captive portal that answers
   // 200 with a megabyte of HTML would allocate that page just to throw.

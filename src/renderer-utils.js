@@ -446,9 +446,23 @@ export async function readCappedResponseText(response, maxChars = 4000) {
       const { value, done } = await reader.read();
       if (done) break;
       if (!value?.byteLength) continue;
-      out += decoder.decode(value, { stream: true });
+      // A captive portal can deliver the whole megabyte as one reader
+      // chunk. Decoding that just to slice to 4KB is the allocation this
+      // helper exists to avoid. UTF-8 is at most 4 bytes per code point,
+      // so only the bytes that can fill the remaining budget are decoded.
+      const remaining = maxChars - out.length;
+      const maxBytes = remaining * 4;
+      const chunkOverflow = value.byteLength > maxBytes;
+      const bytes = chunkOverflow ? value.subarray(0, maxBytes) : value;
+      out += decoder.decode(bytes, { stream: true });
       if (out.length > maxChars) {
         out = out.slice(0, maxChars);
+        overflowed = true;
+        break;
+      }
+      if (chunkOverflow) {
+        // Unread bytes remain in this same chunk — the body is larger
+        // than the budget even if the decoded prefix filled it exactly.
         overflowed = true;
         break;
       }
