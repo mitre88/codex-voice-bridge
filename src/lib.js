@@ -239,8 +239,14 @@ export function normalizeTargetLanguage(value, fallback = "es") {
 // AppleScript string they are plain data, and stripping them would make
 // osascript fail to find the app.
 export function escapeAppleScript(value = "") {
+  const text = typeof value === "string" ? value : String(value);
+  // activateApp identities that passed isSafeAppIdentity have no quotes or
+  // controls. The char-by-char copy is wasted on that path (Safari, Chrome,
+  // "Música"). Scan once; only allocate when a quote must be doubled or a
+  // control/line-separator must be stripped.
+  if (!/["\u0000-\u001F\u007F-\u009F\u2028\u2029]/.test(text)) return text;
   let out = "";
-  for (const char of String(value)) {
+  for (const char of text) {
     const code = char.codePointAt(0);
     // Strip control characters (C0 0x00-0x1F, DEL 0x7F, C1 0x80-0x9F) and the
     // Unicode line/paragraph separators (U+2028/U+2029) so a model-controlled

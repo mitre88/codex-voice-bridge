@@ -163,6 +163,26 @@ test("escapeAppleScript strips Unicode line/paragraph separators", () => {
   assert.equal(escapeAppleScript("Música"), "Música");
 });
 
+test("escapeAppleScript reuses a string that needs no quote doubling or stripping", () => {
+  const bundle = "com.apple.Safari";
+  const name = "Música";
+  assert.ok(escapeAppleScript(bundle) === bundle);
+  assert.ok(escapeAppleScript(name) === name);
+  assert.ok(escapeAppleScript("plain") === "plain");
+});
+
+test("escapeAppleScript skips the char-by-char copy when the identity is already safe", () => {
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function escapeAppleScript");
+  assert.ok(fnStart !== -1, "lib.js must export escapeAppleScript");
+  const fnBody = src.slice(fnStart, src.indexOf("export function isSafeAppIdentity"));
+  assert.ok(
+    fnBody.indexOf('.test(text)') !== -1 &&
+      fnBody.indexOf('.test(text)') < fnBody.indexOf("let out = \"\""),
+    "escapeAppleScript must return a safe identity before allocating the escaped copy",
+  );
+});
+
 test("isSafeAppIdentity allowlists bundle ids and simple app names", () => {
   assert.equal(isSafeAppIdentity({ bundle_id: "com.apple.Safari" }), true);
   assert.equal(isSafeAppIdentity({ name: "Visual Studio Code" }), true);
