@@ -186,6 +186,20 @@ test("writeLog caps log payloads so a 1MB Codex result cannot be stringified who
     /MAX_LOG_PAYLOAD_CHARS/,
     "the serialized log line itself must be length-capped",
   );
+  assert.match(
+    fnBody,
+    /logPayloadNeedsStringCap\(bounded, MAX_LOG_PAYLOAD_CHARS\)/,
+    "serializeLogData must skip the cap replacer when no string field can overflow",
+  );
+  assert.match(
+    fnBody,
+    /JSON\.stringify\(bounded\)/,
+    "short flat log objects (every 4KB Codex batch) must stringify without a replacer",
+  );
+  assert.ok(
+    fnBody.indexOf("logPayloadNeedsStringCap") < fnBody.indexOf("JSON.stringify(bounded)"),
+    "the fast stringify must be gated on logPayloadNeedsStringCap",
+  );
 });
 
 test("log rotation tracks on-disk size, not WriteStream.bytesWritten", () => {

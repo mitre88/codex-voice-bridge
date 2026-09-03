@@ -18,6 +18,7 @@ import {
   isSafeCuaLaunchArgs,
   isSafeCuaToolName,
   isSafeLaunchUrl,
+  logPayloadNeedsStringCap,
   normalizeCuaArgs,
   normalizeReasoningEffort,
   normalizeTargetLanguage,
@@ -222,10 +223,15 @@ function serializeLogData(data) {
     data && typeof data === "object" && !Array.isArray(data) ? truncateOutput(data, 16000) : data;
   let raw;
   try {
+    // sendCodexOutput hits this on every 4KB batch with a flat
+    // { message, data } object. The cap replacer is a no-op there and
+    // blocks V8's fast stringify; keep it for nested/oversized fields.
     raw =
       typeof bounded === "string"
         ? bounded
-        : JSON.stringify(bounded, (_key, value) => capErrorBody(value, MAX_LOG_PAYLOAD_CHARS));
+        : logPayloadNeedsStringCap(bounded, MAX_LOG_PAYLOAD_CHARS)
+          ? JSON.stringify(bounded, (_key, value) => capErrorBody(value, MAX_LOG_PAYLOAD_CHARS))
+          : JSON.stringify(bounded);
   } catch {
     raw = String(data);
   }

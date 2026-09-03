@@ -27,6 +27,7 @@ import {
   isSafeCuaToolName,
   isSafeLaunchUrl,
   isSdpAnswer,
+  logPayloadNeedsStringCap,
   normalizeCuaArgs,
   normalizeReasoningEffort,
   normalizeTargetLanguage,
@@ -1121,6 +1122,23 @@ test("redactSecrets reuses the string when it cannot contain a key", () => {
   assert.equal(redactSecrets(clean), clean);
   assert.ok(redactSecrets(clean) === clean);
   assert.equal(redactSecrets(42), "42");
+});
+
+test("logPayloadNeedsStringCap skips the stringify replacer for flat short logs", () => {
+  // sendCodexOutput writes { message, data } on every 4KB batch. Those
+  // strings are already under the 32KB line cap, so the cap replacer would
+  // only disable V8's fast JSON.stringify.
+  assert.equal(logPayloadNeedsStringCap({ message: "codex output", data: "chunk" }, 32000), false);
+  assert.equal(logPayloadNeedsStringCap({ message: "x", stack: "short" }, 32000), false);
+  assert.equal(logPayloadNeedsStringCap("already a string", 32000), false);
+  assert.equal(logPayloadNeedsStringCap(null, 32000), false);
+  assert.equal(logPayloadNeedsStringCap(42, 32000), false);
+});
+
+test("logPayloadNeedsStringCap keeps the replacer for nested or oversized fields", () => {
+  assert.equal(logPayloadNeedsStringCap({ message: "x", data: "A".repeat(32001) }, 32000), true);
+  assert.equal(logPayloadNeedsStringCap({ message: "done", data: { ok: true, stdout: "out" } }, 32000), true);
+  assert.equal(logPayloadNeedsStringCap(["keep the replacer"], 32000), true);
 });
 
 test("redactSecrets skips the key regex when the payload has no sk- prefix", () => {

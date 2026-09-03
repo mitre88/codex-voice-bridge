@@ -761,6 +761,24 @@ export function redactSecrets(value) {
   return text.replace(/\bsk-[A-Za-z0-9_.-]+/g, "[REDACTED_OPENAI_KEY]");
 }
 
+// writeLog stringifies every payload. A stringify replacer (capErrorBody)
+// disables V8's fast path and visits every value — worth it for a 1MB stack
+// or nested process output, wasted on sendCodexOutput's flat
+// { message, data } batches (already ≤16KB). True = keep the replacer.
+export function logPayloadNeedsStringCap(value, maxChars) {
+  if (value == null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return true;
+  for (const key of Object.keys(value)) {
+    const item = value[key];
+    if (typeof item === "string") {
+      if (item.length > maxChars) return true;
+    } else if (item && typeof item === "object") {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Turn a failed child-process spawn into a short, actionable message. A
 // missing binary surfaces as "spawn <command> ENOENT" (e.g. the user never
 // installed codex or cua-driver, or the binary is not on the app's PATH), an
