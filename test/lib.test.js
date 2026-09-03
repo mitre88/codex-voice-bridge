@@ -1088,6 +1088,27 @@ test("redactSecrets redacts keys at token boundaries only", () => {
   assert.equal(redactSecrets("\"sk-abc123\" and (sk-proj-x.y)"), "\"[REDACTED_OPENAI_KEY]\" and ([REDACTED_OPENAI_KEY])");
 });
 
+test("redactSecrets reuses the string when it cannot contain a key", () => {
+  // writeLog redacts every serialized payload. A 16KB Codex chunk almost
+  // never contains "sk-"; the regex must not copy it on that path.
+  const clean = "codex output: ran the tests, all green";
+  assert.equal(redactSecrets(clean), clean);
+  assert.ok(redactSecrets(clean) === clean);
+  assert.equal(redactSecrets(42), "42");
+});
+
+test("redactSecrets skips the key regex when the payload has no sk- prefix", () => {
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function redactSecrets");
+  assert.ok(fnStart !== -1, "lib.js must export redactSecrets");
+  const fnBody = src.slice(fnStart, src.indexOf("export function humanizeSpawnError"));
+  assert.ok(
+    fnBody.indexOf('includes("sk-")') !== -1 &&
+      fnBody.indexOf('includes("sk-")') < fnBody.indexOf(".replace("),
+    "redactSecrets must skip the global key regex when the payload cannot contain sk-",
+  );
+});
+
 test("isApiKeyRejection detects only 401-class key rejections", () => {
   // The main process surfaces a bad key as "OpenAI Realtime token failed: 401
   // ...invalid_api_key..." (token fetch) or "Realtime call failed: 401"

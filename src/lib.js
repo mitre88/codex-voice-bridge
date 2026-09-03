@@ -742,7 +742,11 @@ export function redactSecrets(value) {
   // hits the "sk-" inside ordinary words ("risk-2024", "task-proj", "ask-1")
   // and would corrupt log text with false redactions. Real keys never start
   // mid-word (they follow whitespace, a quote, or a colon), so none are missed.
-  return String(value).replace(/\bsk-[A-Za-z0-9_.-]+/g, "[REDACTED_OPENAI_KEY]");
+  // writeLog runs this on every 4KB Codex batch. Most lines have no "sk-"
+  // at all; skip the global regex (and the replacement string) then.
+  const text = typeof value === "string" ? value : String(value);
+  if (!text.includes("sk-")) return text;
+  return text.replace(/\bsk-[A-Za-z0-9_.-]+/g, "[REDACTED_OPENAI_KEY]");
 }
 
 // Turn a failed child-process spawn into a short, actionable message. A
