@@ -137,6 +137,11 @@ function setStatus(text, state) {
 
 const debugLog = createDebugLogBuffer();
 let logBuffer = "";
+// hide()/show() of the global shortcut used to rejoin 50KB and rewrite
+// <pre> even when no line arrived while hidden. Same idea as
+// sourceBucket.dirty: only paint when the ring buffer changed (or the
+// panel just opened and the DOM was cleared).
+let logPaintDirty = false;
 
 function joinLogLines() {
   return debugLog.joinNewestFirst();
@@ -148,12 +153,15 @@ function paintDebugLog() {
   // work the user cannot see — same class as the caption skip.
   // Closed panel already skips; this covers the open-panel + hidden case.
   if (!debugPanel?.open || document.hidden) return;
+  if (!logPaintDirty) return;
+  logPaintDirty = false;
   logBuffer = joinLogLines();
   logEl.textContent = logBuffer;
 }
 
 function pushLogLine(line) {
   debugLog.push(line);
+  logPaintDirty = true;
 }
 
 function log(message, data, options = {}) {
@@ -1081,6 +1089,8 @@ autoRunInput.addEventListener("change", () => {
 });
 debugPanel?.addEventListener("toggle", () => {
   if (debugPanel.open) {
+    // Closing cleared <pre>. Rejoin even if no line arrived since then.
+    logPaintDirty = true;
     paintDebugLog();
   } else {
     // The line list already holds the capped log. Leaving the joined 50KB

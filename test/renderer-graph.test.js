@@ -912,6 +912,18 @@ test("debug log skips the 50KB join while the shortcut-hidden window is in the b
     /if \(!debugPanel\?\.open \|\| document\.hidden\) return/,
     "paintDebugLog must skip the join while the panel is closed or the window is hidden",
   );
+  assert.ok(
+    paintBody.indexOf("!logPaintDirty") !== -1 &&
+      paintBody.indexOf("!logPaintDirty") < paintBody.indexOf("joinLogLines()"),
+    "paintDebugLog must skip the 50KB join when no line arrived since the last paint",
+  );
+  const pushStart = renderer.indexOf("function pushLogLine");
+  const pushBody = renderer.slice(pushStart, renderer.indexOf("function log(message, data"));
+  assert.match(
+    pushBody,
+    /logPaintDirty = true/,
+    "pushLogLine must mark the debug log dirty so show() can catch up a hidden buffer",
+  );
   const syncStart = renderer.indexOf("function syncWindowVisibility");
   const syncBody = renderer.slice(syncStart, renderer.indexOf("document.addEventListener(\"visibilitychange\""));
   assert.match(
