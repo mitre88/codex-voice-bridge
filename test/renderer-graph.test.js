@@ -500,8 +500,13 @@ test("connectPeerSession caps failed Realtime HTTP bodies before they land on Er
   );
   assert.match(
     fnBody,
-    /sdp\.includes\("\\n\.\.\.\[truncated\]"\)/,
+    /sdp\.endsWith\("\\n\.\.\.\[truncated\]"\)/,
     "a truncated 2xx body must be rejected even if it happens to start with v=",
+  );
+  assert.doesNotMatch(
+    fnBody,
+    /sdp\.includes\(/,
+    "connectPeerSession must not walk the SDP looking for the truncation marker",
   );
 });
 

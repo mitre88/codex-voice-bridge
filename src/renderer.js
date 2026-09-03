@@ -808,7 +808,10 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
     // JSON page) would make setRemoteDescription fail with an opaque "not a
     // valid SDP" error that humanizeError passes through raw; fail with an
     // actionable message instead so the user can spot the interception.
-    if (!isSdpAnswer(sdp) || sdp.includes("\n...[truncated]")) {
+    // The stream-cap helper always appends the marker at the END.
+    // includes() would walk a 32KB SDP on every successful connect, and
+    // would also reject a valid answer that happened to mention the marker.
+    if (!isSdpAnswer(sdp) || sdp.endsWith("\n...[truncated]")) {
       throw new Error(`${label}: the Realtime server returned an unexpected response (HTTP ${response.status}) instead of an SDP answer — a proxy or captive portal may be intercepting the connection.`);
     }
     await pc.setRemoteDescription({ type: "answer", sdp });
