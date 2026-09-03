@@ -793,6 +793,29 @@ test("hidden caption panel skips transcript accumulation and DOM joins", () => {
     /captionPanel\?\.hidden/,
     "handleTranscriptEvent must skip caption work while the panel is hidden",
   );
+  assert.match(
+    eventBody,
+    /type\.includes\("transcript"\)/,
+    "handleTranscriptEvent must skip non-transcript Realtime events before appendCaption work",
+  );
+  assert.ok(
+    eventBody.indexOf('includes("transcript")') < eventBody.indexOf("appendCaption("),
+    "the transcript kind gate must run before appendCaption",
+  );
+  const connectStart = renderer.indexOf("async function connectPeerSession");
+  const connectBody = renderer.slice(connectStart, renderer.indexOf("async function connectSingleRealtime"));
+  assert.match(
+    connectBody,
+    /if \(!captionPanel\?\.hidden\) handleTranscriptEvent/,
+    "connectPeerSession must not enter handleTranscriptEvent while the caption panel is hidden",
+  );
+  const appendStart = renderer.indexOf("function appendCaption");
+  const appendBody = renderer.slice(appendStart, renderer.indexOf("function handleTranscriptEvent"));
+  assert.match(
+    appendBody,
+    /if \(!document\.hidden\) renderCaptions\(\)/,
+    "appendCaption must not schedule renderCaptions while the window is hidden; syncWindowVisibility paints on show",
+  );
   const renderStart = renderer.indexOf("function renderCaptions()");
   const renderBody = renderer.slice(renderStart, renderer.indexOf("const MAX_CAPTION_CHARS"));
   assert.match(

@@ -334,7 +334,10 @@ function appendCaption(kind, text, replace = false) {
     bucket.parts = [bucket.parts.join("")];
   }
   bucket.dirty = true;
-  renderCaptions();
+  // Parts still accumulate while hide()'d; syncWindowVisibility paints on show.
+  // Scheduling renderCaptions here only pays the early-return checks on every
+  // delta while the always-on-top window is in the background.
+  if (!document.hidden) renderCaptions();
 }
 
 function handleTranscriptEvent(event, targets = { source: "source", output: "output" }) {
@@ -342,16 +345,21 @@ function handleTranscriptEvent(event, targets = { source: "source", output: "out
   // joining them every frame is wasted CPU/memory the user cannot see —
   // tools still run; only the live transcript UI is skipped.
   if (captionPanel?.hidden) return;
-  if (event.type === "session.input_transcript.delta" && targets.source) appendCaption(targets.source, event.delta);
-  if (event.type === "session.output_transcript.delta" && targets.output) appendCaption(targets.output, event.delta);
-  if (event.type === "conversation.item.input_audio_transcription.delta" && targets.source) appendCaption(targets.source, event.delta);
-  if (event.type === "conversation.item.input_audio_transcription.completed" && targets.source) {
+  const type = event.type;
+  // Realtime emits many non-transcript events per second (speech_started,
+  // response.done, rate_limits.updated, ...). Bail before the per-kind
+  // appendCaption work when the type cannot be a caption delta.
+  if (typeof type !== "string" || !type.includes("transcript")) return;
+  if (type === "session.input_transcript.delta" && targets.source) appendCaption(targets.source, event.delta);
+  if (type === "session.output_transcript.delta" && targets.output) appendCaption(targets.output, event.delta);
+  if (type === "conversation.item.input_audio_transcription.delta" && targets.source) appendCaption(targets.source, event.delta);
+  if (type === "conversation.item.input_audio_transcription.completed" && targets.source) {
     appendCaption(targets.source, event.transcript, true);
   }
-  if ((event.type === "response.audio_transcript.delta" || event.type === "response.output_audio_transcript.delta") && targets.output) {
+  if ((type === "response.audio_transcript.delta" || type === "response.output_audio_transcript.delta") && targets.output) {
     appendCaption(targets.output, event.delta);
   }
-  if ((event.type === "response.audio_transcript.done" || event.type === "response.output_audio_transcript.done") && targets.output) {
+  if ((type === "response.audio_transcript.done" || type === "response.output_audio_transcript.done") && targets.output) {
     appendCaption(targets.output, event.transcript, true);
   }
 }
@@ -776,7 +784,9 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
         return;
       }
       if (event.type?.includes("error")) log(`${label}: Realtime error`, event);
-      handleTranscriptEvent(event, transcriptTargets);
+      // Assistant mode hides #captionPanel. Skipping the call avoids
+      // handleTranscriptEvent's per-event work on a path that always no-ops.
+      if (!captionPanel?.hidden) handleTranscriptEvent(event, transcriptTargets);
       if (enableTools) await handleToolEvent(event);
     });
 
