@@ -1597,7 +1597,7 @@ test("truncateOutput returns the same object before spreading when nothing overf
   const src = fs.readFileSync(new URL("../src/renderer-utils.js", import.meta.url), "utf8");
   const fnStart = src.indexOf("export function truncateOutput");
   assert.ok(fnStart !== -1, "renderer-utils.js must export truncateOutput");
-  const fnBody = src.slice(fnStart, src.indexOf("export function", fnStart + 1) === -1 ? fnStart + 1200 : src.indexOf("export function", fnStart + 1));
+  const fnBody = src.slice(fnStart);
   assert.ok(
     fnBody.indexOf("!stdoutOver && !stderrOver") !== -1 &&
       fnBody.indexOf("!stdoutOver && !stderrOver") < fnBody.indexOf("const out = { ...output }"),
