@@ -177,9 +177,14 @@ test("escapeAppleScript skips the char-by-char copy when the identity is already
   assert.ok(fnStart !== -1, "lib.js must export escapeAppleScript");
   const fnBody = src.slice(fnStart, src.indexOf("export function isSafeAppIdentity"));
   assert.ok(
-    fnBody.indexOf('.test(text)') !== -1 &&
-      fnBody.indexOf('.test(text)') < fnBody.indexOf("let out = \"\""),
+    fnBody.indexOf("if (i === text.length) return text") !== -1 &&
+      fnBody.indexOf("if (i === text.length) return text") < fnBody.indexOf("let out = \"\""),
     "escapeAppleScript must return a safe identity before allocating the escaped copy",
+  );
+  assert.match(
+    fnBody,
+    /charCodeAt\(i\)/,
+    "the safe-identity scan must use char codes, not a control-character regex",
   );
 });
 

@@ -242,9 +242,15 @@ export function escapeAppleScript(value = "") {
   const text = typeof value === "string" ? value : String(value);
   // activateApp identities that passed isSafeAppIdentity have no quotes or
   // controls. The char-by-char copy is wasted on that path (Safari, Chrome,
-  // "Música"). Scan once; only allocate when a quote must be doubled or a
-  // control/line-separator must be stripped.
-  if (!/["\u0000-\u001F\u007F-\u009F\u2028\u2029]/.test(text)) return text;
+  // "Música"). Scan once with char codes (a regex literal with C0 controls
+  // trips no-control-regex); only allocate when a quote must be doubled or
+  // a control/line-separator must be stripped.
+  let i = 0;
+  for (; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 34 || code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029) break;
+  }
+  if (i === text.length) return text;
   let out = "";
   for (const char of text) {
     const code = char.codePointAt(0);
