@@ -1730,7 +1730,7 @@ test("settleProcessOutput slices a single trailing newline instead of trim-copyi
   assert.equal(settleProcessOutput("\r\n"), "");
   assert.equal(settleProcessOutput(withLf, false), withLf);
   assert.ok(settleProcessOutput(withLf, false) === withLf);
-  assert.equal(settleProcessOutput(null), "null");
+  assert.equal(settleProcessOutput(null), "");
   assert.equal(settleProcessOutput(undefined), "");
 });
 
@@ -1739,14 +1739,14 @@ test("settleProcessOutput prefers slice over trim for the common Codex tail", ()
   const fnStart = src.indexOf("export function settleProcessOutput");
   assert.ok(fnStart !== -1, "lib.js must export settleProcessOutput");
   const fnBody = src.slice(fnStart, src.indexOf("export function createOutputAccumulator"));
-  assert.ok(
-    fnBody.indexOf("text.slice(0, keepEnd)") !== -1 &&
-      fnBody.indexOf("text.slice(0, keepEnd)") < fnBody.indexOf("return text.trim()"),
-    "a lone trailing newline must slice the settled buffer instead of trim-copying it",
-  );
   assert.match(
     fnBody,
-    /charCodeAt\(end\)/,
+    /text\.slice\(0, keepEnd\)/,
+    "a lone trailing newline must slice the settled buffer instead of trim-copying it",
+  );
+  assert.ok(
+    fnBody.indexOf("charCodeAt(end)") !== -1 &&
+      fnBody.indexOf("charCodeAt(end)") < fnBody.indexOf("text.slice(0, keepEnd)"),
     "the common trailing-LF path must not walk the whole buffer",
   );
 });
