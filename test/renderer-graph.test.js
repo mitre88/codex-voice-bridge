@@ -623,6 +623,11 @@ test("closing the debug panel drops the joined log from the DOM", () => {
     /logBuffer = ""/,
     "closing the debug panel must drop the joined logBuffer duplicate",
   );
+  assert.ok(
+    toggleBody.indexOf("logPaintDirty = true") !== -1 &&
+      toggleBody.indexOf("logPaintDirty = true") < toggleBody.indexOf("paintDebugLog()"),
+    "opening the debug panel must mark the log dirty so the cleared <pre> is rejoined",
+  );
 });
 
 test("orb animation is paused while idle so the always-on-top window does not composite every frame", () => {
