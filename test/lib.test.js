@@ -1500,11 +1500,33 @@ test("readCappedJson parses a small body and refuses a huge 2xx dump", async () 
   };
   const token = { value: "ek_test", expires_at: 1 };
   assert.deepEqual(await readCappedJson(streamBody(JSON.stringify(token))), token);
+  const tokenWithMarkerInBody = { value: "ek_test", note: "see\n...[truncated] in docs" };
+  assert.deepEqual(await readCappedJson(streamBody(JSON.stringify(tokenWithMarkerInBody))), tokenWithMarkerInBody);
   await assert.rejects(
     () => readCappedJson(streamBody(`${"A".repeat(5000)}TAIL`), 20),
     /unexpectedly large response/,
   );
   await assert.rejects(() => readCappedJson(streamBody("<html>portal</html>")), /non-JSON response/);
+});
+
+test("readCappedJson detects overflow at the suffix, not by scanning the body", () => {
+  // A real client_secrets payload can be tens of KB. Walking it with
+  // includes() on every successful connect is wasted work: the stream-cap
+  // helper always appends the marker at the end.
+  const src = fs.readFileSync(new URL("../src/renderer-utils.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export async function readCappedJson");
+  assert.ok(fnStart !== -1, "renderer-utils.js must export readCappedJson");
+  const fnBody = src.slice(fnStart, src.indexOf("export function truncateOutput"));
+  assert.match(
+    fnBody,
+    /endsWith\("\\n\.\.\.\[truncated\]"\)/,
+    "readCappedJson must detect the stream-cap marker with endsWith, not a full-body scan",
+  );
+  assert.doesNotMatch(
+    fnBody,
+    /\.includes\(/,
+    "readCappedJson must not walk the token JSON looking for the truncation marker",
+  );
 });
 
 test("truncateOutput truncates long stdout and preserves metadata", () => {

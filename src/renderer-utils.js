@@ -500,7 +500,11 @@ export async function readCappedResponseText(response, maxChars = 4000) {
 // actionable message instead of keeping the dump alive on Error.message.
 export async function readCappedJson(response, maxChars = 65536) {
   const text = await readCappedResponseText(response, maxChars);
-  if (typeof text === "string" && text.includes("\n...[truncated]")) {
+  // The cap helper always appends the marker at the END. includes() would
+  // walk a 64KB token JSON on every successful connect, and would also
+  // reject a valid payload that happened to mention the marker string.
+  // endsWith is O(1) and matches the helper's contract.
+  if (typeof text === "string" && text.endsWith("\n...[truncated]")) {
     throw new Error(
       "the server returned an unexpectedly large response instead of JSON — a proxy or captive portal may be intercepting the connection.",
     );
