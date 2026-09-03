@@ -34,6 +34,7 @@ import {
   resolveOpenAppTarget,
   resolveWorkdir,
   rotateLogIfNeeded,
+  settleProcessOutput,
   toPositiveInt,
   truncateOutput,
   typeDelayMs,
@@ -363,8 +364,7 @@ function runProcess(command, args, options = {}) {
     // on every keystroke. Default stays true so existing callers are unchanged.
     const trimSettledOutput = options.trimOutput !== false;
     function settleText(value) {
-      const text = String(value ?? "");
-      return trimSettledOutput ? text.trim() : text;
+      return settleProcessOutput(value, trimSettledOutput);
     }
 
     const timeout = setTimeout(() => {

@@ -286,7 +286,7 @@ test("runProcess batches streamed output IPC and flushes before settling", () =>
   );
   assert.match(
     fnBody,
-    /trimSettledOutput \? text\.trim\(\) : text/,
+    /settleProcessOutput\(value, trimSettledOutput\)/,
     "settled stdout/stderr must only trim when trimOutput is not disabled",
   );
   assert.ok(

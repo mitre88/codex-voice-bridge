@@ -42,6 +42,7 @@ import {
   resolveOpenAppTarget,
   resolveWorkdir,
   rotateLogIfNeeded,
+  settleProcessOutput,
   toPositiveInt,
   truncateOutput,
   validateCuaDriverRequiredArgs,
@@ -1712,6 +1713,42 @@ test("createOutputAccumulator stays linear across thousands of tiny chunks", () 
   assert.equal(acc.capped, true);
   const expectedTail = Array.from({ length: 100 }, (_, i) => String((9900 + i) % 10)).join("");
   assert.equal(acc.text(), expectedTail);
+});
+
+test("settleProcessOutput slices a single trailing newline instead of trim-copying", () => {
+  const body = "A".repeat(80);
+  const withLf = `${body}\n`;
+  const sliced = settleProcessOutput(withLf);
+  assert.equal(sliced, body);
+  assert.equal(settleProcessOutput(`${body}\r\n`), body);
+  assert.equal(settleProcessOutput(`${body}\n\n`), body);
+  assert.equal(settleProcessOutput(` ${body}\n`), body);
+  assert.equal(settleProcessOutput(body), body);
+  assert.ok(settleProcessOutput(body) === body);
+  assert.equal(settleProcessOutput(`${body} `), body);
+  assert.equal(settleProcessOutput("\n"), "");
+  assert.equal(settleProcessOutput("\r\n"), "");
+  assert.equal(settleProcessOutput(withLf, false), withLf);
+  assert.ok(settleProcessOutput(withLf, false) === withLf);
+  assert.equal(settleProcessOutput(null), "null");
+  assert.equal(settleProcessOutput(undefined), "");
+});
+
+test("settleProcessOutput prefers slice over trim for the common Codex tail", () => {
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function settleProcessOutput");
+  assert.ok(fnStart !== -1, "lib.js must export settleProcessOutput");
+  const fnBody = src.slice(fnStart, src.indexOf("export function createOutputAccumulator"));
+  assert.ok(
+    fnBody.indexOf("text.slice(0, keepEnd)") !== -1 &&
+      fnBody.indexOf("text.slice(0, keepEnd)") < fnBody.indexOf("return text.trim()"),
+    "a lone trailing newline must slice the settled buffer instead of trim-copying it",
+  );
+  assert.match(
+    fnBody,
+    /charCodeAt\(end\)/,
+    "the common trailing-LF path must not walk the whole buffer",
+  );
 });
 
 test("resolveWorkdir keeps paths inside the base workdir", () => {

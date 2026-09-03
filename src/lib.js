@@ -786,6 +786,28 @@ export function humanizeSpawnError(command, error) {
 // conclusion. The buffer also keeps rolling to the newest tail once capped:
 // output arriving after the first overflow (the true end of a long run) must
 // not be discarded, or the model would miss the very lines it needs.
+// Drop the usual single trailing newline from a settled child-process
+// buffer without copying the whole 1MB tail. Codex/CUA stdout almost
+// always ends with exactly one \n (or \r\n). trim() of that buffer is a
+// full copy on every model-facing settle. A lone trailing linebreak
+// becomes slice(); anything else (leading space, extra newlines, or
+// trim disabled) keeps the previous trim()/identity behavior.
+export function settleProcessOutput(value, trim = true) {
+  const text = typeof value === "string" ? value : String(value ?? "");
+  if (!trim || !text) return text;
+  const end = text.length - 1;
+  const last = text.charCodeAt(end);
+  if (last === 10) {
+    const crlf = end > 0 && text.charCodeAt(end - 1) === 13;
+    const keepEnd = crlf ? end - 1 : end;
+    if (keepEnd === 0) return "";
+    if (/\s/.test(text[0]) || /\s/.test(text[keepEnd - 1])) return text.trim();
+    return text.slice(0, keepEnd);
+  }
+  if (!/\s/.test(text[0]) && !/\s/.test(text[end])) return text;
+  return text.trim();
+}
+
 export function createOutputAccumulator(maxChars = 1024 * 1024) {
   // Chunk list + running length so a capped 1MB buffer does not copy the
   // whole string on every small stdout chunk. join() happens once, when the
