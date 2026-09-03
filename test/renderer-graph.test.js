@@ -415,6 +415,11 @@ test("captions are capped so a long session cannot grow the DOM without bound", 
     /bucket\.parts\.push\(text\)/,
     "appendCaption must accumulate deltas in a part list instead of copying the whole caption string on every event",
   );
+  assert.match(
+    fnBody,
+    /bucket\.dirty = true/,
+    "appendCaption must mark the changed bucket dirty so renderCaptions can skip the other join",
+  );
 });
 
 test("connectPeerSession drops non-object Realtime events instead of throwing in the message handler", () => {
@@ -676,10 +681,38 @@ test("captions coalesce to one DOM write per frame", () => {
     /captionDisplayText/,
     "renderCaptions must use captionDisplayText so a no-op trim does not copy 50KB per frame",
   );
+  assert.ok(
+    fnBody.indexOf("!sourceBucket.dirty && !outputBucket.dirty") !== -1 &&
+      fnBody.indexOf("!sourceBucket.dirty && !outputBucket.dirty") < fnBody.indexOf("requestAnimationFrame"),
+    "renderCaptions must not schedule a frame when neither caption bucket changed",
+  );
+  assert.ok(
+    fnBody.indexOf("sourceBucket.dirty") !== -1 &&
+      fnBody.indexOf("sourceBucket.dirty") < fnBody.indexOf("sourceBucket.parts.join"),
+    "renderCaptions must skip the source join when that bucket is clean",
+  );
+  assert.ok(
+    fnBody.indexOf("outputBucket.dirty") !== -1 &&
+      fnBody.indexOf("outputBucket.dirty") < fnBody.indexOf("outputBucket.parts.join"),
+    "renderCaptions must skip the output join when that bucket is clean",
+  );
   assert.doesNotMatch(
     renderer,
     /^let sourceCaption/m,
     "renderer.js must not keep a live sourceCaption copy of the already-capped bucket",
+  );
+  const resetStart = renderer.indexOf("function resetCaptions()");
+  assert.ok(resetStart !== -1, "renderer.js must define resetCaptions");
+  const resetBody = renderer.slice(resetStart, renderer.indexOf("function renderCaptions()"));
+  assert.match(
+    resetBody,
+    /sourceBucket\.dirty = true/,
+    "resetCaptions must mark the source bucket dirty so the DOM clears on the next frame",
+  );
+  assert.match(
+    resetBody,
+    /outputBucket\.dirty = true/,
+    "resetCaptions must mark the output bucket dirty so the DOM clears on the next frame",
   );
 });
 

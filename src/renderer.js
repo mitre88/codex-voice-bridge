@@ -76,8 +76,8 @@ let hasStoredKey = false;
 // Transcript deltas arrive many times per second. Concatenating into the
 // growing caption string on every delta copies up to 50KB per event; keep
 // parts here and join once per animation frame (and once if we hit the cap).
-const sourceBucket = { parts: [], length: 0 };
-const outputBucket = { parts: [], length: 0 };
+const sourceBucket = { parts: [], length: 0, dirty: false };
+const outputBucket = { parts: [], length: 0, dirty: false };
 let baseConfigText = "";
 let lastMediaDevices = [];
 // Set by devicechange while hide()'d; syncWindowVisibility enumerates only
@@ -261,8 +261,10 @@ function getVoiceOptions() {
 function resetCaptions() {
   sourceBucket.parts = [];
   sourceBucket.length = 0;
+  sourceBucket.dirty = true;
   outputBucket.parts = [];
   outputBucket.length = 0;
+  outputBucket.dirty = true;
   renderCaptions();
 }
 
@@ -273,13 +275,26 @@ function renderCaptions() {
   // will never show. Parts still accumulate in appendCaption; the
   // visibilitychange handler paints once on show.
   if (captionPanel?.hidden || document.hidden) return;
+  // A show() with no new deltas (the common hide/show of the global
+  // shortcut) must not join both 50KB captions and write the DOM.
+  // Only the side that received a delta — or a reset — is dirty.
+  if (!sourceBucket.dirty && !outputBucket.dirty) return;
   if (captionsDirty) return;
   captionsDirty = true;
   requestAnimationFrame(() => {
     captionsDirty = false;
     if (captionPanel?.hidden || document.hidden) return;
-    sourceCaptionEl.textContent = captionDisplayText(sourceBucket.parts.join(""));
-    outputCaptionEl.textContent = captionDisplayText(outputBucket.parts.join(""));
+    // Live speech usually updates one side per frame. Joining and
+    // assigning the unchanged 50KB caption forces a layout the
+    // compositor does not need.
+    if (sourceBucket.dirty) {
+      sourceBucket.dirty = false;
+      sourceCaptionEl.textContent = captionDisplayText(sourceBucket.parts.join(""));
+    }
+    if (outputBucket.dirty) {
+      outputBucket.dirty = false;
+      outputCaptionEl.textContent = captionDisplayText(outputBucket.parts.join(""));
+    }
   });
 }
 
@@ -310,6 +325,7 @@ function appendCaption(kind, text, replace = false) {
   } else if (bucket.parts.length >= 32) {
     bucket.parts = [bucket.parts.join("")];
   }
+  bucket.dirty = true;
   renderCaptions();
 }
 
