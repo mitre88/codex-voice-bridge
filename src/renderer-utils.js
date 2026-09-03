@@ -519,6 +519,15 @@ export async function readCappedJson(response, maxChars = 65536) {
 }
 
 export function truncateOutput(output, maxChars = 30000) {
+  // sendCodexOutput → writeLog hits this on every 4KB batch with a
+  // { message, data } object that has no stdout/stderr. Spreading that
+  // just to return the same fields is a wasted copy on the stream path
+  // (and on every IPC settle already under the cap).
+  if (output && typeof output === "object" && !Array.isArray(output)) {
+    const stdoutOver = typeof output.stdout === "string" && output.stdout.length > maxChars;
+    const stderrOver = typeof output.stderr === "string" && output.stderr.length > maxChars;
+    if (!stdoutOver && !stderrOver) return output;
+  }
   const out = { ...output };
   for (const key of ["stdout", "stderr"]) {
     if (typeof out[key] === "string" && out[key].length > maxChars) {

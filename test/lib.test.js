@@ -1571,8 +1571,38 @@ test("truncateOutput truncates stdout and stderr independently when both are lon
 });
 
 test("truncateOutput leaves short output untouched", () => {
-  const out = truncateOutput({ ok: true, stdout: "short", stderr: "" }, 50);
+  const input = { ok: true, stdout: "short", stderr: "" };
+  const out = truncateOutput(input, 50);
   assert.equal(out.stdout, "short");
+  assert.equal(out, input, "already-short process output must not be shallow-copied");
+});
+
+test("truncateOutput reuses a log-shaped object with no stdout/stderr", () => {
+  // sendCodexOutput writes { message, data } through serializeLogData →
+  // truncateOutput on every 4KB stream batch. That object is not process
+  // output; spreading it is a wasted copy on the hot path.
+  const input = { message: "codex output", data: "chunk" };
+  assert.equal(truncateOutput(input, 16000), input);
+});
+
+test("truncateOutput does not mutate the original when it has to copy", () => {
+  const input = { ok: true, stdout: "A".repeat(80), stderr: "" };
+  const out = truncateOutput(input, 50);
+  assert.notEqual(out, input);
+  assert.equal(input.stdout, "A".repeat(80));
+  assert.ok(out.stdout.startsWith("...[truncated 30 chars]\n"));
+});
+
+test("truncateOutput returns the same object before spreading when nothing overflows", () => {
+  const src = fs.readFileSync(new URL("../src/renderer-utils.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function truncateOutput");
+  assert.ok(fnStart !== -1, "renderer-utils.js must export truncateOutput");
+  const fnBody = src.slice(fnStart, src.indexOf("export function", fnStart + 1) === -1 ? fnStart + 1200 : src.indexOf("export function", fnStart + 1));
+  assert.ok(
+    fnBody.indexOf("!stdoutOver && !stderrOver") !== -1 &&
+      fnBody.indexOf("!stdoutOver && !stderrOver") < fnBody.indexOf("const out = { ...output }"),
+    "truncateOutput must reuse the input object before spreading when both streams are under the cap",
+  );
 });
 
 test("isSdpAnswer accepts SDP answers and rejects non-SDP bodies", () => {
