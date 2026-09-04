@@ -1,4 +1,4 @@
-import { hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, truncateOutput } from "./renderer-utils.js";
+import { capErrorBody, captionDisplayText, createDebugLogBuffer, hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, readCappedResponseText, sameMediaDeviceList, truncateOutput } from "./renderer-utils.js";
 
 // How long the Realtime SDP exchange may take before we give up. The main
 // process already times out the token fetch; this bounds the second network
@@ -45,6 +45,7 @@ const outputCaptionEl = document.querySelector("#outputCaption");
 const pendingPanel = document.querySelector("#pendingPanel");
 const pendingPromptEl = document.querySelector("#pendingPrompt");
 const logEl = document.querySelector("#log");
+const debugPanel = logEl?.closest("details");
 const configEl = document.querySelector("#config");
 
 const activeSessions = [];
@@ -72,10 +73,17 @@ let actionDataChannel;
 // connect; aborting a finished connect's controller is a harmless no-op.
 let connectAbortController;
 let hasStoredKey = false;
-let sourceCaption = "";
-let outputCaption = "";
+// Transcript deltas arrive many times per second. Concatenating into the
+// growing caption string on every delta copies up to 50KB per event; keep
+// parts here and join once per animation frame (and once if we hit the cap).
+const sourceBucket = { parts: [], length: 0, dirty: false };
+const outputBucket = { parts: [], length: 0, dirty: false };
 let baseConfigText = "";
 let lastMediaDevices = [];
+// Set by devicechange while hide()'d; syncWindowVisibility enumerates only
+// when this is true (or the list was never filled), so a no-op show does
+// not pay a native enumerateDevices() hop.
+let devicesChangedWhileHidden = false;
 let warnedMissingVirtualAudio = false;
 // Set while the last refresh had to fall back to the default because a
 // previously selected device disappeared; cleared by the first refresh that
@@ -127,7 +135,36 @@ function setStatus(text, state) {
   document.body.dataset.state = state || text.toLowerCase().replace(/\s+/g, "-");
 }
 
-function log(message, data) {
+const debugLog = createDebugLogBuffer();
+let logBuffer = "";
+// hide()/show() of the global shortcut used to rejoin 50KB and rewrite
+// <pre> even when no line arrived while hidden. Same idea as
+// sourceBucket.dirty: only paint when the ring buffer changed (or the
+// panel just opened and the DOM was cleared).
+let logPaintDirty = false;
+
+function joinLogLines() {
+  return debugLog.joinNewestFirst();
+}
+
+function paintDebugLog() {
+  // hide() keeps the renderer alive. Joining 50KB and rewriting <pre>
+  // on every streamed chunk while the window is hidden is compositor
+  // work the user cannot see — same class as the caption skip.
+  // Closed panel already skips; this covers the open-panel + hidden case.
+  if (!debugPanel?.open || document.hidden) return;
+  if (!logPaintDirty) return;
+  logPaintDirty = false;
+  logBuffer = joinLogLines();
+  logEl.textContent = logBuffer;
+}
+
+function pushLogLine(line) {
+  debugLog.push(line);
+  logPaintDirty = true;
+}
+
+function log(message, data, options = {}) {
   // Serialize defensively: log() runs inside the window error/unhandled
   // rejection handlers too, and a non-serializable payload (a circular
   // reason object, a throwing toJSON, a BigInt) would make JSON.stringify
@@ -136,16 +173,46 @@ function log(message, data) {
   // main.js writeLog already guards its own stringify for exactly this
   // reason; the renderer log must not be the one unguarded link.
   let serialized;
+  let logData = data;
   try {
-    serialized = JSON.stringify(data, null, 2);
+    // A finished Codex/CUA result can carry up to 1MB of stdout. Pretty-printing
+    // that into the debug log (and sending it over IPC) spiked renderer memory
+    // on every "Local action finished" line. Cap before stringify; the model
+    // still receives the separately truncated function_call_output.
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      logData = truncateOutput(data, 8000);
+    } else if (typeof data === "string" && data.length > 16000) {
+      logData = `${data.slice(0, 16000)}\n...[truncated ${data.length - 16000} chars]`;
+    }
+    // The suffix below uses logData when it is already a string. Streamed
+    // Codex/CUA chunks (4–16KB) take that path: JSON.stringify would only
+    // allocate an escaped copy that is thrown away. Objects still need the
+    // pretty-print (and the replacer cap — truncateOutput only hits
+    // stdout/stderr, so a Realtime error dump could otherwise allocate a
+    // megabyte pretty JSON just to slice it to 16KB).
+    if (typeof logData !== "string") {
+      serialized = JSON.stringify(logData, (_key, value) => capErrorBody(value, 16000), 2);
+      if (typeof serialized === "string" && serialized.length > 16000) {
+        serialized = `${serialized.slice(0, 16000)}\n...[truncated ${serialized.length - 16000} chars]`;
+      }
+    }
   } catch {
     serialized = String(data);
+    logData = serialized;
   }
-  const suffix = data ? `\n${typeof data === "string" ? data : serialized}` : "";
-  logEl.textContent = `${new Date().toLocaleTimeString()}  ${message}${suffix}\n${logEl.textContent}`;
-  // Cap the in-memory log so long Codex streams cannot grow the DOM forever.
-  if (logEl.textContent.length > 50000) logEl.textContent = logEl.textContent.slice(0, 50000);
-  tryBridge()?.log("ui", { message, data }).catch(() => {});
+  const suffix = data ? `\n${typeof logData === "string" ? logData : serialized}` : "";
+  const line = `${new Date().toLocaleTimeString()}  ${message}${suffix}\n`;
+  // Newest-first line list: concatenating into a 50KB string on every log
+  // copied the whole buffer (and then sliced it) even while the debug panel
+  // was closed. Join only when the user can see it.
+  pushLogLine(line);
+  paintDebugLog();
+  // Streamed Codex/CUA chunks are already written to bridge.log in main
+  // (sendCodexOutput). Re-sending them here would clone the same 4–16KB
+  // string back across IPC for a duplicate file line.
+  if (!options.skipIpc) {
+    tryBridge()?.log("ui", { message, data: logData }).catch(() => {});
+  }
 }
 
 function updateModeControls() {
@@ -200,14 +267,43 @@ function getVoiceOptions() {
 }
 
 function resetCaptions() {
-  sourceCaption = "";
-  outputCaption = "";
+  sourceBucket.parts = [];
+  sourceBucket.length = 0;
+  sourceBucket.dirty = true;
+  outputBucket.parts = [];
+  outputBucket.length = 0;
+  outputBucket.dirty = true;
   renderCaptions();
 }
 
+let captionsDirty = false;
+
 function renderCaptions() {
-  sourceCaptionEl.textContent = sourceCaption.trim() || "...";
-  outputCaptionEl.textContent = outputCaption.trim() || "...";
+  // Assistant mode and hide() must not schedule a frame the compositor
+  // will never show. Parts still accumulate in appendCaption; the
+  // visibilitychange handler paints once on show.
+  if (captionPanel?.hidden || document.hidden) return;
+  // A show() with no new deltas (the common hide/show of the global
+  // shortcut) must not join both 50KB captions and write the DOM.
+  // Only the side that received a delta — or a reset — is dirty.
+  if (!sourceBucket.dirty && !outputBucket.dirty) return;
+  if (captionsDirty) return;
+  captionsDirty = true;
+  requestAnimationFrame(() => {
+    captionsDirty = false;
+    if (captionPanel?.hidden || document.hidden) return;
+    // Live speech usually updates one side per frame. Joining and
+    // assigning the unchanged 50KB caption forces a layout the
+    // compositor does not need.
+    if (sourceBucket.dirty) {
+      sourceBucket.dirty = false;
+      sourceCaptionEl.textContent = captionDisplayText(sourceBucket.parts.join(""));
+    }
+    if (outputBucket.dirty) {
+      outputBucket.dirty = false;
+      outputCaptionEl.textContent = captionDisplayText(outputBucket.parts.join(""));
+    }
+  });
 }
 
 // Cap each accumulated caption so a long session cannot grow the caption
@@ -221,27 +317,49 @@ const MAX_CAPTION_CHARS = 50000;
 
 function appendCaption(kind, text, replace = false) {
   if (!text) return;
-  let next =
-    kind === "source" ? (replace ? text : `${sourceCaption}${text}`) : (replace ? text : `${outputCaption}${text}`);
-  if (next.length > MAX_CAPTION_CHARS) {
-    next = `...[truncated ${next.length - MAX_CAPTION_CHARS} chars]\n${next.slice(-MAX_CAPTION_CHARS)}`;
+  const bucket = kind === "source" ? sourceBucket : outputBucket;
+  if (replace) {
+    bucket.parts = [text];
+    bucket.length = text.length;
+  } else {
+    bucket.parts.push(text);
+    bucket.length += text.length;
   }
-  if (kind === "source") sourceCaption = next;
-  else outputCaption = next;
-  renderCaptions();
+  if (bucket.length > MAX_CAPTION_CHARS) {
+    let next = bucket.parts.join("");
+    next = `...[truncated ${next.length - MAX_CAPTION_CHARS} chars]\n${next.slice(-MAX_CAPTION_CHARS)}`;
+    bucket.parts = [next];
+    bucket.length = next.length;
+  } else if (bucket.parts.length >= 32) {
+    bucket.parts = [bucket.parts.join("")];
+  }
+  bucket.dirty = true;
+  // Parts still accumulate while hide()'d; syncWindowVisibility paints on show.
+  // Scheduling renderCaptions here only pays the early-return checks on every
+  // delta while the always-on-top window is in the background.
+  if (!document.hidden) renderCaptions();
 }
 
 function handleTranscriptEvent(event, targets = { source: "source", output: "output" }) {
-  if (event.type === "session.input_transcript.delta" && targets.source) appendCaption(targets.source, event.delta);
-  if (event.type === "session.output_transcript.delta" && targets.output) appendCaption(targets.output, event.delta);
-  if (event.type === "conversation.item.input_audio_transcription.delta" && targets.source) appendCaption(targets.source, event.delta);
-  if (event.type === "conversation.item.input_audio_transcription.completed" && targets.source) {
+  // Assistant mode hides #captionPanel. Accumulating 50KB strings and
+  // joining them every frame is wasted CPU/memory the user cannot see —
+  // tools still run; only the live transcript UI is skipped.
+  if (captionPanel?.hidden) return;
+  const type = event.type;
+  // Realtime emits many non-transcript events per second (speech_started,
+  // response.done, rate_limits.updated, ...). Bail before the per-kind
+  // appendCaption work when the type cannot be a caption delta.
+  if (typeof type !== "string" || !type.includes("transcript")) return;
+  if (type === "session.input_transcript.delta" && targets.source) appendCaption(targets.source, event.delta);
+  if (type === "session.output_transcript.delta" && targets.output) appendCaption(targets.output, event.delta);
+  if (type === "conversation.item.input_audio_transcription.delta" && targets.source) appendCaption(targets.source, event.delta);
+  if (type === "conversation.item.input_audio_transcription.completed" && targets.source) {
     appendCaption(targets.source, event.transcript, true);
   }
-  if ((event.type === "response.audio_transcript.delta" || event.type === "response.output_audio_transcript.delta") && targets.output) {
+  if ((type === "response.audio_transcript.delta" || type === "response.output_audio_transcript.delta") && targets.output) {
     appendCaption(targets.output, event.delta);
   }
-  if ((event.type === "response.audio_transcript.done" || event.type === "response.output_audio_transcript.done") && targets.output) {
+  if ((type === "response.audio_transcript.done" || type === "response.output_audio_transcript.done") && targets.output) {
     appendCaption(targets.output, event.transcript, true);
   }
 }
@@ -255,12 +373,25 @@ function handleTranscriptEvent(event, targets = { source: "source", output: "out
 const MAX_PENDING_ARGS_CHARS = 20000;
 
 function formatPendingArgs(args) {
-  const text = JSON.stringify(args || {}, null, 2);
+  // Cap large strings in the replacer *before* they are copied into the
+  // pretty-printed output. A 200KB json_args blob (or a 1MB model prompt)
+  // used to allocate the full pretty JSON just so the textarea could show
+  // 20KB of it. Execution still uses the original args object.
+  const text = JSON.stringify(
+    args || {},
+    (_key, value) => {
+      if (typeof value === "string" && value.length > MAX_PENDING_ARGS_CHARS) {
+        return `${value.slice(0, MAX_PENDING_ARGS_CHARS)}\n...[truncated ${value.length - MAX_PENDING_ARGS_CHARS} chars]`;
+      }
+      return value;
+    },
+    2,
+  );
   if (text.length <= MAX_PENDING_ARGS_CHARS) return text;
   return `${text.slice(0, MAX_PENDING_ARGS_CHARS)}\n...[truncated ${text.length - MAX_PENDING_ARGS_CHARS} chars]`;
 }
 
-function setPendingAction(action) {
+function setPendingAction(action, options = {}) {
   clearPendingActionTimer();
   // The Realtime API can emit several function calls in one turn (parallel
   // tool use). If a second call arrives while the first still awaits a human
@@ -277,6 +408,11 @@ function setPendingAction(action) {
     });
   }
   pendingAction = action;
+  // Auto-run calls executeAction on the next line, which immediately
+  // setPendingAction(null). Pretty-printing up to 200KB of args into the
+  // textarea (and flashing the panel) is compositor work the human never
+  // sees. Keep supersede + pendingAction; skip the display writes.
+  if (options.skipDisplay) return;
   pendingPanel.hidden = !action;
   if (!action) pendingPromptEl.value = "";
   // Display-only caps for both branches: the codex prompt and the args JSON
@@ -388,12 +524,9 @@ async function executeAction(action) {
     result = { ok: false, code: -99, stdout: "", stderr: error?.message || String(error) };
     log("Local action error.", error);
   }
-  // Streamed output is batched to avoid DOM spam and only flushed at 4000
-  // chars or on disconnect; without this the tail of a finished run (final
-  // lines, error summaries) would stay invisible in the debug log until the
-  // user disconnects. All "codex-output" chunks are posted before the IPC
-  // call resolves, so flushing here captures the complete run.
-  flushCodexOutput();
+  // Main batches streamed chunks (4KB) and flushes the remainder before
+  // this invoke resolves. onCodexOutput logs each chunk as it arrives, so
+  // there is no renderer-side tail left to flush.
   sendFunctionOutput(action.callId, result, channel);
   // The user may have disconnected while the local action ran (the child
   // process keeps running in the main process, so the IPC call still
@@ -406,7 +539,7 @@ async function executeAction(action) {
 
 const KNOWN_TOOLS = ["run_codex", "run_cua_driver", "open_app", "type_text_in_front_app", "press_key_in_front_app"];
 
-async function handleToolEvent(event) {
+function handleToolEvent(event) {
   const functionCall = getFunctionCall(event);
   if (!functionCall) return;
   if (handledToolCalls.has(functionCall.callId)) return;
@@ -470,8 +603,12 @@ async function handleToolEvent(event) {
     callId: functionCall.callId,
     args: isMacAction ? { ...args, action: functionCall.name } : args,
   };
-  setPendingAction(action);
-  if (autoRunInput.checked) executeAction(action);
+  if (autoRunInput.checked) {
+    setPendingAction(action, { skipDisplay: true });
+    executeAction(action);
+  } else {
+    setPendingAction(action);
+  }
 }
 
 function deviceConstraint(deviceId, options = {}) {
@@ -487,7 +624,12 @@ function setSelectOptions(select, devices, defaultLabel) {
   const current = select.value;
   select.replaceChildren(new Option(defaultLabel, ""));
   devices.forEach((device, index) => select.appendChild(new Option(device.label || `${defaultLabel} ${index + 1}`, device.deviceId)));
-  if ([...select.options].some((option) => option.value === current)) select.value = current;
+  for (const option of select.options) {
+    if (option.value === current) {
+      select.value = current;
+      break;
+    }
+  }
 }
 
 async function refreshMediaDevices(promptForLabels = false) {
@@ -503,6 +645,11 @@ async function refreshMediaDevices(promptForLabels = false) {
   }
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
+    // devicechange fires often on macOS (Bluetooth, sleep, audio session
+    // flaps) with an identical list. Rebuilding four <select>s and scanning
+    // lost selections is wasted DOM work when nothing changed — labels
+    // appearing after a permission grant still differ, so that path rebuilds.
+    if (sameMediaDeviceList(lastMediaDevices, devices)) return;
     // Capture the previous selections BEFORE the setSelectOptions calls below
     // replace the options: a device that vanished (unplugged, renamed with a
     // new id, permission revoked) silently falls back to the default option,
@@ -618,7 +765,7 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
     const dc = pc.createDataChannel(`oai-events-${label}`);
     if (enableTools) actionDataChannel = dc;
     dc.addEventListener("open", () => log(`${label}: Realtime data channel open.`));
-    dc.addEventListener("message", async (message) => {
+    dc.addEventListener("message", (message) => {
       let event;
       try {
         event = JSON.parse(message.data);
@@ -628,17 +775,25 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
       }
       // JSON.parse can succeed with a non-object: "null", a bare string, a
       // number, or an array all parse cleanly. Reading .type off null would
-      // throw inside this async handler (an unhandled rejection that skips
-      // the transcript/tool handling for the message), and a string/number/
-      // array is not a Realtime event either — drop the whole message with a
-      // log, mirroring the malformed-JSON branch above.
+      // throw inside this handler (and skip transcript/tool handling for the
+      // message), and a string/number/array is not a Realtime event either —
+      // drop the whole message with a log, mirroring the malformed-JSON
+      // branch above.
       if (event === null || typeof event !== "object" || Array.isArray(event)) {
         log(`${label}: dropped non-object Realtime event.`, String(message.data));
         return;
       }
       if (event.type?.includes("error")) log(`${label}: Realtime error`, event);
-      handleTranscriptEvent(event, transcriptTargets);
-      if (enableTools) await handleToolEvent(event);
+      // Assistant mode hides #captionPanel. Skipping the call avoids
+      // handleTranscriptEvent's per-event work on a path that always no-ops.
+      if (!captionPanel?.hidden) handleTranscriptEvent(event, transcriptTargets);
+      // Speech, transcript, and rate-limit events arrive many times per
+      // second. handleToolEvent only acts on a completed function call;
+      // awaiting an async wrapper on every message allocated a Promise and
+      // yielded a microtask for a guaranteed no-op. Gate first and keep
+      // both this listener and handleToolEvent sync so those events stay
+      // on the parse-and-drop path.
+      if (enableTools && getFunctionCall(event)) handleToolEvent(event);
     });
 
     const offer = await pc.createOffer();
@@ -660,13 +815,19 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
         controller?.signal,
       ].filter(Boolean)),
     });
-    if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${await response.text()}`);
-    const sdp = await response.text();
+    if (!response.ok) throw new Error(`${label}: Realtime call failed: ${response.status} ${await readCappedResponseText(response)}`);
+    // A 2xx HTML dump (captive portal) must not be buffered whole just to
+    // discover it is not SDP. A Realtime audio answer is a few KB; 32KB
+    // leaves headroom and is still tiny versus a megabyte portal page.
+    const sdp = await readCappedResponseText(response, 32768);
     // A 2xx non-SDP body (a captive portal or proxy answering with an HTML or
     // JSON page) would make setRemoteDescription fail with an opaque "not a
     // valid SDP" error that humanizeError passes through raw; fail with an
     // actionable message instead so the user can spot the interception.
-    if (!isSdpAnswer(sdp)) {
+    // The stream-cap helper always appends the marker at the END.
+    // includes() would walk a 32KB SDP on every successful connect, and
+    // would also reject a valid answer that happened to mention the marker.
+    if (!isSdpAnswer(sdp) || sdp.endsWith("\n...[truncated]")) {
       throw new Error(`${label}: the Realtime server returned an unexpected response (HTTP ${response.status}) instead of an SDP answer — a proxy or captive portal may be intercepting the connection.`);
     }
     await pc.setRemoteDescription({ type: "answer", sdp });
@@ -856,7 +1017,6 @@ function disconnectRealtime(options = {}) {
     session.pc?.close();
     if (session.audio) session.audio.srcObject = null;
   });
-  flushCodexOutput();
   actionDataChannel = undefined;
   // A tool call awaiting approval is meaningless once the session is gone;
   // leaving it would strand a stale Run/Reject panel on screen.
@@ -946,15 +1106,52 @@ rejectCodexButton.addEventListener("click", () => {
 autoRunInput.addEventListener("change", () => {
   if (autoRunInput.checked && pendingAction) executeAction(pendingAction);
 });
-navigator.mediaDevices?.addEventListener?.("devicechange", () => refreshMediaDevices(false).catch(() => {}));
+debugPanel?.addEventListener("toggle", () => {
+  if (debugPanel.open) {
+    // Closing cleared <pre>. Rejoin even if no line arrived since then.
+    logPaintDirty = true;
+    paintDebugLog();
+  } else {
+    // The line list already holds the capped log. Leaving the joined 50KB
+    // in the <pre> (and in logBuffer) after the user closes the panel is a
+    // duplicate the compositor still has to keep. Rejoin on the next open.
+    logEl.textContent = "";
+    logBuffer = "";
+  }
+});
 
-let codexOutputBuffer = "";
-
-function flushCodexOutput() {
-  if (!codexOutputBuffer) return;
-  log("codex output", codexOutputBuffer);
-  codexOutputBuffer = "";
+function syncWindowVisibility() {
+  const hidden = document.hidden;
+  document.body.classList.toggle("is-background", hidden);
+  if (hidden) return;
+  // Catch up work we skipped while hide()'d. Enumerate only if a
+  // devicechange arrived during the hide (or the list was never filled):
+  // a no-op enumerateDevices() is still a native hop, and Bluetooth flaps
+  // that never happened should not pay it on every show. Caption parts
+  // that were not painted still flush below. The debug log is the same:
+  // streamed Codex chunks while hide()'d skip the 50KB join, then one
+  // paint here if the panel is still open.
+  if (devicesChangedWhileHidden || lastMediaDevices.length === 0) {
+    devicesChangedWhileHidden = false;
+    refreshMediaDevices(false).catch(() => {});
+  }
+  captionsDirty = false;
+  renderCaptions();
+  paintDebugLog();
 }
+
+document.addEventListener("visibilitychange", syncWindowVisibility);
+navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+  // hide() does not tear down the renderer; macOS still delivers
+  // devicechange bursts. Record the change and skip the native
+  // enumeration until the window is shown again. Distinct from
+  // coalescing bursts while visible.
+  if (document.hidden) {
+    devicesChangedWhileHidden = true;
+    return;
+  }
+  refreshMediaDevices(false).catch(() => {});
+});
 
 try {
   getBridge().config().then((config) => {
@@ -977,10 +1174,11 @@ try {
     applyKeyStatus(status);
     if (status.hasEnvKey || status.hasSavedKey) log(status.hasSavedKey ? "Using saved OpenAI key from Keychain." : "Using OPENAI_API_KEY.");
   });
-  // Stream Codex/CUA progress into the debug log (batched to avoid DOM spam).
+  // Main already batches at 4KB (and flushes the remainder on settle). A
+  // second renderer buffer only copied each chunk again before the same
+  // log() call. skipIpc: main sendCodexOutput already wrote bridge.log.
   getBridge().onCodexOutput((chunk) => {
-    codexOutputBuffer += chunk;
-    if (codexOutputBuffer.length >= 4000) flushCodexOutput();
+    log("codex output", chunk, { skipIpc: true });
   });
   refreshMediaDevices(false).catch(() => {});
   updateModeControls();

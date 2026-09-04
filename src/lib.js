@@ -7,7 +7,7 @@ import path from "node:path";
 // The sandboxed renderer (Chromium ESM loader) cannot import node: builtins,
 // so the helpers it needs live in renderer-utils.js (zero imports). Re-export
 // them here so the main process and tests keep a single import surface.
-export { hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, truncateOutput, VIRTUAL_AUDIO_LABEL } from "./renderer-utils.js";
+export { capErrorBody, captionDisplayText, createDebugLogBuffer, hasVirtualAudioDevice, humanizeError, isApiKeyRejection, isSdpAnswer, readCappedJson, readCappedResponseText, sameMediaDeviceList, truncateOutput, VIRTUAL_AUDIO_LABEL } from "./renderer-utils.js";
 
 export const APP_BUNDLE_ALIASES = new Map([
   ["safari", "com.apple.Safari"],
@@ -239,8 +239,20 @@ export function normalizeTargetLanguage(value, fallback = "es") {
 // AppleScript string they are plain data, and stripping them would make
 // osascript fail to find the app.
 export function escapeAppleScript(value = "") {
+  const text = typeof value === "string" ? value : String(value);
+  // activateApp identities that passed isSafeAppIdentity have no quotes or
+  // controls. The char-by-char copy is wasted on that path (Safari, Chrome,
+  // "Música"). Scan once with char codes (a regex literal with C0 controls
+  // trips no-control-regex); only allocate when a quote must be doubled or
+  // a control/line-separator must be stripped.
+  let i = 0;
+  for (; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 34 || code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029) break;
+  }
+  if (i === text.length) return text;
   let out = "";
-  for (const char of String(value)) {
+  for (const char of text) {
     const code = char.codePointAt(0);
     // Strip control characters (C0 0x00-0x1F, DEL 0x7F, C1 0x80-0x9F) and the
     // Unicode line/paragraph separators (U+2028/U+2029) so a model-controlled
@@ -488,7 +500,15 @@ export function normalizeCuaArgs(toolName, jsonArgs = {}, fullInput = {}, aliase
     // args blob cannot truncate the very field the guess is meant to read.
     // A standalone alias mention lives in the reason or the first chars of
     // args, so truncating cannot weaken the guess for legitimate calls.
-    const text = JSON.stringify({ reason: fullInput?.reason, args }).slice(0, 4096).toLowerCase();
+    // Cap large strings in the replacer too: slice() after stringify still
+    // allocated the full JSON (100KB+ padding) just to scan 4KB of it.
+    const ALIAS_GUESS_CHARS = 4096;
+    const text = JSON.stringify({ reason: fullInput?.reason, args }, (_key, value) => {
+      if (typeof value === "string" && value.length > ALIAS_GUESS_CHARS) {
+        return value.slice(0, ALIAS_GUESS_CHARS);
+      }
+      return value;
+    }).slice(0, ALIAS_GUESS_CHARS).toLowerCase();
     for (const { bundleId, re } of getAliasPatterns(aliases).values()) {
       // Match the alias on word boundaries, not as a raw substring: "keynotes"
       // contains "notes" and "previewing" contains "preview", so a substring
@@ -669,7 +689,12 @@ export function isSafeLaunchUrl(value) {
 // missing prompt would reach spawn() as the literal string "undefined" and a
 // null IPC payload would throw a TypeError while destructuring.
 export function requireNonEmptyString(value, label) {
-  if (typeof value !== "string" || !value.trim()) return `${label} must be a non-empty string.`;
+  // A 200KB voice prompt used to pay a full trim() copy just to check
+  // emptiness — this helper does not return the trimmed value. /\S/.test
+  // walks until the first non-whitespace character and allocates nothing.
+  if (typeof value !== "string" || !/\S/.test(value)) {
+    return `${label} must be a non-empty string.`;
+  }
   return null;
 }
 
@@ -684,7 +709,17 @@ export function requireNonEmptyString(value, label) {
 // when valid, or a short human-readable error message. Non-strings pass
 // through: type checks are the caller's job (see requireNonEmptyString).
 export function requireMaxLength(value, label, maxBytes = 200000) {
-  if (typeof value === "string" && Buffer.byteLength(value, "utf8") > maxBytes) {
+  if (typeof value !== "string") return null;
+  // UTF-8 is at least 1 byte per UTF-16 code unit and at most 3 (BMP;
+  // a surrogate pair is 4 bytes over 2 units). A typical voice prompt is
+  // thousands of characters — far under 200000/3 — so skip the
+  // Buffer.byteLength walk on the common path. Still walk the gray band
+  // where a run of 2–3 byte characters could overflow the byte cap.
+  if (value.length > maxBytes) {
+    return `${label} exceeds the maximum length of ${maxBytes} bytes.`;
+  }
+  if (value.length * 3 <= maxBytes) return null;
+  if (Buffer.byteLength(value, "utf8") > maxBytes) {
     return `${label} exceeds the maximum length of ${maxBytes} bytes.`;
   }
   return null;
@@ -719,7 +754,29 @@ export function redactSecrets(value) {
   // hits the "sk-" inside ordinary words ("risk-2024", "task-proj", "ask-1")
   // and would corrupt log text with false redactions. Real keys never start
   // mid-word (they follow whitespace, a quote, or a colon), so none are missed.
-  return String(value).replace(/\bsk-[A-Za-z0-9_.-]+/g, "[REDACTED_OPENAI_KEY]");
+  // writeLog runs this on every 4KB Codex batch. Most lines have no "sk-"
+  // at all; skip the global regex (and the replacement string) then.
+  const text = typeof value === "string" ? value : String(value);
+  if (!text.includes("sk-")) return text;
+  return text.replace(/\bsk-[A-Za-z0-9_.-]+/g, "[REDACTED_OPENAI_KEY]");
+}
+
+// writeLog stringifies every payload. A stringify replacer (capErrorBody)
+// disables V8's fast path and visits every value — worth it for a 1MB stack
+// or nested process output, wasted on sendCodexOutput's flat
+// { message, data } batches (already ≤16KB). True = keep the replacer.
+export function logPayloadNeedsStringCap(value, maxChars) {
+  if (value == null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return true;
+  for (const key of Object.keys(value)) {
+    const item = value[key];
+    if (typeof item === "string") {
+      if (item.length > maxChars) return true;
+    } else if (item && typeof item === "object") {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Turn a failed child-process spawn into a short, actionable message. A
@@ -759,10 +816,85 @@ export function humanizeSpawnError(command, error) {
 // conclusion. The buffer also keeps rolling to the newest tail once capped:
 // output arriving after the first overflow (the true end of a long run) must
 // not be discarded, or the model would miss the very lines it needs.
+// Drop the usual single trailing newline from a settled child-process
+// buffer without copying the whole 1MB tail. Codex/CUA stdout almost
+// always ends with exactly one \n (or \r\n). trim() of that buffer is a
+// full copy on every model-facing settle. A lone trailing linebreak
+// becomes slice(); anything else (leading space, extra newlines, or
+// trim disabled) keeps the previous trim()/identity behavior.
+export function settleProcessOutput(value, trim = true) {
+  const text = typeof value === "string" ? value : String(value ?? "");
+  if (!trim || !text) return text;
+  const end = text.length - 1;
+  const last = text.charCodeAt(end);
+  if (last === 10) {
+    const crlf = end > 0 && text.charCodeAt(end - 1) === 13;
+    const keepEnd = crlf ? end - 1 : end;
+    if (keepEnd === 0) return "";
+    if (/\s/.test(text[0]) || /\s/.test(text[keepEnd - 1])) return text.trim();
+    return text.slice(0, keepEnd);
+  }
+  if (!/\s/.test(text[0]) && !/\s/.test(text[end])) return text;
+  return text.trim();
+}
+
+export function createOutputAccumulator(maxChars = 1024 * 1024) {
+  // Chunk list + running length so a capped 1MB buffer does not copy the
+  // whole string on every small stdout chunk. join() happens once, when the
+  // caller asks for the final text (typically when the child exits).
+  // Compact before trimming: dropping the head with Array.shift() on tens of
+  // thousands of tiny chunks is quadratic and would freeze the main process
+  // on a runaway stream of 1-byte writes (the exact case the cap exists to
+  // survive). Join into one string, then slice the tail.
+  const COMPACT_AFTER = 32;
+  const chunks = [];
+  let length = 0;
+  let capped = false;
+
+  function compact() {
+    if (chunks.length <= 1) return;
+    const joined = chunks.join("");
+    chunks.length = 0;
+    chunks.push(joined);
+  }
+
+  function trimToMax() {
+    compact();
+    if (length <= maxChars) return;
+    capped = true;
+    chunks[0] = chunks[0].slice(-maxChars);
+    length = maxChars;
+  }
+
+  return {
+    push(chunk) {
+      const piece = String(chunk);
+      if (!piece) return;
+      chunks.push(piece);
+      length += piece.length;
+      if (length > maxChars) trimToMax();
+      else if (chunks.length >= COMPACT_AFTER) compact();
+    },
+    text() {
+      return chunks.join("");
+    },
+    get capped() {
+      return capped;
+    },
+    get length() {
+      return length;
+    },
+  };
+}
+
 export function accumulateOutput(buffer, chunk, maxChars = 1024 * 1024) {
-  const next = buffer + String(chunk);
-  if (next.length > maxChars) return { text: next.slice(-maxChars), capped: true };
-  return { text: next, capped: false };
+  const acc = createOutputAccumulator(maxChars);
+  if (buffer) acc.push(buffer);
+  acc.push(chunk);
+  return {
+    text: acc.text(),
+    capped: buffer.length + String(chunk).length > maxChars,
+  };
 }
 
 // Pick a per-character delay so a whole text fits inside the CUA timeout:
@@ -798,6 +930,29 @@ export function requireTypeableLength(textLength, budgetMs = 48000) {
 // or the input is not a string.
 export function extractFirstJsonObject(text) {
   if (typeof text !== "string") return null;
+  // Fast path: cua-driver's list_apps usually prints one JSON object, maybe
+  // with a trailing newline. JSON.parse of the original buffer avoids the
+  // brace scan and the slice() copy of up to 1MB that the matcher would make
+  // before parsing — type/press call this on every keystroke. Only try when
+  // the trimmed buffer starts with '{' and ends with '}': a barrage of
+  // unclosed '{' does not end with '}', so it skips this and hits the
+  // budgeted scan below. JSON.parse itself accepts surrounding whitespace,
+  // so the original string is parsed (no slice) when the ends match.
+  let start = 0;
+  while (start < text.length && (text[start] === " " || text[start] === "\n" || text[start] === "\r" || text[start] === "\t")) {
+    start++;
+  }
+  let end = text.length - 1;
+  while (end >= start && (text[end] === " " || text[end] === "\n" || text[end] === "\r" || text[end] === "\t")) {
+    end--;
+  }
+  if (start <= end && text[start] === "{" && text[end] === "}") {
+    try {
+      return JSON.parse(text);
+    } catch {
+      // Concatenated values or a truncated object — fall through to scan.
+    }
+  }
   // The inner scan restarts from every '{', so a pathological input turns
   // this quadratic: each unclosed candidate re-scans nearly the whole buffer.
   // That is reachable in practice — the model can type a barrage of '{' into
@@ -839,6 +994,329 @@ export function extractFirstJsonObject(text) {
     }
   }
   return null;
+}
+
+// Scan a list_apps dump for the active app without parsing the forest.
+function isJsonWs(ch) {
+  return ch === " " || ch === "\n" || ch === "\r" || ch === "\t";
+}
+
+function skipJsonWs(text, i, end) {
+  while (i < end && isJsonWs(text[i])) i++;
+  return i;
+}
+
+function closeJsonString(text, open, end) {
+  let escaped = false;
+  for (let j = open + 1; j < end; j++) {
+    const ch = text[j];
+    if (escaped) escaped = false;
+    else if (ch === "\\") escaped = true;
+    else if (ch === '"') return j;
+  }
+  return -1;
+}
+
+function closeJsonObject(text, start, end, budget) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let remaining = budget;
+  for (let j = start; j < end && remaining > 0; j++, remaining--) {
+    const ch = text[j];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return { end: j, budget: remaining };
+    }
+  }
+  return { end: -1, budget: remaining };
+}
+
+function skipJsonValue(text, i, end, budgetRef) {
+  i = skipJsonWs(text, i, end);
+  if (i >= end) return -1;
+  const ch = text[i];
+  if (ch === '"') {
+    const close = closeJsonString(text, i, end);
+    return close < 0 ? -1 : close + 1;
+  }
+  if (ch === "{") {
+    const closed = closeJsonObject(text, i, end, budgetRef.budget);
+    budgetRef.budget = closed.budget;
+    return closed.end < 0 ? -1 : closed.end + 1;
+  }
+  if (ch === "[") {
+    let depth = 1;
+    let inString = false;
+    let escaped = false;
+    for (let j = i + 1; j < end && budgetRef.budget > 0; j++, budgetRef.budget--) {
+      const c = text[j];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (c === "\\") escaped = true;
+        else if (c === '"') inString = false;
+        continue;
+      }
+      if (c === '"') inString = true;
+      else if (c === "[" || c === "{") depth++;
+      else if (c === "]" || c === "}") {
+        depth--;
+        if (depth === 0) return j + 1;
+      }
+    }
+    return -1;
+  }
+  while (i < end && !isJsonWs(text[i]) && text[i] !== "," && text[i] !== "]" && text[i] !== "}") {
+    i++;
+  }
+  return i;
+}
+
+function readJsonPositiveInt(text, i, end) {
+  i = skipJsonWs(text, i, end);
+  if (i >= end || text[i] < "0" || text[i] > "9") return null;
+  let j = i;
+  while (j < end && text[j] >= "0" && text[j] <= "9") j++;
+  // JSON integers cannot have a leading zero (012 is invalid); fall back.
+  if (text[i] === "0" && j > i + 1) return null;
+  const after = j < end ? text[j] : ",";
+  if (after === "." || after === "e" || after === "E" || (after >= "a" && after <= "z") || after === "-") {
+    return null;
+  }
+  const n = Number(text.slice(i, j));
+  if (!Number.isInteger(n) || n <= 0) return null;
+  return { value: n, next: j };
+}
+
+function readJsonBoolean(text, i, end) {
+  i = skipJsonWs(text, i, end);
+  if (i + 4 <= end && text.startsWith("true", i)) {
+    const after = i + 4 < end ? text[i + 4] : ",";
+    if (isJsonWs(after) || after === "," || after === "}" || after === "]") return { value: true, next: i + 4 };
+  }
+  if (i + 5 <= end && text.startsWith("false", i)) {
+    const after = i + 5 < end ? text[i + 5] : ",";
+    if (isJsonWs(after) || after === "," || after === "}" || after === "]") return { value: false, next: i + 5 };
+  }
+  return null;
+}
+
+// Depth-1 pid + active only. type/press never read windows/titles; parsing
+// the frontmost app object used to materialize that whole array. Returns
+// as soon as both fields are known so a trailing windows array is not
+// scanned. { pid, active: true }, { inactive: true } (skip parse), or null.
+function extractAppPidIfActive(text, start, end) {
+  let i = start + 1;
+  let inString = false;
+  let escaped = false;
+  let depth = 1;
+  let pid;
+  let active;
+  while (i < end) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      const close = closeJsonString(text, i, end);
+      if (close < 0) return null;
+      if (depth === 1) {
+        const keyStart = i + 1;
+        const keyLen = close - keyStart;
+        let k = skipJsonWs(text, close + 1, end);
+        if (k < end && text[k] === ":") {
+          k = skipJsonWs(text, k + 1, end);
+          if (keyLen === 3 && text.startsWith("pid", keyStart)) {
+            const num = readJsonPositiveInt(text, k, end);
+            if (!num) return null;
+            pid = num.value;
+            // Keys are typically before the windows array — stop so we
+            // never walk those titles after we already have the pid.
+            if (active) return { pid, active: true };
+            i = num.next;
+            continue;
+          }
+          if (keyLen === 6 && text.startsWith("active", keyStart)) {
+            const bool = readJsonBoolean(text, k, end);
+            if (!bool) return null;
+            if (!bool.value) return { inactive: true };
+            active = true;
+            if (pid !== undefined) return { pid, active: true };
+            i = bool.next;
+            continue;
+          }
+        }
+      }
+      i = close + 1;
+      continue;
+    }
+    if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") depth--;
+    i++;
+  }
+  if (active && pid !== undefined) return { pid, active: true };
+  return null;
+}
+
+// JSON boolean true after an "active" key, with legal JSON whitespace.
+// A window title that embeds the same characters is a false positive:
+// extractAppPidIfActive then sees depth-1 active:false and skips parse.
+function sliceHasActiveTrue(text, start, end) {
+  let idx = start;
+  while (idx < end) {
+    const at = text.indexOf('"active"', idx);
+    if (at < 0 || at >= end) return false;
+    let k = skipJsonWs(text, at + 8, end);
+    if (k < end && text[k] === ":") {
+      k = skipJsonWs(text, k + 1, end);
+      if (k + 4 <= end && text.startsWith("true", k)) {
+        const after = k + 4 < end ? text[k + 4] : ",";
+        if (isJsonWs(after) || after === "," || after === "}" || after === "]") return true;
+      }
+    }
+    idx = at + 8;
+  }
+  return false;
+}
+
+function walkAppsArray(text, from, end, budgetRef) {
+  let i = from;
+  while (i < end && budgetRef.budget > 0) {
+    i = skipJsonWs(text, i, end);
+    if (i >= end) return { kind: "miss" };
+    if (text[i] === "]") return { kind: "apps", app: null };
+    if (text[i] === ",") {
+      i++;
+      continue;
+    }
+    if (text[i] === "{") {
+      const closed = closeJsonObject(text, i, end, budgetRef.budget);
+      budgetRef.budget = closed.budget;
+      if (closed.end < 0) return { kind: "miss" };
+      // Inactive apps still carry window-title arrays. Skip JSON.parse
+      // unless this slice has a JSON `true` after an "active" key —
+      // cua-driver emits a boolean, and type/press only need that pid.
+      if (!sliceHasActiveTrue(text, i, closed.end + 1)) {
+        i = closed.end + 1;
+        continue;
+      }
+      const slim = extractAppPidIfActive(text, i, closed.end + 1);
+      if (slim?.inactive) {
+        i = closed.end + 1;
+        continue;
+      }
+      if (slim?.pid) return { kind: "apps", app: slim };
+      let appInfo;
+      try {
+        // Odd pid/active shapes (string pid, active:1): parse this one
+        // object only. The common path already returned a slim { pid }.
+        appInfo = JSON.parse(text.slice(i, closed.end + 1));
+      } catch {
+        return { kind: "miss" };
+      }
+      if (appInfo && typeof appInfo === "object" && appInfo.active) {
+        return { kind: "apps", app: appInfo };
+      }
+      i = closed.end + 1;
+      continue;
+    }
+    const skipped = skipJsonValue(text, i, end, budgetRef);
+    if (skipped < 0) return { kind: "miss" };
+    i = skipped;
+  }
+  return { kind: "miss" };
+}
+
+function findActiveInAppsObject(text, from, end, budgetRef) {
+  let i = from;
+  let inString = false;
+  let escaped = false;
+  let depth = 1;
+  while (i < end && budgetRef.budget > 0) {
+    budgetRef.budget--;
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      const close = closeJsonString(text, i, end);
+      if (close < 0) return { kind: "miss" };
+      if (depth === 1 && close === i + 5 && text.startsWith("apps", i + 1)) {
+        let k = skipJsonWs(text, close + 1, end);
+        if (k < end && text[k] === ":") {
+          k = skipJsonWs(text, k + 1, end);
+          if (k < end && text[k] === "[") {
+            return walkAppsArray(text, k + 1, end, budgetRef);
+          }
+          return { kind: "miss" };
+        }
+      }
+      i = close + 1;
+      continue;
+    }
+    if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") depth--;
+    i++;
+  }
+  return { kind: "miss" };
+}
+
+function scanListAppsActive(text) {
+  if (typeof text !== "string" || !text) return { kind: "miss" };
+  const end = text.length;
+  const budgetRef = { budget: end * 2 };
+  for (let i = 0; i < end && budgetRef.budget > 0; i++) {
+    if (text[i] !== "{") continue;
+    const closed = closeJsonObject(text, i, end, budgetRef.budget);
+    budgetRef.budget = closed.budget;
+    if (closed.end < 0) continue;
+    const found = findActiveInAppsObject(text, i + 1, closed.end, budgetRef);
+    if (found.kind === "apps") return found;
+    // First complete object is not a list_apps payload — same as
+    // extractFirstJsonObject returning that object and the caller seeing
+    // no apps array. Do not walk a later concatenated value.
+    return { kind: "miss" };
+  }
+  return { kind: "miss" };
+}
+
+// Find the active app in a cua-driver list_apps dump without JSON.parse of
+// the whole 1MB forest. type/press call this on every keystroke and only
+// need { pid, active } from one entry; materializing every window title is
+// the remaining memory peak. Skips JSON.parse of slices without `active: true`,
+// then reads depth-1 pid/active so the frontmost app's windows stay unparsed.
+// Falls back to extractFirstJsonObject when the scanner cannot see an apps
+// array, so odd/prefixed shapes stay correct.
+// Returns { app } (app may be null when the array is valid but none is
+// active) or { error: "unexpected" } when there is no apps list.
+export function extractActiveAppFromListApps(text) {
+  const scanned = scanListAppsActive(text);
+  if (scanned.kind === "apps") {
+    return { app: scanned.app };
+  }
+  const parsed = extractFirstJsonObject(text);
+  if (!parsed || !Array.isArray(parsed.apps)) {
+    return { error: "unexpected" };
+  }
+  return {
+    app: parsed.apps.find((appInfo) => appInfo && typeof appInfo === "object" && appInfo.active) || null,
+  };
 }
 
 // Parse a dotenv-style file (KEY=VALUE lines, # comments, optional quotes)

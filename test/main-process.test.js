@@ -4,7 +4,7 @@
 // with a timeout error, but the child keeps running (up to 3s until the
 // SIGKILL) and can keep emitting stdout/stderr. If those late chunks were
 // still forwarded via options.onOutput, the renderer would batch a dead run's
-// tail into codexOutputBuffer and flush it into the NEXT run's debug log —
+// tail into the debug log of the NEXT run —
 // misattributing output. The data handlers must stop streaming once the run
 // has settled, so everything the renderer receives belongs to the run it is
 // currently displaying. Pure-Node `npm test` cannot exercise the real child
@@ -26,8 +26,30 @@ test("runCodex and runCuaDriver guard codex-output sends against a destroyed win
   // close sequence webContents.send on a destroyed webContents throws "Object
   // has been destroyed" — an uncaught exception from inside the child output
   // handler. Every other mainWindow touch in main.js checks
-  // !mainWindow.isDestroyed(); the onOutput callbacks must do the same.
+  // !mainWindow.isDestroyed(); sendCodexOutput must do the same.
   const main = readSource("main.js");
+  const helperStart = main.indexOf("function sendCodexOutput");
+  assert.ok(helperStart !== -1, "main.js must define sendCodexOutput");
+  const helper = main.slice(helperStart, main.indexOf("function runCodex"));
+  assert.match(
+    helper,
+    /writeLog\("renderer:ui", \{ message: "codex output", data: String\(chunk\) \}\)/,
+    "sendCodexOutput must write the same renderer:ui payload the debug log used to bounce",
+  );
+  assert.match(
+    helper,
+    /if \(!mainWindow \|\| mainWindow\.isDestroyed\(\)\) return;/,
+    "sendCodexOutput must skip webContents.send when the window is gone",
+  );
+  assert.match(
+    helper,
+    /mainWindow\.webContents\.send\("codex-output", chunk\)/,
+    "sendCodexOutput must still stream the chunk to the renderer debug panel",
+  );
+  assert.ok(
+    helper.indexOf('writeLog("renderer:ui"') < helper.indexOf("isDestroyed"),
+    "bridge.log must be written before the destroyed-window send guard so a run that outlives Cmd+W is still recorded",
+  );
   for (const [label, fnStart, fnEnd] of [
     ["runCodex", "function runCodex", "function runCuaDriver"],
     ["runCuaDriver", "function runCuaDriver", "async function runMacAction"],
@@ -37,8 +59,8 @@ test("runCodex and runCuaDriver guard codex-output sends against a destroyed win
     const fnBody = main.slice(start, main.indexOf(fnEnd));
     assert.match(
       fnBody,
-      /mainWindow && !mainWindow\.isDestroyed\(\)\) mainWindow\.webContents\.send\("codex-output", chunk\)/,
-      `${label} must guard the codex-output send with !mainWindow.isDestroyed()`,
+      /sendCodexOutput/,
+      `${label} must stream through sendCodexOutput`,
     );
   }
 });
@@ -67,8 +89,13 @@ test("openAppVisible reports the cua-driver launch result to the model, not just
   );
   assert.match(
     fnBody,
-    /launchOutput: cuaResult\.stdout/,
-    "openAppVisible stdout must include the driver's own launch output",
+    /truncateOutput\(cuaResult\)/,
+    "openAppVisible must cap launch stdout before JSON.stringify so a 1MB dump cannot drop launched/activated",
+  );
+  assert.match(
+    fnBody,
+    /launchOutput: launch\.stdout/,
+    "openAppVisible stdout must include the driver's own (capped) launch output",
   );
 });
 
@@ -135,6 +162,153 @@ test("writeLog swallows logging-path failures so error handlers cannot crash or 
   );
 });
 
+test("writeLog caps log payloads so a 1MB Codex result cannot be stringified whole", () => {
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /function serializeLogData\(data\)/,
+    "writeLog must serialize through a bounded helper",
+  );
+  const fnStart = main.indexOf("function serializeLogData");
+  const fnBody = main.slice(fnStart, main.indexOf("function writeLog"));
+  assert.match(
+    fnBody,
+    /truncateOutput\(data, 16000\)/,
+    "object log payloads with stdout/stderr must be truncated before stringify",
+  );
+  assert.match(
+    fnBody,
+    /capErrorBody\(value, MAX_LOG_PAYLOAD_CHARS\)/,
+    "serializeLogData must cap other large string fields in the stringify replacer, not only stdout/stderr",
+  );
+  assert.match(
+    fnBody,
+    /MAX_LOG_PAYLOAD_CHARS/,
+    "the serialized log line itself must be length-capped",
+  );
+  assert.match(
+    fnBody,
+    /logPayloadNeedsStringCap\(bounded, MAX_LOG_PAYLOAD_CHARS\)/,
+    "serializeLogData must skip the cap replacer when no string field can overflow",
+  );
+  assert.match(
+    fnBody,
+    /JSON\.stringify\(bounded\)/,
+    "short flat log objects (every 4KB Codex batch) must stringify without a replacer",
+  );
+  assert.ok(
+    fnBody.indexOf("logPayloadNeedsStringCap") < fnBody.indexOf("JSON.stringify(bounded)"),
+    "the fast stringify must be gated on logPayloadNeedsStringCap",
+  );
+});
+
+test("log rotation tracks on-disk size, not WriteStream.bytesWritten", () => {
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /logBytesWritten = fs\.statSync\(LOG_FILE\)\.size/,
+    "opening the log stream must seed the byte counter from the existing file size",
+  );
+  const fnStart = main.indexOf("function writeLog");
+  const fnBody = main.slice(fnStart, main.indexOf("function runProcess"));
+  assert.match(
+    fnBody,
+    /logBytesWritten >= LOG_MAX_BYTES/,
+    "rotation must use the on-disk counter, not stream.bytesWritten",
+  );
+  assert.doesNotMatch(
+    fnBody,
+    /logStream\.bytesWritten/,
+    "stream.bytesWritten undercounts an appended existing log file",
+  );
+});
+
+test("renderer log IPC is fire-and-forget (send), not a round-trip invoke", () => {
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /ipcMain\.on\("log:renderer"/,
+    "log:renderer must be a one-way ipcMain.on handler",
+  );
+  assert.doesNotMatch(
+    main,
+    /ipcMain\.handle\("log:renderer"/,
+    "log:renderer must not use invoke/handle (that waits for a reply on every UI log line)",
+  );
+  const preload = readSource("preload.cjs");
+  assert.match(
+    preload,
+    /ipcRenderer\.send\("log:renderer"/,
+    "the preload log bridge must send, not invoke",
+  );
+  assert.match(
+    preload,
+    /return Promise\.resolve\(\{ ok: true \}\)/,
+    "preload log() must still return a thenable so window error handlers can .catch()",
+  );
+});
+
+test("onCodexOutput replaces the previous listener instead of stacking them", () => {
+  const preload = readSource("preload.cjs");
+  const fnStart = preload.indexOf("onCodexOutput:");
+  assert.ok(fnStart !== -1, "preload must expose onCodexOutput");
+  const fnBody = preload.slice(fnStart, preload.indexOf("});", fnStart));
+  assert.match(
+    fnBody,
+    /removeAllListeners\("codex-output"\)/,
+    "onCodexOutput must drop any prior codex-output listener before adding a new one",
+  );
+  assert.ok(
+    fnBody.indexOf('removeAllListeners("codex-output")') < fnBody.indexOf('ipcRenderer.on("codex-output"'),
+    "the previous listener must be removed before the new one is added",
+  );
+});
+
+test("runProcess batches streamed output IPC and flushes before settling", () => {
+  const main = readSource("main.js");
+  const fnStart = main.indexOf("function runProcess");
+  const fnBody = main.slice(fnStart, main.indexOf("async function readKeychainApiKey"));
+  assert.match(
+    fnBody,
+    /createOutputAccumulator\(MAX_PROCESS_OUTPUT_CHARS\)/,
+    "runProcess must accumulate stdout/stderr with the chunked cap helper",
+  );
+  assert.match(
+    fnBody,
+    /OUTPUT_IPC_BATCH_CHARS = 4000/,
+    "streamed IPC must batch instead of sending every tiny stdout chunk",
+  );
+  assert.match(
+    fnBody,
+    /OUTPUT_IPC_MAX_CHARS = 16000/,
+    "streamed IPC must cap a single dump at the renderer log string budget",
+  );
+  assert.match(
+    fnBody,
+    /payload\.slice\(-OUTPUT_IPC_MAX_CHARS\)/,
+    "an oversized debug-log payload must keep the tail, not the head",
+  );
+  assert.match(
+    fnBody,
+    /if \(text\.length >= OUTPUT_IPC_MAX_CHARS\)/,
+    "a megabyte stdout chunk must not be concatenated into pendingOutput before the cap",
+  );
+  assert.match(
+    fnBody,
+    /trimSettledOutput = options\.trimOutput !== false/,
+    "runProcess must allow callers to skip trim() of a megabyte settled tail",
+  );
+  assert.match(
+    fnBody,
+    /settleProcessOutput\(value, trimSettledOutput\)/,
+    "settled stdout/stderr must only trim when trimOutput is not disabled",
+  );
+  assert.ok(
+    fnBody.indexOf("flushPendingOutput()") < fnBody.indexOf("resolve({"),
+    "the leftover IPC batch must flush before the runProcess promise resolves",
+  );
+});
+
 test("runProcess swallows EPIPE on child stdin so an early-exiting child cannot raise an uncaught error", () => {
   // runProcess always ends child.stdin (empty, or the API key for the
   // keychain save). A child that exits without reading stdin — e.g. the
@@ -192,13 +366,18 @@ test("runProcess stops streaming child output to the renderer once the run has s
   const fnStart = main.indexOf("function runProcess");
   assert.ok(fnStart !== -1, "main.js must define runProcess");
   const fnBody = main.slice(fnStart, main.indexOf("async function readKeychainApiKey"));
-  // Both the stdout and stderr data handlers must gate options.onOutput on
-  // the settled flag so a timed-out run's late chunks cannot reach the
-  // renderer and be flushed into a later run's debug log.
-  const guardedCalls = fnBody.match(/if \(!settled\) options\.onOutput\?\.\(text\)/g) || [];
+  // Both the stdout and stderr data handlers must forward through a helper
+  // that gates on the settled flag so a timed-out run's late chunks cannot
+  // reach the renderer and be flushed into a later run's debug log.
+  const forwarded = fnBody.match(/forwardOutput\(text\)/g) || [];
   assert.ok(
-    guardedCalls.length >= 2,
-    "both stdout and stderr data handlers must guard options.onOutput with !settled",
+    forwarded.length >= 2,
+    "both stdout and stderr data handlers must forward output through forwardOutput",
+  );
+  assert.match(
+    fnBody,
+    /if \(!text \|\| settled \|\| !options\.onOutput\) return/,
+    "forwardOutput must drop chunks once the run has settled",
   );
   // The settled flag must be declared before the data handlers are attached so
   // the guard refers to the same flag finish() flips.
@@ -250,8 +429,8 @@ test("getActiveAppFromCua distinguishes a malformed list_apps payload from a gen
   const fnBody = main.slice(fnStart, main.indexOf("function activateApp"));
   assert.match(
     fnBody,
-    /Array\.isArray\(parsed\.apps\)/,
-    "getActiveAppFromCua must verify the payload carries an apps array",
+    /extractActiveAppFromListApps\(result\.stdout\)/,
+    "getActiveAppFromCua must extract the active app without JSON.parse of the whole list_apps forest",
   );
   assert.match(
     fnBody,
@@ -260,13 +439,46 @@ test("getActiveAppFromCua distinguishes a malformed list_apps payload from a gen
   );
   assert.match(
     fnBody,
-    /appInfo && typeof appInfo === "object" && appInfo\.active/,
-    "getActiveAppFromCua must skip malformed entries instead of throwing inside find",
+    /extracted\.error/,
+    "getActiveAppFromCua must treat a missing apps list as unexpected, not as no active app",
   );
   assert.match(
     fnBody,
     /pid: null, error: "[^"]*unreadable payload/,
     "getActiveAppFromCua must surface an unreadable-payload error instead of returning bare null",
+  );
+});
+
+test("getActiveAppFromCua does not stream list_apps into the debug-log IPC", () => {
+  // type/press look up the frontmost pid via list_apps. That dump (even the
+  // 16KB tail cap) used to cross IPC on every keystroke for a debug line
+  // the model never sees. The lookup must pass quiet so runCuaDriver
+  // skips onOutput; a model-facing cua:run still streams.
+  const main = readSource("main.js");
+  const lookup = main.slice(
+    main.indexOf("async function getActiveAppFromCua"),
+    main.indexOf("function activateApp"),
+  );
+  assert.match(
+    lookup,
+    /runCuaDriver\(\{ tool_name: "list_apps", json_args: \{\} \}, \{ quiet: true \}\)/,
+    "the internal list_apps lookup must be quiet so type/press do not clone the dump into the renderer log",
+  );
+  const cua = main.slice(main.indexOf("function runCuaDriver"), main.indexOf("async function runMacAction"));
+  assert.match(
+    cua,
+    /function runCuaDriver\(input = \{\}, options = \{\}\)/,
+    "quiet must be a second argument so a model-supplied json_args.quiet cannot silence cua:run",
+  );
+  assert.match(
+    cua,
+    /onOutput: options\.quiet\s*\? undefined/,
+    "runCuaDriver must skip streamed IPC when quiet",
+  );
+  assert.match(
+    cua,
+    /trimOutput: !options\.quiet/,
+    "quiet list_apps must not trim() a 1MB dump — extractActiveAppFromListApps accepts the trailing newline",
   );
 });
 
@@ -721,6 +933,51 @@ test("createRealtimeClientSecret trims the resolved API key so a whitespace-padd
   );
 });
 
+test("OpenAI token error bodies are capped before they land on Error.message", () => {
+  // A failed client_secrets fetch can return a megabyte of captive-portal
+  // HTML. Putting that raw body on Error.message copies it again in
+  // humanizeError (toLowerCase) and into the status pill. Cap first; the
+  // "reasoning" retry still sees the head of a real OpenAI JSON error.
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /const message = await readCappedResponseText\(response\)/,
+    "the assistant token path must stream-cap the error body before the reasoning check and the throw",
+  );
+  assert.match(
+    main,
+    /readCappedResponseText\(response\)/,
+    "token / translation / transcription failures must stream-cap the HTTP error body",
+  );
+  assert.equal(
+    (main.match(/readCappedResponseText\(response\)/g) || []).length,
+    4,
+    "assistant retry, assistant fallback, translation, and transcription must all stream-cap error bodies",
+  );
+});
+
+test("OpenAI token success bodies are stream-capped before JSON.parse", () => {
+  // A 2xx captive-portal dump used to hit response.json(), which buffers the
+  // entire body before throwing. The three client_secrets success paths must
+  // parse through readCappedJson so the peak stays at the 64KB budget.
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /normalizeRealtimeToken\(await readCappedJson\(response\)/,
+    "token / translation / transcription success paths must stream-cap before JSON.parse",
+  );
+  assert.equal(
+    (main.match(/readCappedJson\(response\)/g) || []).length,
+    3,
+    "assistant, translation, and transcription token success paths must all use readCappedJson",
+  );
+  assert.equal(
+    (main.match(/await response\.json\(\)/g) || []).length,
+    0,
+    "main.js must not buffer an entire HTTP body with await response.json()",
+  );
+});
+
 test("key-status does not report a whitespace-only OPENAI_API_KEY as a usable key", () => {
   // hasEnvKey hides the API key input field: a whitespace-only env var (the
   // same stray-whitespace class the trim fix addresses) would otherwise keep
@@ -788,5 +1045,30 @@ test("loadDotEnv trims CODEX_VOICE_ENV_FILE so a whitespace-padded path cannot s
     fnBody,
     /process\.env\.CODEX_VOICE_ENV_FILE\?\.trim\(\)/,
     "loadDotEnv must trim CODEX_VOICE_ENV_FILE so a whitespace-padded path cannot silently skip the custom .env",
+  );
+});
+
+test("codex and cua IPC returns are truncated before the structured clone into the renderer", () => {
+  // runProcess keeps up to 1MB of child output so a long run cannot grow
+  // without bound. Cloning that whole tail into the renderer on every
+  // finished invoke (then pretty-printing it) spiked renderer memory; the
+  // model already received truncateOutput's 30KB tail. The invoke handlers
+  // must truncate before the clone. Streamed debug output still uses the
+  // batched codex-output channel inside runCodex/runCuaDriver.
+  const main = readSource("main.js");
+  assert.match(
+    main,
+    /ipcMain\.handle\("codex:run", guard\(async \(_event, input\) => truncateOutput\(await runCodex\(input\)\)\)\)/,
+    "codex:run must truncate the invoke return before sending it to the renderer",
+  );
+  assert.match(
+    main,
+    /ipcMain\.handle\("cua:run", guard\(async \(_event, input\) => truncateOutput\(await runCuaDriver\(input\)\)\)\)/,
+    "cua:run must truncate the invoke return before sending it to the renderer",
+  );
+  assert.match(
+    main,
+    /ipcMain\.handle\("mac:run", guard\(async \(_event, input\) => truncateOutput\(await runMacAction\(input\)\)\)\)/,
+    "mac:run must truncate type/press (and open_app) returns before the renderer clone",
   );
 });

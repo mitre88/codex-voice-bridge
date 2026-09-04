@@ -14,6 +14,20 @@ export function hasVirtualAudioDevice(devices = []) {
   return Array.isArray(devices) && devices.some((device) => VIRTUAL_AUDIO_LABEL.test(device?.label || ""));
 }
 
+// True when two enumerateDevices() snapshots describe the same hardware
+// (id, kind, and label). Used to skip rebuilding four <select>s on the
+// frequent macOS devicechange flaps that report an identical list.
+export function sameMediaDeviceList(prev, next) {
+  if (!Array.isArray(prev) || !Array.isArray(next)) return false;
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < next.length; i++) {
+    const a = prev[i];
+    const b = next[i];
+    if (a.deviceId !== b.deviceId || a.kind !== b.kind || a.label !== b.label) return false;
+  }
+  return true;
+}
+
 // Turn common failure modes into short, actionable messages for the UI.
 // Pure so it stays unit-testable; anything unrecognized passes through as-is.
 export function humanizeError(error) {
@@ -334,7 +348,186 @@ export function isSdpAnswer(value) {
   return typeof value === "string" && value.trimStart().startsWith("v=");
 }
 
+// Newest-first debug log without Array.unshift. Lines are appended (O(1));
+// a start index skips dropped oldest lines; join walks from the end so the
+// <pre> still shows newest first. Compact the dead prefix every 32 drops so
+// the backing array cannot grow without bound on a long session.
+// Live captions are joined every animation frame. trim() on a 50KB string
+// allocates a copy whenever the edges are whitespace; when they are not
+// (the common case for a spoken turn), reuse the joined string.
+export function captionDisplayText(text) {
+  if (!text) return "...";
+  const start = text[0];
+  const end = text[text.length - 1];
+  if (!/\s/.test(start) && !/\s/.test(end)) return text;
+  return text.trim() || "...";
+}
+
+export function createDebugLogBuffer(maxChars = 50000) {
+  const COMPACT_AFTER = 32;
+  const lines = [];
+  let start = 0;
+  let chars = 0;
+
+  function compact() {
+    if (start === 0) return;
+    lines.splice(0, start);
+    start = 0;
+  }
+
+  return {
+    push(line) {
+      const piece = String(line);
+      if (!piece) return;
+      lines.push(piece);
+      chars += piece.length;
+      while (chars > maxChars && start < lines.length - 1) {
+        chars -= lines[start].length;
+        start += 1;
+      }
+      if (chars > maxChars && start === lines.length - 1) {
+        // Keep the HEAD of the remaining (newest) line — same as the old
+        // unshift + slice(0, maxChars). The timestamp and message start
+        // stay; a single huge Codex dump does not rotate the visible log
+        // to its tail.
+        lines[start] = lines[start].slice(0, maxChars);
+        chars = lines[start].length;
+      }
+      if (start >= COMPACT_AFTER) compact();
+    },
+    joinNewestFirst() {
+      let out = "";
+      for (let i = lines.length - 1; i >= start; i--) {
+        out += lines[i];
+      }
+      return out;
+    },
+    get length() {
+      return chars;
+    },
+  };
+}
+
+// Cap an HTTP error body (or any diagnostic string) before it is copied
+// into Error.message, the status pill, or the debug log. A captive portal
+// or proxy can answer a failed Realtime/token fetch with a megabyte of
+// HTML; keeping the HEAD is enough to diagnose (OpenAI JSON errors put
+// code/type first) and matches serializeLogData's head-truncation.
+export function capErrorBody(text, maxChars = 4000) {
+  if (typeof text !== "string" || text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n...[truncated ${text.length - maxChars} chars]`;
+}
+
+// Read an HTTP body only up to maxChars, then cancel the stream. capErrorBody
+// after response.text() still allocated the full megabyte from a captive
+// portal; this keeps the peak at the budget. Falls back to text()+cap when
+// the body has no reader (already consumed, or a stub).
+export async function readCappedResponseText(response, maxChars = 4000) {
+  if (!response) return "";
+  let reader = null;
+  try {
+    reader = response.body?.getReader?.() ?? null;
+  } catch {
+    reader = null;
+  }
+  if (!reader) {
+    try {
+      return capErrorBody(await response.text(), maxChars);
+    } catch {
+      return "";
+    }
+  }
+
+  const decoder = new TextDecoder();
+  let out = "";
+  let overflowed = false;
+  try {
+    while (out.length < maxChars) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      // A captive portal can deliver the whole megabyte as one reader
+      // chunk. Decoding that just to slice to 4KB is the allocation this
+      // helper exists to avoid. UTF-8 is at most 4 bytes per code point,
+      // so only the bytes that can fill the remaining budget are decoded.
+      const remaining = maxChars - out.length;
+      const maxBytes = remaining * 4;
+      const chunkOverflow = value.byteLength > maxBytes;
+      const bytes = chunkOverflow ? value.subarray(0, maxBytes) : value;
+      out += decoder.decode(bytes, { stream: true });
+      if (out.length > maxChars) {
+        out = out.slice(0, maxChars);
+        overflowed = true;
+        break;
+      }
+      if (chunkOverflow) {
+        // Unread bytes remain in this same chunk — the body is larger
+        // than the budget even if the decoded prefix filled it exactly.
+        overflowed = true;
+        break;
+      }
+    }
+    // Exact-size body: one more read so we do not mark a 4000-char OpenAI
+    // JSON error as truncated when it filled the budget exactly.
+    if (!overflowed && out.length === maxChars) {
+      const extra = await reader.read();
+      if (!extra.done && extra.value?.byteLength) overflowed = true;
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // Already closed or cancelled.
+    }
+  }
+  const flush = decoder.decode();
+  if (!overflowed && flush) {
+    if (out.length + flush.length > maxChars) {
+      out = `${out}${flush}`.slice(0, maxChars);
+      overflowed = true;
+    } else {
+      out += flush;
+    }
+  }
+  return overflowed ? `${out}\n...[truncated]` : out;
+}
+
+// Parse a JSON HTTP body without buffering a megabyte 2xx dump.
+// response.json() reads the entire stream first; a captive portal that
+// answers 200 with HTML would allocate that page just to throw SyntaxError.
+// Stream-cap first (same helper as error bodies / SDP), then parse. A body
+// that overflows the budget, or that is not JSON, fails with a short
+// actionable message instead of keeping the dump alive on Error.message.
+export async function readCappedJson(response, maxChars = 65536) {
+  const text = await readCappedResponseText(response, maxChars);
+  // The cap helper always appends the marker at the END. includes() would
+  // walk a 64KB token JSON on every successful connect, and would also
+  // reject a valid payload that happened to mention the marker string.
+  // endsWith is O(1) and matches the helper's contract.
+  if (typeof text === "string" && text.endsWith("\n...[truncated]")) {
+    throw new Error(
+      "the server returned an unexpectedly large response instead of JSON — a proxy or captive portal may be intercepting the connection.",
+    );
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(
+      "the server returned a non-JSON response — a proxy or captive portal may be intercepting the connection.",
+    );
+  }
+}
+
 export function truncateOutput(output, maxChars = 30000) {
+  // sendCodexOutput → writeLog hits this on every 4KB batch with a
+  // { message, data } object that has no stdout/stderr. Spreading that
+  // just to return the same fields is a wasted copy on the stream path
+  // (and on every IPC settle already under the cap).
+  if (output && typeof output === "object" && !Array.isArray(output)) {
+    const stdoutOver = typeof output.stdout === "string" && output.stdout.length > maxChars;
+    const stderrOver = typeof output.stderr === "string" && output.stderr.length > maxChars;
+    if (!stdoutOver && !stderrOver) return output;
+  }
   const out = { ...output };
   for (const key of ["stdout", "stderr"]) {
     if (typeof out[key] === "string" && out[key].length > maxChars) {

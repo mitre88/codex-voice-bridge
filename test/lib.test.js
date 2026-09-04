@@ -6,11 +6,19 @@ import path from "node:path";
 import {
   accumulateOutput,
   applyEnvOverrides,
+  capErrorBody,
+  captionDisplayText,
+  readCappedJson,
+  readCappedResponseText,
+  createDebugLogBuffer,
+  createOutputAccumulator,
   escapeAppleScript,
+  extractActiveAppFromListApps,
   extractFirstJsonObject,
   typeDelayMs,
   hasVirtualAudioDevice,
   humanizeError,
+  sameMediaDeviceList,
   humanizeSpawnError,
   isApiKeyRejection,
   isPlausibleApiKey,
@@ -19,6 +27,7 @@ import {
   isSafeCuaToolName,
   isSafeLaunchUrl,
   isSdpAnswer,
+  logPayloadNeedsStringCap,
   normalizeCuaArgs,
   normalizeReasoningEffort,
   normalizeTargetLanguage,
@@ -34,6 +43,7 @@ import {
   resolveOpenAppTarget,
   resolveWorkdir,
   rotateLogIfNeeded,
+  settleProcessOutput,
   toPositiveInt,
   truncateOutput,
   validateCuaDriverRequiredArgs,
@@ -152,6 +162,31 @@ test("escapeAppleScript strips Unicode line/paragraph separators", () => {
   assert.equal(escapeAppleScript('x"\u2029do shell script "id"'), 'x""do shell script ""id""');
   // Printable non-ASCII must still pass through untouched.
   assert.equal(escapeAppleScript("Música"), "Música");
+});
+
+test("escapeAppleScript reuses a string that needs no quote doubling or stripping", () => {
+  const bundle = "com.apple.Safari";
+  const name = "Música";
+  assert.ok(escapeAppleScript(bundle) === bundle);
+  assert.ok(escapeAppleScript(name) === name);
+  assert.ok(escapeAppleScript("plain") === "plain");
+});
+
+test("escapeAppleScript skips the char-by-char copy when the identity is already safe", () => {
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function escapeAppleScript");
+  assert.ok(fnStart !== -1, "lib.js must export escapeAppleScript");
+  const fnBody = src.slice(fnStart, src.indexOf("export function isSafeAppIdentity"));
+  assert.ok(
+    fnBody.indexOf("if (i === text.length) return text") !== -1 &&
+      fnBody.indexOf("if (i === text.length) return text") < fnBody.indexOf("let out = \"\""),
+    "escapeAppleScript must return a safe identity before allocating the escaped copy",
+  );
+  assert.match(
+    fnBody,
+    /charCodeAt\(i\)/,
+    "the safe-identity scan must use char codes, not a control-character regex",
+  );
 });
 
 test("isSafeAppIdentity allowlists bundle ids and simple app names", () => {
@@ -716,6 +751,17 @@ test("normalizeCuaArgs bounds the alias-guess scan so a huge args blob cannot st
   // whole payload — freezing the main process before the json_args length
   // guard downstream even runs. The scan must be bounded to the head of the
   // payload, with the reason first so a long args blob cannot truncate it.
+  // Large strings must also be capped in the JSON.stringify replacer: a
+  // post-stringify slice still allocated the full JSON just to read 4KB.
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const guessStart = src.indexOf("const ALIAS_GUESS_CHARS");
+  assert.ok(guessStart !== -1, "normalizeCuaArgs must name the alias-guess window");
+  const guessBody = src.slice(guessStart, src.indexOf("for (const { bundleId, re } of getAliasPatterns"));
+  assert.match(
+    guessBody,
+    /typeof value === "string" && value\.length > ALIAS_GUESS_CHARS/,
+    "alias-guess stringify must cap large strings so a 100KB padding field cannot allocate a megabyte JSON",
+  );
   const hugeArgs = { padding: "x".repeat(100000) };
   // The alias mention lives in the reason, which is stringified before args,
   // so it must still resolve even with a huge args blob present.
@@ -962,12 +1008,37 @@ test("isPlausibleApiKey accepts sk- keys and rejects obvious non-keys", () => {
 test("requireNonEmptyString accepts non-empty strings and rejects the rest", () => {
   assert.equal(requireNonEmptyString("run the tests", "prompt"), null);
   assert.equal(requireNonEmptyString("  spaced  ", "prompt"), null);
+  assert.equal(requireNonEmptyString("hello\n", "prompt"), null);
   assert.equal(requireNonEmptyString("", "prompt"), "prompt must be a non-empty string.");
   assert.equal(requireNonEmptyString("   ", "prompt"), "prompt must be a non-empty string.");
+  assert.equal(requireNonEmptyString("\n\t  \r", "prompt"), "prompt must be a non-empty string.");
+  // NBSP is trim()-whitespace in JS; a prompt of only that is still empty.
+  assert.equal(requireNonEmptyString("\u00A0\u00A0", "prompt"), "prompt must be a non-empty string.");
+  assert.equal(requireNonEmptyString("\u00A0hello\u00A0", "prompt"), null);
   assert.equal(requireNonEmptyString(undefined, "prompt"), "prompt must be a non-empty string.");
   assert.equal(requireNonEmptyString(null, "prompt"), "prompt must be a non-empty string.");
   assert.equal(requireNonEmptyString(42, "text"), "text must be a non-empty string.");
   assert.equal(requireNonEmptyString({ a: 1 }, "key"), "key must be a non-empty string.");
+  // The common path is a large model prompt with no edge whitespace. The
+  // helper must still accept it (and must not copy it — see the source guard).
+  assert.equal(requireNonEmptyString(`run ${"x".repeat(200000)}`, "prompt"), null);
+});
+
+test("requireNonEmptyString does not trim() a large prompt just to check emptiness", () => {
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function requireNonEmptyString");
+  assert.ok(fnStart !== -1, "lib.js must export requireNonEmptyString");
+  const fnBody = src.slice(fnStart, src.indexOf("export function requireMaxLength"));
+  assert.doesNotMatch(
+    fnBody,
+    /\.trim\s*\(/,
+    "requireNonEmptyString must not copy a 200KB prompt with trim() — it does not return the trimmed value",
+  );
+  assert.match(
+    fnBody,
+    /\/\\S\/\.test\(value\)/,
+    "emptiness must be a non-allocating /\\S/ test, not a trimmed copy",
+  );
 });
 
 test("requireMaxLength caps oversized argv-bound values", () => {
@@ -980,9 +1051,30 @@ test("requireMaxLength caps oversized argv-bound values", () => {
   // character count under the limit, so they must be rejected too.
   assert.equal(requireMaxLength("á".repeat(100001), "prompt"), "prompt exceeds the maximum length of 200000 bytes.");
   assert.equal(requireMaxLength("á".repeat(99999), "prompt"), null);
+  // The cheap length*3 bound must not reject a string that still fits:
+  // 66667 three-byte chars are 200001 bytes (over) but 66666 fit in 200000.
+  assert.equal(requireMaxLength("\u20ac".repeat(66666), "prompt"), null);
+  assert.equal(requireMaxLength("\u20ac".repeat(66667), "prompt"), "prompt exceeds the maximum length of 200000 bytes.");
   // Non-strings pass through: type checks are the caller's job.
   assert.equal(requireMaxLength(undefined, "prompt"), null);
   assert.equal(requireMaxLength({ a: 1 }, "prompt"), null);
+});
+
+test("requireMaxLength skips Buffer.byteLength when the character count already decides", () => {
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function requireMaxLength");
+  assert.ok(fnStart !== -1, "lib.js must export requireMaxLength");
+  const fnBody = src.slice(fnStart, src.indexOf("export function requireNoNullBytes"));
+  assert.match(
+    fnBody,
+    /value\.length > maxBytes/,
+    "a character count above the byte cap cannot fit UTF-8 — reject without walking the string",
+  );
+  assert.match(
+    fnBody,
+    /value\.length \* 3 <= maxBytes/,
+    "a typical prompt is far under 200000/3 bytes — skip Buffer.byteLength on the common path",
+  );
 });
 
 test("requireNoNullBytes rejects argv-bound strings containing a null byte", () => {
@@ -1021,6 +1113,44 @@ test("redactSecrets does not corrupt words containing sk-", () => {
 test("redactSecrets redacts keys at token boundaries only", () => {
   assert.equal(redactSecrets("key:sk-proj-abc123, ok"), "key:[REDACTED_OPENAI_KEY], ok");
   assert.equal(redactSecrets("\"sk-abc123\" and (sk-proj-x.y)"), "\"[REDACTED_OPENAI_KEY]\" and ([REDACTED_OPENAI_KEY])");
+});
+
+test("redactSecrets reuses the string when it cannot contain a key", () => {
+  // writeLog redacts every serialized payload. A 16KB Codex chunk almost
+  // never contains "sk-"; the regex must not copy it on that path.
+  const clean = "codex output: ran the tests, all green";
+  assert.equal(redactSecrets(clean), clean);
+  assert.ok(redactSecrets(clean) === clean);
+  assert.equal(redactSecrets(42), "42");
+});
+
+test("logPayloadNeedsStringCap skips the stringify replacer for flat short logs", () => {
+  // sendCodexOutput writes { message, data } on every 4KB batch. Those
+  // strings are already under the 32KB line cap, so the cap replacer would
+  // only disable V8's fast JSON.stringify.
+  assert.equal(logPayloadNeedsStringCap({ message: "codex output", data: "chunk" }, 32000), false);
+  assert.equal(logPayloadNeedsStringCap({ message: "x", stack: "short" }, 32000), false);
+  assert.equal(logPayloadNeedsStringCap("already a string", 32000), false);
+  assert.equal(logPayloadNeedsStringCap(null, 32000), false);
+  assert.equal(logPayloadNeedsStringCap(42, 32000), false);
+});
+
+test("logPayloadNeedsStringCap keeps the replacer for nested or oversized fields", () => {
+  assert.equal(logPayloadNeedsStringCap({ message: "x", data: "A".repeat(32001) }, 32000), true);
+  assert.equal(logPayloadNeedsStringCap({ message: "done", data: { ok: true, stdout: "out" } }, 32000), true);
+  assert.equal(logPayloadNeedsStringCap(["keep the replacer"], 32000), true);
+});
+
+test("redactSecrets skips the key regex when the payload has no sk- prefix", () => {
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function redactSecrets");
+  assert.ok(fnStart !== -1, "lib.js must export redactSecrets");
+  const fnBody = src.slice(fnStart, src.indexOf("export function humanizeSpawnError"));
+  assert.ok(
+    fnBody.indexOf('includes("sk-")') !== -1 &&
+      fnBody.indexOf('includes("sk-")') < fnBody.indexOf(".replace("),
+    "redactSecrets must skip the global key regex when the payload cannot contain sk-",
+  );
 });
 
 test("isApiKeyRejection detects only 401-class key rejections", () => {
@@ -1323,6 +1453,147 @@ test("humanizeError passes through unknown messages", () => {
   assert.equal(humanizeError(null), "null");
 });
 
+test("capErrorBody keeps the head of a huge diagnostic string", () => {
+  // Failed Realtime/token fetches can return a megabyte of HTML from a
+  // captive portal. The HEAD carries the OpenAI error code; the tail is
+  // markup. Short strings must be the same reference so a typical JSON
+  // error body is not copied.
+  const short = '{"error":{"code":"invalid_api_key"}}';
+  assert.equal(capErrorBody(short), short);
+  assert.ok(capErrorBody(short) === short);
+  const huge = `${"A".repeat(5000)}TAIL`;
+  const out = capErrorBody(huge, 20);
+  assert.ok(out.startsWith("A".repeat(20)));
+  assert.ok(out.includes("truncated 4984 chars"));
+  assert.ok(!out.includes("TAIL"));
+  assert.equal(capErrorBody(null), null);
+  assert.equal(capErrorBody(undefined), undefined);
+});
+
+test("readCappedResponseText stops reading once the budget is filled", async () => {
+  // response.text() would buffer a megabyte portal page. The stream reader
+  // must return only the head and cancel the rest. A body that fits the
+  // budget is returned unchanged (no truncation marker).
+  const encoder = new TextEncoder();
+  const streamBody = (text) => {
+    const bytes = encoder.encode(text);
+    let offset = 0;
+    return new Response(
+      new ReadableStream({
+        pull(controller) {
+          if (offset >= bytes.length) {
+            controller.close();
+            return;
+          }
+          const next = bytes.subarray(offset, offset + 32);
+          offset += next.length;
+          controller.enqueue(next);
+        },
+      }),
+    );
+  };
+  const short = '{"error":{"code":"invalid_api_key"}}';
+  assert.equal(await readCappedResponseText(streamBody(short)), short);
+  const huge = `${"A".repeat(5000)}TAIL`;
+  const out = await readCappedResponseText(streamBody(huge), 20);
+  assert.ok(out.startsWith("A".repeat(20)));
+  assert.ok(out.includes("truncated"));
+  assert.ok(!out.includes("TAIL"));
+  assert.equal(await readCappedResponseText(null), "");
+});
+
+test("readCappedResponseText does not decode a megabyte reader chunk", async () => {
+  // The 32-byte pull helper above never hits the one-chunk portal case:
+  // fetch can deliver the whole body as a single Uint8Array, and decoding
+  // that megabyte just to keep 20 characters is the allocation the stream
+  // cap exists to avoid.
+  const encoder = new TextEncoder();
+  const huge = `${"A".repeat(1_000_000)}TAIL`;
+  const response = new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(huge));
+        controller.close();
+      },
+    }),
+  );
+  const out = await readCappedResponseText(response, 20);
+  assert.ok(out.startsWith("A".repeat(20)));
+  assert.ok(out.includes("truncated"));
+  assert.ok(!out.includes("TAIL"));
+});
+
+test("readCappedResponseText decodes only the bytes that can fill the budget", () => {
+  const src = fs.readFileSync(new URL("../src/renderer-utils.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export async function readCappedResponseText");
+  assert.ok(fnStart !== -1, "renderer-utils.js must export readCappedResponseText");
+  const fnBody = src.slice(fnStart, src.indexOf("export async function readCappedJson"));
+  assert.match(
+    fnBody,
+    /remaining \* 4/,
+    "a megabyte reader chunk must not be decoded whole — UTF-8 is at most 4 bytes per kept character",
+  );
+  assert.match(
+    fnBody,
+    /subarray\(0, maxBytes\)/,
+    "the decoder must see only a prefix of an oversized chunk",
+  );
+});
+
+test("readCappedJson parses a small body and refuses a huge 2xx dump", async () => {
+  // response.json() buffers the whole stream. A captive portal that answers
+  // 200 with a megabyte of HTML would allocate that page just to throw.
+  // Stream-cap first, then parse; overflow and non-JSON fail with a short
+  // message so Error.message never holds the dump.
+  const encoder = new TextEncoder();
+  const streamBody = (text) => {
+    const bytes = encoder.encode(text);
+    let offset = 0;
+    return new Response(
+      new ReadableStream({
+        pull(controller) {
+          if (offset >= bytes.length) {
+            controller.close();
+            return;
+          }
+          const next = bytes.subarray(offset, offset + 32);
+          offset += next.length;
+          controller.enqueue(next);
+        },
+      }),
+    );
+  };
+  const token = { value: "ek_test", expires_at: 1 };
+  assert.deepEqual(await readCappedJson(streamBody(JSON.stringify(token))), token);
+  const tokenWithMarkerInBody = { value: "ek_test", note: "see\n...[truncated] in docs" };
+  assert.deepEqual(await readCappedJson(streamBody(JSON.stringify(tokenWithMarkerInBody))), tokenWithMarkerInBody);
+  await assert.rejects(
+    () => readCappedJson(streamBody(`${"A".repeat(5000)}TAIL`), 20),
+    /unexpectedly large response/,
+  );
+  await assert.rejects(() => readCappedJson(streamBody("<html>portal</html>")), /non-JSON response/);
+});
+
+test("readCappedJson detects overflow at the suffix, not by scanning the body", () => {
+  // A real client_secrets payload can be tens of KB. Walking it with
+  // includes() on every successful connect is wasted work: the stream-cap
+  // helper always appends the marker at the end.
+  const src = fs.readFileSync(new URL("../src/renderer-utils.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export async function readCappedJson");
+  assert.ok(fnStart !== -1, "renderer-utils.js must export readCappedJson");
+  const fnBody = src.slice(fnStart, src.indexOf("export function truncateOutput"));
+  assert.match(
+    fnBody,
+    /endsWith\("\\n\.\.\.\[truncated\]"\)/,
+    "readCappedJson must detect the stream-cap marker with endsWith, not a full-body scan",
+  );
+  assert.doesNotMatch(
+    fnBody,
+    /\.includes\(/,
+    "readCappedJson must not walk the token JSON looking for the truncation marker",
+  );
+});
+
 test("truncateOutput truncates long stdout and preserves metadata", () => {
   // 100 chars: 60 "A" then 40 "B". Truncation must keep the TAIL (the last
   // 50 chars) — the part of a long run's output where the result/error
@@ -1365,8 +1636,38 @@ test("truncateOutput truncates stdout and stderr independently when both are lon
 });
 
 test("truncateOutput leaves short output untouched", () => {
-  const out = truncateOutput({ ok: true, stdout: "short", stderr: "" }, 50);
+  const input = { ok: true, stdout: "short", stderr: "" };
+  const out = truncateOutput(input, 50);
   assert.equal(out.stdout, "short");
+  assert.equal(out, input, "already-short process output must not be shallow-copied");
+});
+
+test("truncateOutput reuses a log-shaped object with no stdout/stderr", () => {
+  // sendCodexOutput writes { message, data } through serializeLogData →
+  // truncateOutput on every 4KB stream batch. That object is not process
+  // output; spreading it is a wasted copy on the hot path.
+  const input = { message: "codex output", data: "chunk" };
+  assert.equal(truncateOutput(input, 16000), input);
+});
+
+test("truncateOutput does not mutate the original when it has to copy", () => {
+  const input = { ok: true, stdout: "A".repeat(80), stderr: "" };
+  const out = truncateOutput(input, 50);
+  assert.notEqual(out, input);
+  assert.equal(input.stdout, "A".repeat(80));
+  assert.ok(out.stdout.startsWith("...[truncated 30 chars]\n"));
+});
+
+test("truncateOutput returns the same object before spreading when nothing overflows", () => {
+  const src = fs.readFileSync(new URL("../src/renderer-utils.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function truncateOutput");
+  assert.ok(fnStart !== -1, "renderer-utils.js must export truncateOutput");
+  const fnBody = src.slice(fnStart);
+  assert.ok(
+    fnBody.indexOf("!stdoutOver && !stderrOver") !== -1 &&
+      fnBody.indexOf("!stdoutOver && !stderrOver") < fnBody.indexOf("const out = { ...output }"),
+    "truncateOutput must reuse the input object before spreading when both streams are under the cap",
+  );
 });
 
 test("isSdpAnswer accepts SDP answers and rejects non-SDP bodies", () => {
@@ -1425,6 +1726,72 @@ test("accumulateOutput caps the buffer at maxChars and reports truncation", () =
   const ok = accumulateOutput("abc", "def", 100);
   assert.equal(ok.text, "abcdef");
   assert.equal(ok.capped, false);
+  // An empty chunk is a no-op and must not report a false truncation.
+  const empty = accumulateOutput("abc", "", 100);
+  assert.equal(empty.text, "abc");
+  assert.equal(empty.capped, false);
+});
+
+test("createOutputAccumulator keeps the tail across many small chunks without flattening each time", () => {
+  const acc = createOutputAccumulator(50);
+  for (const ch of "A".repeat(60) + "B".repeat(40)) acc.push(ch);
+  assert.equal(acc.length, 50);
+  assert.equal(acc.capped, true);
+  assert.equal(acc.text(), "A".repeat(10) + "B".repeat(40));
+  // A single chunk larger than the cap keeps only its tail.
+  const big = createOutputAccumulator(8);
+  big.push("0123456789abcdef");
+  assert.equal(big.text(), "89abcdef");
+  assert.equal(big.capped, true);
+});
+
+test("createOutputAccumulator stays linear across thousands of tiny chunks", () => {
+  // Without compacting, trim used Array.shift() on the chunk list — O(n) per
+  // overflow byte, quadratic over a 1MB stream of 1-char writes. Compacting
+  // into one string before slicing keeps this in linear time and bounded
+  // memory. The public contract is unchanged: cap at maxChars, keep the tail.
+  const acc = createOutputAccumulator(100);
+  for (let i = 0; i < 10000; i++) acc.push(String(i % 10));
+  assert.equal(acc.length, 100);
+  assert.equal(acc.capped, true);
+  const expectedTail = Array.from({ length: 100 }, (_, i) => String((9900 + i) % 10)).join("");
+  assert.equal(acc.text(), expectedTail);
+});
+
+test("settleProcessOutput slices a single trailing newline instead of trim-copying", () => {
+  const body = "A".repeat(80);
+  const withLf = `${body}\n`;
+  const sliced = settleProcessOutput(withLf);
+  assert.equal(sliced, body);
+  assert.equal(settleProcessOutput(`${body}\r\n`), body);
+  assert.equal(settleProcessOutput(`${body}\n\n`), body);
+  assert.equal(settleProcessOutput(` ${body}\n`), body);
+  assert.equal(settleProcessOutput(body), body);
+  assert.ok(settleProcessOutput(body) === body);
+  assert.equal(settleProcessOutput(`${body} `), body);
+  assert.equal(settleProcessOutput("\n"), "");
+  assert.equal(settleProcessOutput("\r\n"), "");
+  assert.equal(settleProcessOutput(withLf, false), withLf);
+  assert.ok(settleProcessOutput(withLf, false) === withLf);
+  assert.equal(settleProcessOutput(null), "");
+  assert.equal(settleProcessOutput(undefined), "");
+});
+
+test("settleProcessOutput prefers slice over trim for the common Codex tail", () => {
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function settleProcessOutput");
+  assert.ok(fnStart !== -1, "lib.js must export settleProcessOutput");
+  const fnBody = src.slice(fnStart, src.indexOf("export function createOutputAccumulator"));
+  assert.match(
+    fnBody,
+    /text\.slice\(0, keepEnd\)/,
+    "a lone trailing newline must slice the settled buffer instead of trim-copying it",
+  );
+  assert.ok(
+    fnBody.indexOf("charCodeAt(end)") !== -1 &&
+      fnBody.indexOf("charCodeAt(end)") < fnBody.indexOf("text.slice(0, keepEnd)"),
+    "the common trailing-LF path must not walk the whole buffer",
+  );
 });
 
 test("resolveWorkdir keeps paths inside the base workdir", () => {
@@ -1601,6 +1968,61 @@ test("hasVirtualAudioDevice tolerates non-array input", () => {
   assert.equal(hasVirtualAudioDevice({ label: "BlackHole 2ch" }), false);
 });
 
+test("captionDisplayText reuses the string when trim would be a no-op", () => {
+  const spoken = "Hello from the live caption";
+  assert.equal(captionDisplayText(spoken), spoken);
+  assert.ok(captionDisplayText(spoken) === spoken);
+  assert.equal(captionDisplayText(""), "...");
+  assert.equal(captionDisplayText("   "), "...");
+  assert.equal(captionDisplayText("  padded  "), "padded");
+  assert.equal(captionDisplayText("\nline\n"), "line");
+});
+
+test("createDebugLogBuffer joins newest-first without shifting the line array", () => {
+  const buf = createDebugLogBuffer(100);
+  buf.push("old\n");
+  buf.push("mid\n");
+  buf.push("new\n");
+  assert.equal(buf.joinNewestFirst(), "new\nmid\nold\n");
+  assert.equal(buf.length, 12);
+});
+
+test("createDebugLogBuffer drops oldest lines when over the char cap", () => {
+  const buf = createDebugLogBuffer(10);
+  buf.push("aaaa\n");
+  buf.push("bbbb\n");
+  buf.push("cccc\n");
+  assert.equal(buf.joinNewestFirst(), "cccc\nbbbb\n");
+  assert.equal(buf.length, 10);
+});
+
+test("createDebugLogBuffer keeps the head of a single oversized line", () => {
+  const buf = createDebugLogBuffer(8);
+  buf.push("HEAD....TAIL");
+  assert.equal(buf.joinNewestFirst(), "HEAD....");
+  assert.equal(buf.length, 8);
+});
+
+test("createDebugLogBuffer compact of dropped prefixes keeps newest-first order", () => {
+  const buf = createDebugLogBuffer(15);
+  for (let i = 0; i < 40; i++) buf.push(`${String(i).padStart(2, "0")}\n`);
+  assert.equal(buf.joinNewestFirst(), "39\n38\n37\n36\n35\n");
+  assert.equal(buf.length, 15);
+});
+
+test("sameMediaDeviceList is true only when id, kind, and label match in order", () => {
+  const mic = { deviceId: "mic-1", kind: "audioinput", label: "Built-in Microphone" };
+  const out = { deviceId: "out-1", kind: "audiooutput", label: "Speakers" };
+  assert.equal(sameMediaDeviceList([mic, out], [mic, out]), true);
+  assert.equal(sameMediaDeviceList([mic, out], [{ ...mic }, { ...out }]), true);
+  assert.equal(sameMediaDeviceList([mic], [mic, out]), false);
+  assert.equal(sameMediaDeviceList([mic, out], [out, mic]), false);
+  assert.equal(sameMediaDeviceList([mic], [{ ...mic, label: "USB Mic" }]), false);
+  assert.equal(sameMediaDeviceList([mic], [{ ...mic, deviceId: "mic-2" }]), false);
+  assert.equal(sameMediaDeviceList(null, [mic]), false);
+  assert.equal(sameMediaDeviceList([], []), true);
+});
+
 test("rotateLogIfNeeded ignores a missing log file", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-voice-bridge-log-"));
   const logFile = path.join(dir, "bridge.log");
@@ -1632,6 +2054,15 @@ test("rotateLogIfNeeded keeps only the previous oversized file as .1", () => {
 
 test("extractFirstJsonObject finds the first JSON object amid log noise", () => {
   assert.deepEqual(extractFirstJsonObject('{"apps":[]}'), { apps: [] });
+  // Surrounding whitespace must take the no-slice JSON.parse fast path
+  // (list_apps often ends with a trailing newline) and still parse.
+  assert.deepEqual(extractFirstJsonObject('{"apps":[]}\n'), { apps: [] });
+  assert.deepEqual(extractFirstJsonObject('  {"apps":[{"pid":1,"active":true}]}  '), {
+    apps: [{ pid: 1, active: true }],
+  });
+  // Concatenated values start and end with braces, so JSON.parse of the
+  // whole buffer fails; the scanner must still return the first object.
+  assert.deepEqual(extractFirstJsonObject('{"a":1}{"b":2}'), { a: 1 });
   assert.deepEqual(extractFirstJsonObject('2026-08-13 23:00:00 INFO starting\n{"apps":[{"pid":1,"active":true}]}'), {
     apps: [{ pid: 1, active: true }],
   });
@@ -1652,6 +2083,26 @@ test("extractFirstJsonObject returns null for non-JSON or non-string input", () 
   assert.equal(extractFirstJsonObject(undefined), null);
   assert.equal(extractFirstJsonObject(42), null);
 });
+test("extractFirstJsonObject parses a prefix-free object without slicing the buffer", () => {
+  // type/press call this on list_apps stdout (up to 1MB). A whole-buffer
+  // JSON.parse of a single object must not copy the string first; the
+  // scanner's slice() is only for prefixed or concatenated payloads.
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("export function extractFirstJsonObject");
+  assert.ok(fnStart !== -1, "lib.js must export extractFirstJsonObject");
+  const fnBody = src.slice(fnStart, src.indexOf("export function parseEnvFile"));
+  assert.match(
+    fnBody,
+    /text\[start\] === "\{" && text\[end\] === "\}"/,
+    "the fast path must only run when the trimmed buffer is a single brace-wrapped value",
+  );
+  assert.match(
+    fnBody,
+    /return JSON\.parse\(text\)/,
+    "a prefix-free list_apps payload must be parsed in place, not sliced",
+  );
+});
+
 test("extractFirstJsonObject bails out in linear time on a barrage of unclosed braces", () => {
   // A window title full of '{' (text the model typed into an app, surfaced by
   // cua-driver's list_apps stdout) would make every '{' start a fresh O(n)
@@ -1669,6 +2120,144 @@ test("extractFirstJsonObject still finds a real object after an unterminated can
   assert.deepEqual(extractFirstJsonObject('{"log":"unterminated\n{"apps":[{"pid":1,"active":true}]}'), {
     apps: [{ pid: 1, active: true }],
   });
+});
+
+test("extractActiveAppFromListApps returns the first active app without requiring a full forest parse", () => {
+  assert.deepEqual(extractActiveAppFromListApps('{"apps":[{"pid":1,"active":true}]}').app, {
+    pid: 1,
+    active: true,
+  });
+  assert.deepEqual(extractActiveAppFromListApps('{"apps":[]}\n').app, null);
+  assert.deepEqual(
+    extractActiveAppFromListApps('  {"apps":[{"pid":1,"active":false},{"pid":2,"active":true}]}  ').app,
+    { pid: 2, active: true },
+  );
+  // Prefix log lines: same tolerance as extractFirstJsonObject.
+  assert.equal(
+    extractActiveAppFromListApps('2026-08-13 23:00:00 INFO starting\n{"apps":[{"pid":7,"active":true}]}').app.pid,
+    7,
+  );
+  // Unterminated log object before the real payload.
+  assert.equal(
+    extractActiveAppFromListApps('{"log":"unterminated\n{"apps":[{"pid":8,"active":true}]}').app.pid,
+    8,
+  );
+  // "apps" is not required to be the first key; whitespace around ":" is JSON-legal.
+  assert.equal(
+    extractActiveAppFromListApps('{"ok":true,"apps" : [ {"pid":9,"active":true} ]}').app.pid,
+    9,
+  );
+  // Pretty-printed `active: true` (newline after the colon) must still parse.
+  assert.equal(
+    extractActiveAppFromListApps('{"apps":[{"pid":10,"active":\ntrue}]}').app.pid,
+    10,
+  );
+  // Fat inactive entries before the frontmost app must not hide it — and
+  // must not force JSON.parse of those window-title blobs.
+  const fatInactive = {
+    pid: 1,
+    active: false,
+    windows: [{ title: "x".repeat(8000) }],
+  };
+  assert.equal(
+    extractActiveAppFromListApps(
+      JSON.stringify({ apps: [fatInactive, fatInactive, { pid: 11, active: true }] }),
+    ).app.pid,
+    11,
+  );
+  // The frontmost app's own windows must not be JSON.parse'd either: type/press
+  // only need pid, read at depth 1.
+  assert.deepEqual(
+    extractActiveAppFromListApps(
+      JSON.stringify({
+        apps: [{ pid: 12, active: true, windows: [{ title: "y".repeat(8000) }] }],
+      }),
+    ).app,
+    { pid: 12, active: true },
+  );
+  // A string pid is an odd shape: fall back to JSON.parse of that one object.
+  assert.equal(extractActiveAppFromListApps('{"apps":[{"pid":"13","active":true}]}').app.pid, "13");
+  // pid after active (key order must not matter).
+  assert.equal(extractActiveAppFromListApps('{"apps":[{"active":true,"pid":14}]}').app.pid, 14);
+  // A window title that literally contains "active":true must not steal the pid.
+  assert.equal(
+    extractActiveAppFromListApps(
+      '{"apps":[{"pid":1,"active":false,"windows":[{"title":"{\\"active\\":true}"}]},{"pid":2,"active":true}]}',
+    ).app.pid,
+    2,
+  );
+  // Malformed entries are skipped (null / non-object), same as the old find() guard.
+  assert.equal(
+    extractActiveAppFromListApps('{"apps":[null,{"pid":3,"active":true},42]}').app.pid,
+    3,
+  );
+  // Empty / missing apps list is unexpected, not a silent "no active app".
+  assert.equal(extractActiveAppFromListApps("no json here").error, "unexpected");
+  assert.equal(extractActiveAppFromListApps("").error, "unexpected");
+  assert.equal(extractActiveAppFromListApps(null).error, "unexpected");
+  assert.equal(extractActiveAppFromListApps('{"a":1}').error, "unexpected");
+  // Concatenated values: the first complete object has no apps array.
+  assert.equal(extractActiveAppFromListApps('{"a":1}{"apps":[{"pid":1,"active":true}]}').error, "unexpected");
+});
+
+test("extractActiveAppFromListApps parses one app object at a time and falls back only on a miss", () => {
+  // type/press used to JSON.parse the whole 1MB list_apps tree to find one
+  // pid. The scanner must slice+parse individual app objects first;
+  // extractFirstJsonObject is only the fallback when no apps array is seen.
+  const src = fs.readFileSync(new URL("../src/lib.js", import.meta.url), "utf8");
+  const fnStart = src.indexOf("// Scan a list_apps dump for the active app without parsing the forest.");
+  assert.ok(fnStart !== -1, "lib.js must document the list_apps active-app scanner");
+  const fnBody = src.slice(fnStart, src.indexOf("export function parseEnvFile"));
+  assert.match(
+    fnBody,
+    /sliceHasActiveTrue\(/,
+    "inactive app objects must not be JSON.parse'd just to read active:false",
+  );
+  assert.match(
+    fnBody,
+    /extractAppPidIfActive\(/,
+    "the frontmost app must yield pid/active at depth 1 without parsing windows",
+  );
+  assert.ok(
+    fnBody.indexOf("extractAppPidIfActive(") < fnBody.indexOf("JSON.parse(text.slice"),
+    "depth-1 pid/active must run before JSON.parse of an app object",
+  );
+  assert.match(
+    fnBody,
+    /if \(active\) return \{ pid, active: true \}/,
+    "once pid and active are both known the walk must stop before the windows array",
+  );
+  assert.match(
+    fnBody,
+    /if \(pid !== undefined\) return \{ pid, active: true \}/,
+    "key order (active before pid) must also stop the walk as soon as both are known",
+  );
+  assert.match(
+    fnBody,
+    /JSON\.parse\(text\.slice\(/,
+    "the scan path must parse one app object slice, not the whole dump",
+  );
+  assert.match(
+    fnBody,
+    /extractFirstJsonObject\(text\)/,
+    "odd shapes the scanner misses must still fall back to extractFirstJsonObject",
+  );
+  assert.ok(
+    fnBody.indexOf("JSON.parse(text.slice") < fnBody.indexOf("extractFirstJsonObject(text)"),
+    "the full-forest parse must not run before the per-app scan",
+  );
+  assert.match(
+    fnBody,
+    /appInfo && typeof appInfo === "object" && appInfo\.active/,
+    "malformed apps entries must be skipped instead of throwing inside find",
+  );
+});
+
+test("extractActiveAppFromListApps bails out in linear time on a barrage of unclosed braces", () => {
+  const barrage = "{".repeat(200000);
+  const started = Date.now();
+  assert.equal(extractActiveAppFromListApps(barrage).error, "unexpected");
+  assert.ok(Date.now() - started < 2000, "a brace barrage must not stall the active-app scanner");
 });
 
 test("typeDelayMs scales the per-character delay so long texts fit the timeout", () => {
