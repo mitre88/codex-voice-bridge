@@ -235,7 +235,7 @@ test("mac actions dispatch on the declared tool name, never on a model-supplied 
   // different mac action than the one the model declared — and the one the
   // human approves in the pending panel. The declared name must always win.
   const renderer = readSource("renderer.js");
-  const fnStart = renderer.indexOf("async function handleToolEvent");
+  const fnStart = renderer.indexOf("function handleToolEvent");
   assert.ok(fnStart !== -1, "renderer.js must define handleToolEvent");
   const fnBody = renderer.slice(fnStart, renderer.indexOf("function deviceConstraint"));
   assert.match(
@@ -260,7 +260,7 @@ test("tool calls with non-object args get a clean error instead of a raw TypeErr
   // message. handleToolEvent must reject non-object args with a clean error
   // so the model can self-correct from the message.
   const renderer = readSource("renderer.js");
-  const fnStart = renderer.indexOf("async function handleToolEvent");
+  const fnStart = renderer.indexOf("function handleToolEvent");
   assert.ok(fnStart !== -1, "renderer.js must define handleToolEvent");
   const fnBody = renderer.slice(fnStart, renderer.indexOf("function deviceConstraint"));
   assert.match(
@@ -448,6 +448,45 @@ test("connectPeerSession drops non-object Realtime events instead of throwing in
   assert.ok(
     fnBody.indexOf("dropped non-object Realtime event") > fnBody.indexOf("JSON.parse(message.data)"),
     "the non-object drop must log a message, mirroring the malformed-JSON branch",
+  );
+});
+
+test("Realtime message handler stays sync and skips handleToolEvent on non-tool events", () => {
+  // Realtime emits dozens of speech/transcript/rate-limit events per second.
+  // The data-channel listener used to be async and awaited handleToolEvent on
+  // every message, which allocated a Promise and yielded a microtask even
+  // though handleToolEvent never awaited and no-ops unless getFunctionCall
+  // matches. Tool execution is still fire-and-forget via executeAction.
+  const renderer = readSource("renderer.js");
+  const fnStart = renderer.indexOf("async function connectPeerSession");
+  assert.ok(fnStart !== -1, "renderer.js must define connectPeerSession");
+  const fnBody = renderer.slice(fnStart, renderer.indexOf("async function connectSingleRealtime"));
+  assert.match(
+    fnBody,
+    /addEventListener\("message", \(message\) => \{/,
+    "the data-channel listener must be sync so every Realtime event does not allocate a Promise",
+  );
+  assert.doesNotMatch(
+    fnBody,
+    /addEventListener\("message", async/,
+    "the data-channel listener must not be async",
+  );
+  assert.match(
+    fnBody,
+    /if \(enableTools && getFunctionCall\(event\)\) handleToolEvent\(event\)/,
+    "handleToolEvent must run only for completed function-call events",
+  );
+  assert.doesNotMatch(
+    fnBody,
+    /await handleToolEvent/,
+    "the message handler must not await handleToolEvent on the per-event path",
+  );
+  const toolStart = renderer.indexOf("function handleToolEvent");
+  assert.ok(toolStart !== -1, "renderer.js must define handleToolEvent");
+  assert.doesNotMatch(
+    renderer.slice(Math.max(0, toolStart - 16), toolStart + 32),
+    /async function handleToolEvent/,
+    "handleToolEvent must be sync: it never awaits and executeAction is already fire-and-forget",
   );
 });
 
@@ -733,7 +772,7 @@ test("auto-run skips the pending-panel pretty-print that executeAction immediate
   // class of wasted display work as joining captions while #captionPanel is
   // hidden. Supersede + pendingAction still run; only the DOM writes skip.
   const renderer = readSource("renderer.js");
-  const toolStart = renderer.indexOf("async function handleToolEvent");
+  const toolStart = renderer.indexOf("function handleToolEvent");
   assert.ok(toolStart !== -1, "renderer.js must define handleToolEvent");
   const toolBody = renderer.slice(toolStart, renderer.indexOf("function deviceConstraint"));
   assert.match(

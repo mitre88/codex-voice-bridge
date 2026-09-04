@@ -539,7 +539,7 @@ async function executeAction(action) {
 
 const KNOWN_TOOLS = ["run_codex", "run_cua_driver", "open_app", "type_text_in_front_app", "press_key_in_front_app"];
 
-async function handleToolEvent(event) {
+function handleToolEvent(event) {
   const functionCall = getFunctionCall(event);
   if (!functionCall) return;
   if (handledToolCalls.has(functionCall.callId)) return;
@@ -765,7 +765,7 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
     const dc = pc.createDataChannel(`oai-events-${label}`);
     if (enableTools) actionDataChannel = dc;
     dc.addEventListener("open", () => log(`${label}: Realtime data channel open.`));
-    dc.addEventListener("message", async (message) => {
+    dc.addEventListener("message", (message) => {
       let event;
       try {
         event = JSON.parse(message.data);
@@ -775,10 +775,10 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
       }
       // JSON.parse can succeed with a non-object: "null", a bare string, a
       // number, or an array all parse cleanly. Reading .type off null would
-      // throw inside this async handler (an unhandled rejection that skips
-      // the transcript/tool handling for the message), and a string/number/
-      // array is not a Realtime event either — drop the whole message with a
-      // log, mirroring the malformed-JSON branch above.
+      // throw inside this handler (and skip transcript/tool handling for the
+      // message), and a string/number/array is not a Realtime event either —
+      // drop the whole message with a log, mirroring the malformed-JSON
+      // branch above.
       if (event === null || typeof event !== "object" || Array.isArray(event)) {
         log(`${label}: dropped non-object Realtime event.`, String(message.data));
         return;
@@ -787,7 +787,13 @@ async function connectPeerSession({ label, tokenOptions, inputStream, outputDevi
       // Assistant mode hides #captionPanel. Skipping the call avoids
       // handleTranscriptEvent's per-event work on a path that always no-ops.
       if (!captionPanel?.hidden) handleTranscriptEvent(event, transcriptTargets);
-      if (enableTools) await handleToolEvent(event);
+      // Speech, transcript, and rate-limit events arrive many times per
+      // second. handleToolEvent only acts on a completed function call;
+      // awaiting an async wrapper on every message allocated a Promise and
+      // yielded a microtask for a guaranteed no-op. Gate first and keep
+      // both this listener and handleToolEvent sync so those events stay
+      // on the parse-and-drop path.
+      if (enableTools && getFunctionCall(event)) handleToolEvent(event);
     });
 
     const offer = await pc.createOffer();
