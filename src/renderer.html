@@ -10,27 +10,38 @@
     <title>Codex Voice Bridge</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
-  <body>
+  <body data-state="idle">
     <main class="shell">
       <header class="topbar">
         <div>
           <p class="eyebrow">Codex Voice Bridge</p>
           <h1>Samantha</h1>
         </div>
-        <span id="status" class="status" aria-live="polite">Idle</span>
+        <div class="header-state">
+          <div class="orb-wrap" aria-hidden="true"><div class="orb"></div></div>
+          <span id="status" class="status" role="status">Idle</span>
+        </div>
       </header>
 
-      <section class="voice-panel">
-        <div class="orb-wrap" aria-hidden="true">
-          <div class="orb"></div>
-        </div>
-        <p class="voice-state">Ready for voice control</p>
+      <div class="button-row session-actions">
+        <button id="connect" class="primary">Connect</button>
+        <button id="disconnect" class="secondary" disabled>Disconnect</button>
+      </div>
+      <section id="errorBanner" class="error-banner" aria-label="Connection recovery" hidden>
+        <p id="errorMessage" role="alert"></p>
+        <button id="dismissError" class="text-button">Dismiss</button>
+      </section>
+      <section class="voice-panel" aria-label="Voice session setup">
+        <p class="voice-state">A clear connection. You stay in control.</p>
 
         <label id="apiKeyField" class="field">
           <span>OpenAI API key</span>
           <input id="apiKey" type="password" autocomplete="off" placeholder="sk-proj-..." />
         </label>
-        <p id="keyStatus" class="key-status" hidden>Saved OpenAI key active</p>
+        <div class="key-row">
+          <p id="keyStatus" class="key-status" hidden>Encrypted saved key active</p>
+          <button id="changeKey" class="text-button">Change key</button>
+        </div>
 
         <div class="mode-grid">
           <label class="field">
@@ -44,22 +55,18 @@
           </label>
 
           <label class="field assistant-option">
-            <span>Tone</span>
-            <select id="tone">
-              <option value="calm">Calm</option>
-              <option value="direct">Direct</option>
-              <option value="energetic">Energetic</option>
-            </select>
-          </label>
-
-          <label class="field assistant-option">
-            <span>Reasoning</span>
-            <select id="reasoningEffort">
-              <option value="low">Low</option>
-              <option value="minimal">Minimal</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="xhigh">X-High</option>
+            <span>Voice</span>
+            <select id="voice">
+              <option value="marin">Marin</option>
+              <option value="cedar">Cedar</option>
+              <option value="alloy">Alloy</option>
+              <option value="ash">Ash</option>
+              <option value="ballad">Ballad</option>
+              <option value="coral">Coral</option>
+              <option value="echo">Echo</option>
+              <option value="sage">Sage</option>
+              <option value="shimmer">Shimmer</option>
+              <option value="verse">Verse</option>
             </select>
           </label>
 
@@ -97,7 +104,7 @@
           </label>
 
           <label class="field interview-option" hidden>
-            <span>Their audio</span>
+            <span>Route 1 · Their English input</span>
             <select id="interviewerInputMode">
               <option value="screen">Capture meeting audio</option>
               <option value="device">Audio input device</option>
@@ -112,46 +119,70 @@
           </label>
 
           <label class="field interview-option" hidden>
-            <span>Spanish to me</span>
+            <span>Route 1 · Spanish to your ears</span>
             <select id="spanishOutputDevice">
               <option value="">Default output</option>
             </select>
           </label>
 
           <label class="field interview-option" hidden>
-            <span>English to call</span>
+            <span>Route 2 · Your Spanish → English to call</span>
             <select id="englishOutputDevice">
               <option value="">Default output</option>
             </select>
           </label>
         </div>
 
-        <div class="button-row">
-          <button id="connect" class="primary">Connect</button>
-          <button id="disconnect" class="secondary" disabled>Disconnect</button>
-        </div>
-
-        <label class="check">
-          <input id="autoRun" type="checkbox" checked />
-          <span>Auto-run local actions</span>
-        </label>
-        <p id="config" class="meta"></p>
+        <p id="routing" class="routing">Microphone off. Choose a route before connecting.</p>
+        <details class="advanced-panel">
+          <summary>Advanced &amp; diagnostics</summary>
+          <div class="mode-grid">
+            <label class="field assistant-option">
+              <span>Tone</span>
+              <select id="tone">
+                <option value="calm">Calm</option>
+                <option value="direct">Direct</option>
+                <option value="energetic">Energetic</option>
+              </select>
+            </label>
+            <label class="field assistant-option">
+              <span>Reasoning</span>
+              <select id="reasoningEffort">
+                <option value="low">Low</option>
+                <option value="minimal">Minimal</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">X-High</option>
+              </select>
+            </label>
+          </div>
+          <label class="check assistant-option">
+            <input id="autoRun" type="checkbox" />
+            <span>Auto-run local actions</span>
+          </label>
+          <p id="capabilities" class="meta" role="status">Checking optional capabilities…</p>
+          <p id="config" class="meta"></p>
+        </details>
       </section>
 
-      <section id="captionPanel" class="caption-panel" hidden>
+      <section id="captionPanel" class="caption-panel" aria-label="Live conversation">
         <div>
           <p id="sourceCaptionLabel" class="caption-label">Source</p>
-          <p id="sourceCaption" class="caption-text" aria-live="polite">...</p>
+          <p id="sourceCaption" class="caption-text" tabindex="0">Waiting for speech…</p>
         </div>
         <div>
           <p id="outputCaptionLabel" class="caption-label">Output</p>
-          <p id="outputCaption" class="caption-text" aria-live="polite">...</p>
+          <p id="outputCaption" class="caption-text" tabindex="0">Waiting for speech…</p>
         </div>
       </section>
 
-      <section id="pendingPanel" class="pending-panel" hidden>
-        <h2>Pending local action</h2>
-        <textarea id="pendingPrompt" readonly></textarea>
+      <p id="captionAnnouncement" class="sr-only" aria-live="polite" aria-atomic="true"></p>
+      <p id="actionAnnouncement" class="sr-only" aria-live="assertive"></p>
+      <section id="pendingPanel" class="pending-panel" aria-labelledby="pendingTitle" hidden>
+        <h2 id="pendingTitle">Approve a local action</h2>
+        <label for="pendingPrompt" class="caption-label">Action preview (read-only)</label>
+        <textarea id="pendingPrompt" readonly aria-describedby="actionDeadline"></textarea>
+        <p id="actionDeadline" class="meta"></p>
         <div class="actions">
           <button id="runCodex" class="primary" disabled>Run action</button>
           <button id="rejectCodex" class="secondary" disabled>Reject</button>

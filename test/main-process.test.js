@@ -13,6 +13,22 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import { createProcessRunner } from "../src/process-runner.js";
+import { createOperationRegistry } from "../src/operations.js";
+import { createCredentialStore } from "../src/credentials.js";
+import { normalizeVoice } from "../src/lib.js";
+function fakeChild() {
+  const child = new EventEmitter();
+  Object.assign(child, {
+    pid: 98765432,
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+  });
+  return child;
+}
 
 const SRC = new URL("../src/", import.meta.url);
 
@@ -20,27 +36,27 @@ function readSource(name) {
   return readFileSync(new URL(name, SRC), "utf8");
 }
 
-test("runCodex and runCuaDriver guard codex-output sends against a destroyed window", () => {
-  // A run can outlive the window (Cmd+W while Codex/CUA output streams): the
-  // mainWindow reference is only nulled on the "closed" event, so during the
-  // close sequence webContents.send on a destroyed webContents throws "Object
-  // has been destroyed" — an uncaught exception from inside the child output
-  // handler. Every other mainWindow touch in main.js checks
-  // !mainWindow.isDestroyed(); the onOutput callbacks must do the same.
-  const main = readSource("main.js");
-  for (const [label, fnStart, fnEnd] of [
-    ["runCodex", "function runCodex", "function runCuaDriver"],
-    ["runCuaDriver", "function runCuaDriver", "async function runMacAction"],
-  ]) {
-    const start = main.indexOf(fnStart);
-    assert.ok(start !== -1, `main.js must define ${fnStart}`);
-    const fnBody = main.slice(start, main.indexOf(fnEnd));
-    assert.match(
-      fnBody,
-      /mainWindow && !mainWindow\.isDestroyed\(\)\) mainWindow\.webContents\.send\("codex-output", chunk\)/,
-      `${label} must guard the codex-output send with !mainWindow.isDestroyed()`,
-    );
-  }
+test("runCodex and runCuaDriver guard codex-output sends against a destroyed window", async () => {
+  const registry = createOperationRegistry();
+  let destroyed = false,
+    sends = 0;
+  const owner = {
+    id: 1,
+    isDestroyed: () => destroyed,
+    send() {
+      sends++;
+    },
+  };
+  registry.begin(owner, "session");
+  await registry.run(owner, { sessionId: "session", requestId: "run" }, async (context) => {
+    context.output("live");
+    destroyed = true;
+    context.output("stale");
+    return { ok: true };
+  });
+  assert.equal(sends, 1);
+  assert.match(readSource("main.js"), /operationContext\.run/);
+  assert.doesNotMatch(readSource("main.js"), /mainWindow\.webContents\.send\("codex-output"/);
 });
 
 test("openAppVisible reports the cua-driver launch result to the model, not just activation", () => {
@@ -125,7 +141,7 @@ test("writeLog swallows logging-path failures so error handlers cannot crash or 
     "writeLog must wrap its body in an outer try/catch",
   );
   assert.ok(
-    fnBody.indexOf("try {") < fnBody.indexOf("getLogStream().write("),
+    fnBody.indexOf("try {") < fnBody.indexOf("logger.write("),
     "the try must cover the log-stream write so a stream failure cannot throw",
   );
   assert.match(
@@ -135,77 +151,34 @@ test("writeLog swallows logging-path failures so error handlers cannot crash or 
   );
 });
 
-test("runProcess swallows EPIPE on child stdin so an early-exiting child cannot raise an uncaught error", () => {
-  // runProcess always ends child.stdin (empty, or the API key for the
-  // keychain save). A child that exits without reading stdin — e.g. the
-  // `security` command failing early on a locked keychain — breaks the pipe,
-  // and the end()/write then emits EPIPE on the stdin stream. Without an
-  // error listener that becomes an uncaught 'error' event (caught only by
-  // the app-level handler, logged as a scary stack trace, or crashing the
-  // main process if that handler is ever removed). The listener must be
-  // attached before end() so the EPIPE from the write is already covered.
-  const main = readSource("main.js");
-  const fnStart = main.indexOf("function runProcess");
-  assert.ok(fnStart !== -1, "main.js must define runProcess");
-  const fnBody = main.slice(fnStart, main.indexOf("async function readKeychainApiKey"));
-  assert.match(
-    fnBody,
-    /child\.stdin\.on\("error"/,
-    "runProcess must attach an error listener to child.stdin so a child that exits without reading stdin cannot raise an uncaught EPIPE",
-  );
-  assert.ok(
-    fnBody.indexOf('child.stdin.on("error"') < fnBody.indexOf("child.stdin.end("),
-    "the stdin error listener must be attached before end() so the EPIPE from the write is caught",
-  );
+test("runProcess swallows EPIPE on child stdin so an early-exiting child cannot raise an uncaught error", async () => {
+  const child = fakeChild();
+  const runner = createProcessRunner({ spawn: () => child });
+  const pending = runner.run("mock", []);
+  assert.doesNotThrow(() => child.stdin.emit("error", Object.assign(new Error("pipe broken"), { code: "EPIPE" })));
+  child.emit("close", 1);
+  assert.equal((await pending).ok, false);
 });
 
-test("runProcess distinguishes a missing cwd from a missing binary on ENOENT", () => {
-  // spawn() reports a nonexistent cwd as ENOENT with the command in
-  // error.path — the same code a missing binary produces — and runCodex
-  // hands a model-controlled cwd to spawn, so a working directory that does
-  // not exist would otherwise surface as the misleading "codex was not found
-  // on PATH" and make the model blame the install instead of the path. The
-  // error handler must check the cwd it actually used and report the missing
-  // directory, falling back to humanizeSpawnError only when the cwd exists.
-  const main = readSource("main.js");
-  const fnStart = main.indexOf("function runProcess");
-  assert.ok(fnStart !== -1, "main.js must define runProcess");
-  const fnBody = main.slice(fnStart, main.indexOf("async function readKeychainApiKey"));
-  assert.match(
-    fnBody,
-    /error\?\.code === "ENOENT" && !fs\.existsSync\(options\.cwd \|\| DEFAULT_WORKDIR\)/,
-    "runProcess must detect a missing cwd on ENOENT before blaming the binary",
-  );
-  assert.match(
-    fnBody,
-    /The working directory does not exist: \$\{options\.cwd \|\| DEFAULT_WORKDIR\}/,
-    "runProcess must report the missing working directory explicitly",
-  );
-  assert.ok(
-    fnBody.indexOf("fs.existsSync(options.cwd") < fnBody.indexOf("humanizeSpawnError(command, error)"),
-    "the cwd check must run before the missing-binary message",
-  );
+test("runProcess distinguishes a missing cwd from a missing binary on ENOENT", async () => {
+  const child = fakeChild();
+  const runner = createProcessRunner({ spawn: () => child });
+  const pending = runner.run("mock", [], { cwd: "/definitely-missing-bridge-test-directory" });
+  child.emit("error", Object.assign(new Error("missing"), { code: "ENOENT" }));
+  assert.match((await pending).stderr, /working directory does not exist/);
 });
 
-test("runProcess stops streaming child output to the renderer once the run has settled", () => {
-  const main = readSource("main.js");
-  const fnStart = main.indexOf("function runProcess");
-  assert.ok(fnStart !== -1, "main.js must define runProcess");
-  const fnBody = main.slice(fnStart, main.indexOf("async function readKeychainApiKey"));
-  // Both the stdout and stderr data handlers must gate options.onOutput on
-  // the settled flag so a timed-out run's late chunks cannot reach the
-  // renderer and be flushed into a later run's debug log.
-  const guardedCalls = fnBody.match(/if \(!settled\) options\.onOutput\?\.\(text\)/g) || [];
-  assert.ok(
-    guardedCalls.length >= 2,
-    "both stdout and stderr data handlers must guard options.onOutput with !settled",
-  );
-  // The settled flag must be declared before the data handlers are attached so
-  // the guard refers to the same flag finish() flips.
-  assert.ok(
-    fnBody.indexOf("let settled = false") < fnBody.indexOf('child.stdout.on("data"'),
-    "settled must be declared before the stdout data handler",
-  );
+test("runProcess stops streaming child output to the renderer once the run has settled", async () => {
+  const child = fakeChild();
+  const runner = createProcessRunner({ spawn: () => child });
+  const chunks = [];
+  const pending = runner.run("mock", [], { onOutput: (text) => chunks.push(text) });
+  child.stdout.write("before");
+  child.emit("close", 0);
+  await pending;
+  child.stdout.write("late");
+  child.stderr.write("later");
+  assert.deepEqual(chunks, ["before"]);
 });
 
 test("type/press tools surface the cua-driver failure instead of a generic no-active-app message", () => {
@@ -224,9 +197,18 @@ test("type/press tools surface the cua-driver failure instead of a generic no-ac
     /error: result\.stderr/,
     "getActiveAppFromCua must return the driver stderr when list_apps fails",
   );
-  const typeFn = main.slice(main.indexOf("async function typeTextInFrontApp"), main.indexOf("async function pressKeyInFrontApp"));
-  const pressFn = main.slice(main.indexOf("async function pressKeyInFrontApp"), main.indexOf("async function getActiveAppFromCua"));
-  for (const [label, fn] of [["typeTextInFrontApp", typeFn], ["pressKeyInFrontApp", pressFn]]) {
+  const typeFn = main.slice(
+    main.indexOf("async function typeTextInFrontApp"),
+    main.indexOf("async function pressKeyInFrontApp"),
+  );
+  const pressFn = main.slice(
+    main.indexOf("async function pressKeyInFrontApp"),
+    main.indexOf("async function getActiveAppFromCua"),
+  );
+  for (const [label, fn] of [
+    ["typeTextInFrontApp", typeFn],
+    ["pressKeyInFrontApp", pressFn],
+  ]) {
     assert.match(
       fn,
       /stderr: active\?\.error \|\| "No active app pid found\."/,
@@ -436,12 +418,11 @@ test("runCodex and openAppVisible cap argv-bound values like the prompt guard do
   // argv, so both must be capped at the source.
   const main = readSource("main.js");
   const codexFn = main.slice(main.indexOf("function runCodex"), main.indexOf("function runCuaDriver"));
-  assert.match(
-    codexFn,
-    /requireMaxLength\(input\?\.cwd, "cwd", 4096\)/,
-    "runCodex must cap the cwd argv entry",
+  assert.match(codexFn, /requireMaxLength\(input\?\.cwd, "cwd", 4096\)/, "runCodex must cap the cwd argv entry");
+  const openFn = main.slice(
+    main.indexOf("async function openAppVisible"),
+    main.indexOf("async function typeTextInFrontApp"),
   );
-  const openFn = main.slice(main.indexOf("async function openAppVisible"), main.indexOf("async function typeTextInFrontApp"));
   assert.match(
     openFn,
     /requireMaxLength\(url, "url", 8192\)/,
@@ -450,11 +431,7 @@ test("runCodex and openAppVisible cap argv-bound values like the prompt guard do
   // resolveOpenAppTarget (lib.js) applies the same cap to the URL-only path;
   // the app+url path must not be the only one capped.
   const lib = readSource("lib.js");
-  assert.match(
-    lib,
-    /requireMaxLength\(input\.url, "url", 8192\)/,
-    "resolveOpenAppTarget must cap the url-only path",
-  );
+  assert.match(lib, /requireMaxLength\(input\.url, "url", 8192\)/, "resolveOpenAppTarget must cap the url-only path");
 });
 
 test("runCodex and the url paths reject null bytes before spawn can throw", () => {
@@ -476,7 +453,10 @@ test("runCodex and the url paths reject null bytes before spawn can throw", () =
     /requireNoNullBytes\(input\?\.cwd, "cwd"\)/,
     "runCodex must reject a null byte in cwd before spawn (argv entry and cwd option)",
   );
-  const openFn = main.slice(main.indexOf("async function openAppVisible"), main.indexOf("async function typeTextInFrontApp"));
+  const openFn = main.slice(
+    main.indexOf("async function openAppVisible"),
+    main.indexOf("async function typeTextInFrontApp"),
+  );
   assert.match(
     openFn,
     /requireNoNullBytes\(url, "url"\)/,
@@ -558,7 +538,8 @@ test("runCuaDriver validates required press_key/type_text_chars args before spaw
     "runCuaDriver must settle with a clean error when the required args are missing",
   );
   assert.ok(
-    fnBody.indexOf("validateCuaDriverRequiredArgs(toolName, normalizedArgs)") < fnBody.indexOf("runProcess(\"cua-driver\""),
+    fnBody.indexOf("validateCuaDriverRequiredArgs(toolName, normalizedArgs)") <
+      fnBody.indexOf('runProcess("cua-driver"'),
     "the required-args guard must run before spawning cua-driver",
   );
 });
@@ -589,7 +570,7 @@ test("runCuaDriver scales delay_ms for direct type_text_chars calls like the ded
     "runCuaDriver must scale delay_ms with the same budget math as typeTextInFrontApp",
   );
   assert.ok(
-    fnBody.indexOf("normalizedArgs.delay_ms = typeDelayMs") < fnBody.indexOf("runProcess(\"cua-driver\""),
+    fnBody.indexOf("normalizedArgs.delay_ms = typeDelayMs") < fnBody.indexOf('runProcess("cua-driver"'),
     "the delay injection must happen before spawning cua-driver",
   );
 });
@@ -651,7 +632,7 @@ test("ALWAYS_ON_TOP trims CODEX_VOICE_ALWAYS_ON_TOP so a whitespace-padded 0 can
   assert.match(
     topBody,
     /process\.env\.CODEX_VOICE_ALWAYS_ON_TOP\?\.trim\(\) !== "0"/,
-    "ALWAYS_ON_TOP must trim CODEX_VOICE_ALWAYS_ON_TOP before comparing to \"0\"",
+    'ALWAYS_ON_TOP must trim CODEX_VOICE_ALWAYS_ON_TOP before comparing to "0"',
   );
 });
 
@@ -700,41 +681,31 @@ test("globalShortcut.register is guarded so an invalid CODEX_VOICE_SHORTCUT cann
   );
 });
 
-test("createRealtimeClientSecret trims the resolved API key so a whitespace-padded OPENAI_API_KEY cannot 401", () => {
-  // The runtime key and the Keychain value are trimmed at their sources
-  // (set-api-key trims, security -w output is trimmed), but an OPENAI_API_KEY
-  // set in the shell very plausibly carries stray whitespace (a trailing
-  // newline from `export OPENAI_API_KEY=$(cat key.txt)`, a copy-paste with a
-  // surrounding blank line). Handed raw to the Authorization header, that
-  // whitespace makes OpenAI reject a perfectly good key with a confusing 401
-  // — and a whitespace-only env key would slip past the truthiness check and
-  // fail later with that same 401 instead of the clean "Add an OpenAI API
-  // key..." message. The resolved key must be trimmed once at the source.
-  const main = readSource("main.js");
-  const fnStart = main.indexOf("async function createRealtimeClientSecret");
-  assert.ok(fnStart !== -1, "main.js must define createRealtimeClientSecret");
-  const fnBody = main.slice(fnStart, main.indexOf("async function createAssistantClientSecret"));
-  assert.match(
-    fnBody,
-    /\(runtimeApiKey \|\| \(await readKeychainApiKey\(\)\) \|\| process\.env\.OPENAI_API_KEY \|\| ""\)\.trim\(\)/,
-    "createRealtimeClientSecret must trim the resolved API key so whitespace-padded env keys are normalized",
-  );
+test("createRealtimeClientSecret trims the resolved API key so a whitespace-padded OPENAI_API_KEY cannot 401", async () => {
+  const absent = {
+    lstat: async () => {
+      throw Object.assign(new Error("absent"), { code: "ENOENT" });
+    },
+  };
+  const store = createCredentialStore({
+    userData: "/unused-test-store",
+    io: absent,
+    envKey: "  sk-fake-key  ",
+    development: true,
+  });
+  assert.equal(await store.resolveKey(), "sk-fake-key");
+  assert.match(readSource("main.js"), /await credentials\.resolveKey\(\)/);
 });
 
-test("key-status does not report a whitespace-only OPENAI_API_KEY as a usable key", () => {
-  // hasEnvKey hides the API key input field: a whitespace-only env var (the
-  // same stray-whitespace class the trim fix addresses) would otherwise keep
-  // the field hidden behind an env key that can never authenticate — the user
-  // would see "Add an OpenAI API key" with no way to add one.
-  const main = readSource("main.js");
-  const fnStart = main.indexOf('ipcMain.handle("realtime:key-status"');
-  assert.ok(fnStart !== -1, "main.js must define the realtime:key-status handler");
-  const fnBody = main.slice(fnStart, main.indexOf('ipcMain.handle("codex:run"'));
-  assert.match(
-    fnBody,
-    /hasEnvKey: Boolean\(process\.env\.OPENAI_API_KEY\?\.trim\(\)\)/,
-    "key-status must not count a whitespace-only OPENAI_API_KEY as a usable key",
-  );
+test("key-status does not report a whitespace-only OPENAI_API_KEY as a usable key", async () => {
+  const absent = {
+    lstat: async () => {
+      throw Object.assign(new Error("absent"), { code: "ENOENT" });
+    },
+  };
+  const store = createCredentialStore({ userData: "/unused-test-store", io: absent, envKey: "   ", development: true });
+  assert.equal((await store.status()).hasEnvKey, false);
+  assert.equal(await store.resolveKey(), "");
 });
 
 test("model/voice/language defaults trim their env values so padded strings cannot 400 on every connect", () => {
@@ -748,14 +719,21 @@ test("model/voice/language defaults trim their env values so padded strings cann
   // wrote. Each default must trim so a padded or whitespace-only value
   // behaves exactly like the bare value or the built-in default.
   const main = readSource("main.js");
+  assert.equal(normalizeVoice(" MARIN "), "marin");
+  assert.equal(normalizeVoice("unknown"), "marin");
   const defaultsStart = main.indexOf("const DEFAULT_MODEL = ");
   assert.ok(defaultsStart !== -1, "main.js must define DEFAULT_MODEL");
   const defaultsBody = main.slice(defaultsStart, main.indexOf("const DEFAULT_REASONING_EFFORT"));
   for (const [envVar, pattern] of [
     ["OPENAI_REALTIME_MODEL", /process\.env\.OPENAI_REALTIME_MODEL\?\.trim\(\) \|\| "gpt-realtime-2"/],
-    ["OPENAI_REALTIME_TRANSLATE_MODEL", /process\.env\.OPENAI_REALTIME_TRANSLATE_MODEL\?\.trim\(\) \|\| "gpt-realtime-translate"/],
-    ["OPENAI_REALTIME_TRANSCRIBE_MODEL", /process\.env\.OPENAI_REALTIME_TRANSCRIBE_MODEL\?\.trim\(\) \|\| "gpt-realtime-whisper"/],
-    ["OPENAI_REALTIME_VOICE", /process\.env\.OPENAI_REALTIME_VOICE\?\.trim\(\) \|\| "marin"/],
+    [
+      "OPENAI_REALTIME_TRANSLATE_MODEL",
+      /process\.env\.OPENAI_REALTIME_TRANSLATE_MODEL\?\.trim\(\) \|\| "gpt-realtime-translate"/,
+    ],
+    [
+      "OPENAI_REALTIME_TRANSCRIBE_MODEL",
+      /process\.env\.OPENAI_REALTIME_TRANSCRIBE_MODEL\?\.trim\(\) \|\| "gpt-realtime-whisper"/,
+    ],
   ]) {
     assert.match(defaultsBody, pattern, `DEFAULT_* must trim ${envVar} and fall back for a whitespace-only value`);
   }
