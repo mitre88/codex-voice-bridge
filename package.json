@@ -6,16 +6,19 @@
   "description": "A local macOS voice bridge for OpenAI Realtime, Codex CLI, CUA Driver, and bidirectional interview translation.",
   "main": "src/main.js",
   "engines": {
-    "node": ">=20"
+    "node": "^22.0.0 || ^24.0.0 || ^26.0.0"
   },
   "scripts": {
     "start": "electron .",
-    "check": "node --check src/main.js && node --check src/preload.cjs && node --check src/renderer.js && node --check src/lib.js && node --check src/renderer-utils.js",
+    "check": "node scripts/check.mjs",
     "lint": "eslint src",
     "test": "node --test test/*.test.js",
     "smoke:cua": "bash scripts/smoke-cua.sh",
     "logs": "tail -f ~/Library/Logs/codex-voice-bridge/bridge.log",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "test:ui": "playwright test --config test/ui/playwright.config.js",
+    "build:smoke": "electron-builder --mac --dir --arm64 -c.mac.identity=null",
+    "dist:mac": "electron-builder --mac --arm64 --x64"
   },
   "keywords": [
     "openai",
@@ -29,13 +32,12 @@
   ],
   "author": "Alex Mitre",
   "license": "MIT",
-  "dependencies": {
-    "electron": "^39.2.6"
-  },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "electron-builder": "^26.15.3",
-    "eslint": "^9.39.5"
+    "eslint": "^9.39.5",
+    "electron": "44.2.0",
+    "@playwright/test": "1.58.2"
   },
   "build": {
     "appId": "com.mitre.codex-voice-bridge",
@@ -47,9 +49,28 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
-        "dmg",
-        "zip"
-      ]
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "minimumSystemVersion": "13.0",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Use your selected microphone for an explicitly connected voice session.",
+        "NSScreenCaptureUsageDescription": "Capture meeting audio only when you select this route and connect."
+      },
+      "entitlements": "resources/entitlements.mac.plist",
+      "entitlementsInherit": "resources/entitlements.mac.plist"
     }
   }
 }

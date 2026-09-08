@@ -11,6 +11,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { fixture, deferred } from "./helpers/session-fixture.js";
+import { TailBuffer } from "../src/tail-buffer.js";
 
 const SRC = new URL("../src/", import.meta.url);
 
@@ -19,20 +21,17 @@ function readSource(name) {
 }
 
 test("renderer.js imports only browser-safe modules (no node: builtins)", () => {
-  const renderer = readSource("renderer.js");
-  const specifiers = [...renderer.matchAll(/^\s*import\s[^;]+?from\s+"([^"]+)"/gm)].map((match) => match[1]);
-  assert.ok(specifiers.length > 0, "renderer.js should have at least one import");
-  for (const specifier of specifiers) {
-    assert.ok(
-      !specifier.startsWith("node:"),
-      `renderer.js must not import a node builtin ("${specifier}"): the sandboxed renderer cannot resolve it`,
-    );
-    assert.equal(
-      specifier,
-      "./renderer-utils.js",
-      `renderer.js may only import ./renderer-utils.js (got "${specifier}")`,
-    );
+  const visited = new Set();
+  function inspect(name) {
+    if (visited.has(name)) return;
+    visited.add(name);
+    for (const match of readSource(name).matchAll(/^\s*import\s[^;]+?from\s+"([^"]+)"/gm)) {
+      assert.ok(match[1].startsWith("./"), `Browser import must be relative: ${match[1]}`);
+      inspect(match[1].slice(2));
+    }
   }
+  inspect("renderer.js");
+  assert.ok(visited.has("session-controller.js"));
 });
 
 test("renderer-utils.js has zero imports (loadable in a sandboxed renderer)", () => {
@@ -52,11 +51,7 @@ test("renderer window error handlers swallow log failures so a rejected log IPC 
     renderer.indexOf('window.addEventListener("error"'),
     renderer.indexOf('window.addEventListener("unhandledrejection"'),
   );
-  assert.match(
-    errorHandler,
-    /\.catch\(\(\) => \{\}\)/,
-    "the window error handler must catch log promise rejections",
-  );
+  assert.match(errorHandler, /\.catch\(\(\) => \{\}\)/, "the window error handler must catch log promise rejections");
   const rejectionHandler = renderer.slice(
     renderer.indexOf('window.addEventListener("unhandledrejection"'),
     renderer.indexOf("function setStatus"),
@@ -68,80 +63,47 @@ test("renderer window error handlers swallow log failures so a rejected log IPC 
   );
 });
 
-test("renderer.js enables Disconnect at connect start so mid-connect cancel works", () => {
-  // A connect can take tens of seconds (token fetch + SDP exchange). The
-  // Disconnect button must be clickable while "Connecting" so the abort
-  // controller can cancel the in-flight connect; if it is only enabled after
-  // the session comes up, the user is stuck waiting out the full timeout.
-  const renderer = readSource("renderer.js");
-  const connectStart = renderer.indexOf("async function connectRealtime()");
-  assert.ok(connectStart !== -1, "renderer.js must define connectRealtime");
-  const connectBody = renderer.slice(connectStart, renderer.indexOf("async function disconnectRealtime()"));
-  assert.match(
-    connectBody,
-    /disconnectButton\.disabled = false/,
-    "connectRealtime must enable the Disconnect button before the connect begins",
+test("renderer.js enables Disconnect at connect start so mid-connect cancel works", async () => {
+  const source = readSource("renderer.js");
+  const connect = source.slice(
+    source.indexOf("async function connectRealtime()"),
+    source.indexOf("function disconnectRealtime("),
   );
-  assert.ok(
-    connectBody.indexOf("new AbortController()") >
-      connectBody.indexOf("disconnectButton.disabled = false"),
-    "Disconnect must be enabled before the abort controller is created so the cancel path is reachable",
-  );
+  assert.ok(connect.indexOf("disconnectButton.disabled = false") < connect.indexOf("await owner.wait"));
+  const token = deferred();
+  const f = fixture({ createToken: () => token.promise });
+  const pending = f.c.start([f.route()]);
+  await new Promise((r) => setImmediate(r));
+  f.c.dispose();
+  await assert.rejects(pending, /cancel/i);
+  assert.equal(f.tracks[0].stops, 1);
+  token.resolve({ value: "late" });
 });
 
-test("a stale connect's catch cannot abort or overwrite a newer connect", () => {
-  // The connect flow's abort checks and error path used to read the GLOBAL
-  // connectAbortController. After a fast Disconnect → Connect, the first
-  // (stale) connect's catch could see the NEW connect's controller: instead
-  // of taking the quiet Idle path for its own cancelled connect it would
-  // call disconnectRealtime({silent:true}) — aborting the new connect's
-  // controller and flipping the UI to Error over a healthy connect (and a
-  // stale connect that failed on its own would do the same). Each connect
-  // must capture its controller locally; the error path must bail out when
-  // the global no longer belongs to this connect, and the cancel check must
-  // use the captured controller.
-  const renderer = readSource("renderer.js");
-  const connectStart = renderer.indexOf("async function connectRealtime()");
-  assert.ok(connectStart !== -1, "renderer.js must define connectRealtime");
-  const connectBody = renderer.slice(connectStart, renderer.indexOf("async function disconnectRealtime()"));
-  assert.match(
-    connectBody,
-    /const controller = new AbortController\(\)/,
-    "connectRealtime must capture the abort controller in a local before assigning the global",
-  );
-  assert.match(
-    connectBody,
-    /if \(connectAbortController !== controller\) return;/,
-    "a stale connect must bail out of its error path instead of touching the UI or aborting a newer connect",
-  );
-  assert.match(
-    connectBody,
-    /if \(controller\.signal\.aborted\)/,
-    "the cancel check must use the locally captured controller, not the global",
-  );
+test("a stale connect's catch cannot abort or overwrite a newer connect", async () => {
+  const token = deferred(),
+    old = fixture({ createToken: () => token.promise }),
+    next = fixture();
+  const pending = old.c.start([old.route()]);
+  await new Promise((r) => setImmediate(r));
+  old.c.dispose();
+  await assert.rejects(pending, /cancel/i);
+  await next.c.start([next.route()]);
+  token.reject(new Error("late failure"));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(next.c.ready, true);
+  next.c.dispose();
+  assert.match(readSource("renderer.js"), /if \(currentSession !== owner\) return;/);
 });
 
-test("connect failures surface the humanized error in the status, not just the debug log", () => {
-  // A failed connect (bad key, no network, quota, ...) used to leave the
-  // status pill at a bare "Error" while the actionable humanized message went
-  // only to the collapsible debug log — the user had to know to expand it to
-  // learn why the connect failed. The status must carry the message itself,
-  // with an explicit "error" state so the error styling (dimmed orb) still
-  // applies to the longer text.
-  const renderer = readSource("renderer.js");
-  const connectStart = renderer.indexOf("async function connectRealtime()");
-  assert.ok(connectStart !== -1, "renderer.js must define connectRealtime");
-  const connectBody = renderer.slice(connectStart, renderer.indexOf("async function disconnectRealtime()"));
-  assert.match(
-    connectBody,
-    /setStatus\(`Error: \$\{message\}`, "error"\)/,
-    "connectRealtime must show the humanized error in the status pill with the error state",
-  );
-  assert.ok(
-    connectBody.indexOf("const message = humanizeError(error)") <
-      connectBody.indexOf("setStatus(`Error: ${message}`"),
-    "the status must use the humanized error message, not the raw error",
-  );
+test("connect failures surface humanized recovery in a separate accessible banner", () => {
+  const renderer = readSource("renderer.js"),
+    html = readSource("renderer.html");
+  assert.match(renderer, /showError\(message\)/);
+  assert.match(renderer, /setStatus\("Not connected", "error"\)/);
+  assert.match(html, /id="errorMessage" role="alert"/);
+  // Runtime visibility, Retry and mic disposal are exercised by test/ui/voice.spec.js.
+  assert.match(readFileSync(new URL("../test/ui/voice.spec.js", SRC), "utf8"), /separate recovery banner/);
 });
 
 test("connect reveals the API key input when the key itself was rejected", () => {
@@ -162,8 +124,7 @@ test("connect reveals the API key input when the key itself was rejected", () =>
     "connectRealtime must reveal the key input when the API key was rejected",
   );
   assert.ok(
-    connectBody.indexOf("const message = humanizeError(error)") <
-      connectBody.indexOf("isApiKeyRejection(error)"),
+    connectBody.indexOf("const message = humanizeError(error)") < connectBody.indexOf("isApiKeyRejection(error)"),
     "the key-rejection check must run alongside the humanized error, not before it",
   );
   // The reveal helper must exist and actually un-hide the field: the whole
@@ -172,59 +133,29 @@ test("connect reveals the API key input when the key itself was rejected", () =>
   assert.match(renderer, /apiKeyField\.hidden = false/);
 });
 
-test("connect passes the abort signal to getUserMedia so Disconnect cancels a pending permission prompt", () => {
-  // Disconnect mid-"Connecting" aborts the SDP fetch, but a connect stuck on
-  // the microphone permission prompt would otherwise keep waiting on the OS
-  // dialog after the UI went Idle; granting it would then start a pointless
-  // token fetch + peer connection for a session the user cancelled. getUserMedia
-  // must receive the connect abort signal (the controller captured at connect
-  // start and threaded through, never the global — see the stale-connect test
-  // below), and each stream acquisition must re-check the signal so a
-  // cancelled connect stops the mic immediately.
-  const renderer = readSource("renderer.js");
-  const singleStart = renderer.indexOf("async function connectSingleRealtime");
-  assert.ok(singleStart !== -1, "renderer.js must define connectSingleRealtime");
-  const singleBody = renderer.slice(singleStart, renderer.indexOf("async function connectInterviewRealtime"));
-  assert.match(
-    singleBody,
-    /signal: controller\?\.signal/,
-    "connectSingleRealtime must pass the connect abort signal to getUserMedia",
-  );
-  assert.match(
-    singleBody,
-    /controller\?\.signal\.aborted/,
-    "connectSingleRealtime must re-check the abort signal after acquiring the mic stream",
-  );
-  const interviewStart = renderer.indexOf("async function connectInterviewRealtime");
-  assert.ok(interviewStart !== -1, "renderer.js must define connectInterviewRealtime");
-  const interviewBody = renderer.slice(interviewStart, renderer.indexOf("async function connectRealtime"));
-  assert.match(
-    interviewBody,
-    /signal: controller\?\.signal/,
-    "connectInterviewRealtime must pass the connect abort signal to getUserMedia",
-  );
-  assert.ok(
-    (interviewBody.match(/controller\?\.signal\.aborted/g) || []).length >= 2,
-    "connectInterviewRealtime must re-check the abort signal after each stream acquisition",
-  );
+test("cancel stops late media grants without claiming unsupported getUserMedia signal cancellation", async () => {
+  const media = deferred(),
+    f = fixture();
+  const pending = f.c.start([{ label: "Voice", acquire: () => media.promise }]);
+  await new Promise((r) => setImmediate(r));
+  f.c.dispose();
+  await assert.rejects(pending, /cancel/i);
+  media.resolve(f.stream());
+  await new Promise((r) => setImmediate(r));
+  assert.equal(f.tracks[0].stops, 1);
+  assert.equal(f.peers.length, 0);
+  assert.doesNotMatch(readSource("renderer.js"), /getUserMedia\(\{[^}]*signal:/);
 });
 
 test("executeAction does not flip the status to Listening after a disconnect", () => {
-  // A local action (e.g. a long Codex run) keeps running in the main process
-  // after the user presses Disconnect; when it finishes, executeAction used to
-  // setStatus("Listening") unconditionally, flipping the pill to "Listening"
-  // over a session that is already gone (mic stopped, sessions closed) while
-  // the Disconnect button stays disabled — the UI lied about the state. The
-  // status must only be restored while a session is still active.
-  const renderer = readSource("renderer.js");
-  const fnStart = renderer.indexOf("async function executeAction");
-  assert.ok(fnStart !== -1, "renderer.js must define executeAction");
-  const fnBody = renderer.slice(fnStart, renderer.indexOf("const KNOWN_TOOLS"));
-  assert.match(
-    fnBody,
-    /if \(activeSessions\.length > 0\) setStatus\("Listening"\)/,
-    "executeAction must only restore the Listening status while a session is still active",
+  const source = readSource("renderer.js");
+  const action = source.slice(source.indexOf("async function executeAction"), source.indexOf("const KNOWN_TOOLS"));
+  assert.ok(
+    action.indexOf("currentSession !== owner || owner.signal.aborted") <
+      action.indexOf("sendFunctionOutput(action.callId, result, channel)"),
   );
+  assert.match(action, /currentSession === owner && owner.ready/);
+  // operations.test.js behaviorally covers a late completion after replacement.
 });
 
 test("mac actions dispatch on the declared tool name, never on a model-supplied args.action", () => {
@@ -295,29 +226,15 @@ test("lib.js re-exports the renderer helpers for a single import surface", async
   assert.ok(lib.VIRTUAL_AUDIO_LABEL instanceof RegExp);
 });
 
-test("sendFunctionOutput drops the pending send on timeout instead of sending it late", () => {
-  // A function output deferred to a not-yet-open data channel used to keep its
-  // once-listener alive after the 5s drop timeout: when the channel finally
-  // opened, the "dropped" output was sent anyway — contradicting the log and
-  // leaking a stale function_call_output (old callId from a dead session) into
-  // whatever channel was open by then. The timeout must remove the listener so
-  // a dropped output stays dropped, and the deferred send must target the
-  // captured channel rather than the global (which may belong to a new
-  // session after a reconnect).
-  const renderer = readSource("renderer.js");
-  const fnStart = renderer.indexOf("function sendFunctionOutput");
-  assert.ok(fnStart !== -1, "renderer.js must define sendFunctionOutput");
-  const fnBody = renderer.slice(fnStart, renderer.indexOf('connectButton.addEventListener("click", connectRealtime)'));
-  assert.match(
-    fnBody,
-    /channel\.removeEventListener\("open", onOpen\)/,
-    "the drop timeout must remove the pending open listener so the output cannot be sent late",
+test("sendFunctionOutput never queues a stale output on a channel that is not open", () => {
+  const source = readSource("renderer.js");
+  const send = source.slice(
+    source.indexOf("function sendFunctionOutput"),
+    source.indexOf("connectButton.addEventListener"),
   );
-  assert.match(
-    fnBody,
-    /send\(channel\)/,
-    "the deferred send must target the captured channel, not the global, so a stale output cannot leak into a later session",
-  );
+  assert.match(send, /readyState !== "open"/);
+  assert.doesNotMatch(send, /addEventListener|setTimeout/);
+  // No pending send is needed: controller.start now requires open channels.
 });
 
 test("executeAction pins the data channel so a stale output cannot leak into a reconnected session", () => {
@@ -346,7 +263,10 @@ test("executeAction pins the data channel so a stale output cannot leak into a r
   );
   const sendStart = renderer.indexOf("function sendFunctionOutput");
   assert.ok(sendStart !== -1, "renderer.js must define sendFunctionOutput");
-  const sendBody = renderer.slice(sendStart, renderer.indexOf('connectButton.addEventListener("click", connectRealtime)'));
+  const sendBody = renderer.slice(
+    sendStart,
+    renderer.indexOf('connectButton.addEventListener("click", connectRealtime)'),
+  );
   assert.match(
     sendBody,
     /function sendFunctionOutput\(callId, output, channel = actionDataChannel\)/,
@@ -354,114 +274,49 @@ test("executeAction pins the data channel so a stale output cannot leak into a r
   );
 });
 
-test("refreshMediaDevices survives a denied permission prompt so the list still refreshes", () => {
-  // Switching to interview mode calls refreshMediaDevices(true), which asks
-  // for microphone permission via getUserMedia to obtain device labels. If the
-  // user denies (or dismisses) the prompt, getUserMedia rejects — and the old
-  // code let that rejection abort the whole refresh before enumerateDevices
-  // ran, leaving the dropdowns stale and logging a raw "Permission denied" on
-  // every switch. The permission request must sit in its own try/catch so the
-  // enumeration (and the list refresh) still runs with empty labels.
-  const renderer = readSource("renderer.js");
-  const refreshStart = renderer.indexOf("async function refreshMediaDevices");
-  assert.ok(refreshStart !== -1, "renderer.js must define refreshMediaDevices");
-  const refreshBody = renderer.slice(refreshStart, renderer.indexOf("async function getInterviewAudioStream"));
-  const permissionRequest = refreshBody.indexOf("getUserMedia({ audio: true })");
-  const enumeration = refreshBody.indexOf("enumerateDevices()");
-  const catchIndex = refreshBody.indexOf("catch", permissionRequest);
-  assert.ok(permissionRequest !== -1, "refreshMediaDevices must request mic permission when labels are wanted");
-  assert.ok(enumeration !== -1, "refreshMediaDevices must enumerate devices");
-  assert.ok(
-    catchIndex !== -1 && permissionRequest < catchIndex && catchIndex < enumeration,
-    "the getUserMedia permission request must be isolated in its own try/catch before enumerateDevices so a denied prompt cannot abort the refresh",
+test("refreshMediaDevices never prompts for microphone labels and preserves vanished selections", () => {
+  const source = readSource("renderer.js");
+  const refresh = source.slice(
+    source.indexOf("async function refreshMediaDevices"),
+    source.indexOf("async function getInterviewAudioStream"),
   );
+  assert.match(refresh, /enumerateDevices/);
+  assert.doesNotMatch(refresh, /getUserMedia/);
+  assert.match(source, /missing.dataset.missing = "true"/);
+  // test/ui/voice.spec.js covers live vanished-device refresh with no fallback.
 });
 
 test("captions are capped so a long session cannot grow the DOM without bound", () => {
-  // The debug log, the codex output buffer, and the main-process output
-  // buffers are all bounded, but the accumulated transcript captions used to
-  // grow without limit: transcript delta events append to sourceCaption /
-  // outputCaption forever, so a long session (or an unusually long turn)
-  // grows the caption strings and the DOM without bound — the one unbounded
-  // accumulator in the renderer. appendCaption must enforce a cap and keep
-  // the newest text (the tail the user is reading) when truncating.
-  const renderer = readSource("renderer.js");
-  const fnStart = renderer.indexOf("function appendCaption");
-  assert.ok(fnStart !== -1, "renderer.js must define appendCaption");
-  const fnBody = renderer.slice(fnStart, renderer.indexOf("function handleTranscriptEvent"));
-  assert.match(
-    fnBody,
-    /MAX_CAPTION_CHARS/,
-    "appendCaption must enforce a cap on the accumulated caption length",
-  );
-  assert.match(
-    fnBody,
-    /next\.slice\(-MAX_CAPTION_CHARS\)/,
-    "appendCaption must keep the newest text (tail) when truncating an over-long caption",
-  );
-  assert.match(
-    fnBody,
-    /truncated \$\{next\.length - MAX_CAPTION_CHARS\} chars/,
-    "appendCaption must mark the truncation so the cut is visible, not silent",
-  );
+  const buffer = new TailBuffer(50000);
+  for (let i = 0; i < 6000; i++) buffer.append("caption fragment ");
+  assert.ok(buffer.display().length <= 50000);
+  assert.ok(buffer.dropped > 0);
+  assert.match(readSource("renderer.js"), /new TailBuffer\(50000\)/);
 });
 
-test("connectPeerSession drops non-object Realtime events instead of throwing in the message handler", () => {
-  // A well-formed JSON payload is not necessarily an object: "null", a bare
-  // string, a number, or an array all parse successfully. The data-channel
-  // message handler used to read event.type straight off the parsed value,
-  // so a JSON null from the server threw a raw TypeError inside the async
-  // handler — an unhandled rejection that skipped the transcript/tool
-  // handling for the message entirely. Non-object events must be dropped
-  // with a log (mirroring the malformed-JSON branch just above) before any
-  // field access.
-  const renderer = readSource("renderer.js");
-  const fnStart = renderer.indexOf("async function connectPeerSession");
-  assert.ok(fnStart !== -1, "renderer.js must define connectPeerSession");
-  const fnBody = fnStart === -1 ? "" : renderer.slice(fnStart, renderer.indexOf("async function connectSingleRealtime"));
-  assert.match(
-    fnBody,
-    /event === null \|\| typeof event !== "object"/,
-    "the message handler must reject null and other non-object events before reading event.type",
-  );
-  assert.match(
-    fnBody,
-    /Array\.isArray\(event\)/,
-    "the message handler must reject array events (a JSON array parses but is not a valid Realtime event)",
-  );
-  assert.ok(
-    fnBody.indexOf("dropped non-object Realtime event") > fnBody.indexOf("JSON.parse(message.data)"),
-    "the non-object drop must log a message, mirroring the malformed-JSON branch",
-  );
+test("connectPeerSession drops non-object Realtime events instead of throwing in the message handler", async () => {
+  let events = 0;
+  const f = fixture({ onEvent: () => events++ });
+  await f.c.start([f.route()]);
+  for (const data of ["null", "[]", "42", '"string"', "bad-json"])
+    f.peers[0].channel.dispatchEvent(new MessageEvent("message", { data }));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(events, 0);
+  assert.equal(f.c.ready, true);
+  f.c.dispose();
 });
 
-test("connectPeerSession fetches the token inside the try so a failed fetch cannot leave the mic hot", () => {
-  // connectPeerSession used to await createClientSecret BEFORE its try block.
-  // If that fetch threw (bad key, network, quota), the catch that closes the
-  // peer connection and stops inputStream tracks never ran — and since the
-  // session is never pushed to activeSessions on that path, disconnectRealtime()
-  // could not stop the microphone either. The mic stayed hot after a failed
-  // connect. The token fetch must live inside the try so the cleanup path
-  // always runs.
-  const renderer = readSource("renderer.js");
-  const fnStart = renderer.indexOf("async function connectPeerSession");
-  assert.ok(fnStart !== -1, "renderer.js must define connectPeerSession");
-  const fnBody = renderer.slice(fnStart, renderer.indexOf("async function connectSingleRealtime"));
-  const tryIndex = fnBody.indexOf("try {");
-  const tokenFetch = fnBody.indexOf("createClientSecret");
-  assert.ok(tryIndex !== -1, "connectPeerSession must have a try block");
-  assert.ok(tokenFetch !== -1, "connectPeerSession must fetch a client secret");
-  assert.ok(
-    tryIndex < tokenFetch,
-    "the client-secret fetch must be inside the try block so a failed fetch still runs the cleanup that stops the mic",
-  );
-  assert.match(
-    fnBody,
-    /inputStream\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/,
-    "the catch must stop the input stream tracks so the mic cannot stay hot after a failed connect",
-  );
+test("session controller releases media and peers after a token failure", async () => {
+  const f = fixture({
+    createToken: async () => {
+      throw new Error("token rejected");
+    },
+  });
+  await assert.rejects(f.c.start([f.route()]), /token rejected/);
+  assert.equal(f.tracks[0].stops, 1);
+  assert.equal(f.peers[0].closed, 1);
+  assert.equal(f.c.resources.size, 0);
 });
-
 
 test("setPendingAction caps the args shown in the pending panel (display-only truncation)", () => {
   // The pending panel previews what the model wants to run. The args blob
@@ -484,11 +339,7 @@ test("setPendingAction caps the args shown in the pending panel (display-only tr
     /formatPendingArgs\(/,
     "setPendingAction must route both the codex prompt and the args JSON through the display cap",
   );
-  assert.match(
-    fnBody,
-    /MAX_PENDING_ARGS_CHARS/,
-    "setPendingAction must enforce a cap on the pending-panel display",
-  );
+  assert.match(fnBody, /MAX_PENDING_ARGS_CHARS/, "setPendingAction must enforce a cap on the pending-panel display");
   assert.match(
     fnBody,
     /truncated \$\{text\.length - MAX_PENDING_ARGS_CHARS\} chars/,
@@ -530,7 +381,7 @@ test("enabling auto-run executes a pending action instead of letting its auto-re
   const renderer = readSource("renderer.js");
   const listenerStart = renderer.indexOf('autoRunInput.addEventListener("change"');
   assert.ok(listenerStart !== -1, "renderer.js must wire a change listener on the auto-run checkbox");
-  const listenerBody = renderer.slice(listenerStart, renderer.indexOf('navigator.mediaDevices?.addEventListener'));
+  const listenerBody = renderer.slice(listenerStart, renderer.indexOf("navigator.mediaDevices?.addEventListener"));
   assert.match(
     listenerBody,
     /autoRunInput\.checked && pendingAction/,

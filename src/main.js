@@ -1,18 +1,20 @@
-import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, session } from "electron";
-import { spawn } from "node:child_process";
+import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, session, safeStorage, systemPreferences } from "electron";
+import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { StringDecoder } from "node:string_decoder";
+import { postOpenAIJson as requestOpenAIJson } from "./openai-request.js";
+import { createCredentialStore } from "./credentials.js";
+import { createOperationRegistry } from "./operations.js";
+import { createProcessRunner } from "./process-runner.js";
+import { createBoundedLogger } from "./logger.js";
+import { capabilitySnapshot, resolveExecutable, TRUSTED_BIN_DIRS } from "./capabilities.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  accumulateOutput,
   applyEnvOverrides,
   escapeAppleScript,
   extractFirstJsonObject,
-  humanizeSpawnError,
-  isPlausibleApiKey,
   isSafeAppIdentity,
   isSafeCuaLaunchArgs,
   isSafeCuaToolName,
@@ -22,6 +24,7 @@ import {
   normalizeTargetLanguage,
   normalizeTone,
   normalizeToneKey,
+  normalizeVoice,
   parseEnvFile,
   redactSecrets,
   requireMaxLength,
@@ -30,10 +33,10 @@ import {
   requireTypeableLength,
   resolveOpenAppTarget,
   resolveWorkdir,
-  rotateLogIfNeeded,
   toPositiveInt,
   typeDelayMs,
   validateCuaDriverRequiredArgs,
+  validateCuaRegistry,
 } from "./lib.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -77,7 +80,7 @@ loadDotEnv();
 const DEFAULT_MODEL = process.env.OPENAI_REALTIME_MODEL?.trim() || "gpt-realtime-2";
 const DEFAULT_TRANSLATE_MODEL = process.env.OPENAI_REALTIME_TRANSLATE_MODEL?.trim() || "gpt-realtime-translate";
 const DEFAULT_TRANSCRIBE_MODEL = process.env.OPENAI_REALTIME_TRANSCRIBE_MODEL?.trim() || "gpt-realtime-whisper";
-const DEFAULT_VOICE = process.env.OPENAI_REALTIME_VOICE?.trim() || "marin";
+const DEFAULT_VOICE = normalizeVoice(process.env.OPENAI_REALTIME_VOICE);
 // Normalize the .env value at the source: a typo like "banana" would
 // otherwise surface in the UI select (no matching option) and reach the API
 // (forcing the reasoning-400 retry on every connect) instead of falling back
@@ -124,7 +127,6 @@ const OPENAI_REQUEST_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_OPENAI_T
 const ACTION_TIMEOUT_MS = toPositiveInt(process.env.CODEX_VOICE_ACTION_TIMEOUT_MS, 120000);
 // Bound how much stdout/stderr a child process can accumulate in memory before
 // we drop the excess; a runaway command must not grow the main process forever.
-const MAX_PROCESS_OUTPUT_CHARS = 1024 * 1024;
 const KEYCHAIN_SERVICE = "codex-voice-bridge.openai-api-key";
 // Trim USER at the source, same as the WORKDIR/SHORTCUT/ALWAYS_ON_TOP/ENV_FILE
 // trims: a whitespace-padded value (a launchd plist string with stray
@@ -138,7 +140,7 @@ const KEYCHAIN_SERVICE = "codex-voice-bridge.openai-api-key";
 const USER = process.env.USER?.trim() || "local";
 const KEYCHAIN_ACCOUNT = USER;
 const LOG_DIR = path.join(os.homedir(), "Library", "Logs", "codex-voice-bridge");
-const LOG_FILE = path.join(LOG_DIR, "bridge.log");
+const LOG_FILE = path.join(LOG_DIR, app.isPackaged ? "bridge.log" : "bridge-dev.log");
 const LOG_MAX_BYTES = 2 * 1024 * 1024;
 const SAFETY_ID = crypto.createHash("sha256").update(`${USER}:codex-voice-bridge`).digest("hex");
 // Trim CODEX_VOICE_SHORTCUT at the source: a whitespace-padded value (a shell
@@ -173,227 +175,57 @@ const APP_VERSION = readAppVersion();
 const CUA_BLOCKED_TOOLS = new Set(["hotkey", "move_cursor", "replay_trajectory", "set_recording"]);
 
 let mainWindow;
-let runtimeApiKey = "";
-let logStream = null;
-// Live child processes (codex, cua-driver, osascript, security). They are
-// spawned detached in their own process group; tracking them lets us terminate
-// any still-running group on quit so a long Codex run cannot outlive the app.
-const runningChildren = new Set();
-
-function getLogStream() {
-  if (!logStream) {
-    fs.mkdirSync(LOG_DIR, { recursive: true });
-    // Rotate an oversized log on startup so bridge.log cannot grow without bound.
-    rotateLogFile();
-    logStream = fs.createWriteStream(LOG_FILE, { flags: "a" });
-    // Avoid crashing the main process if the disk/log file misbehaves.
-    logStream.on("error", () => {});
-  }
-  return logStream;
-}
-
-// Long-running sessions never restart, so also rotate while running: once the
-// current stream has written LOG_MAX_BYTES, close it, move the file aside, and
-// start a fresh one. If the rename fails (file locked), the next write retries.
-function rotateLogFile() {
-  rotateLogIfNeeded(fs, LOG_FILE, LOG_MAX_BYTES);
-}
+const operations = createOperationRegistry();
+const operationContext = new AsyncLocalStorage();
+const processRunner = createProcessRunner();
+let credentials;
+const executablePaths = {
+  codex: resolveExecutable("codex", process.env.CODEX_VOICE_CODEX_PATH),
+  "cua-driver": resolveExecutable("cua-driver", process.env.CODEX_VOICE_CUA_DRIVER_PATH),
+  open: "/usr/bin/open", osascript: "/usr/bin/osascript",
+};
+const childEnvironment = { ...process.env, PATH: TRUSTED_BIN_DIRS.join(path.delimiter) };
+delete childEnvironment.OPENAI_API_KEY;
+const logger = createBoundedLogger({
+  maxFileBytes: LOG_MAX_BYTES,
+  async open() {
+    await fs.promises.mkdir(LOG_DIR, { recursive: true, mode: 0o700 });
+    const size = await fs.promises.stat(LOG_FILE).then(stat => stat.size, () => 0);
+    return { stream: fs.createWriteStream(LOG_FILE, { flags: "a", mode: 0o600 }), size };
+  },
+  async rotate() { await fs.promises.rename(LOG_FILE, `${LOG_FILE}.1`).catch(error => { if (error.code !== "ENOENT") throw error; }); },
+});
 
 function writeLog(message, data) {
   try {
-    let payload;
-    try {
-      payload = JSON.stringify({
-        ts: new Date().toISOString(),
-        message,
-        data: data === undefined ? undefined : redactSecrets(JSON.stringify(data)),
-      });
-    } catch {
-      // Never let a non-serializable payload take down the logging path (or the
-      // uncaughtException handler that calls it).
-      payload = JSON.stringify({ ts: new Date().toISOString(), message, data: String(data) });
-    }
-    if (logStream && logStream.bytesWritten >= LOG_MAX_BYTES) {
-      logStream.end();
-      logStream = null;
-      rotateLogFile();
-    }
-    getLogStream().write(`${payload}\n`);
+    let serialized;
+    try { serialized = JSON.stringify(data); } catch { serialized = "[unserializable log data]"; }
+    logger.write(redactSecrets(JSON.stringify({ ts: new Date().toISOString(), message: String(message).slice(0, 1000), data: serialized?.slice(0, 50000) })));
   } catch {
-    // Logging is best-effort and must never throw: writeLog runs inside the
-    // uncaughtException/unhandledRejection handlers and the log:renderer IPC
-    // handler, and a throw here (e.g. the log directory cannot be created)
-    // would crash the app or make the error handlers loop forever — each
-    // failed log call triggering another error event that logs again.
+    // Logging is best-effort and cannot become an error-handler loop.
   }
 }
 
 function runProcess(command, args, options = {}) {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd || DEFAULT_WORKDIR,
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: true, // own process group so we can kill descendants too
-    });
-    runningChildren.add(child);
-    // A child that exits before reading stdin (e.g. `security` failing early
-    // on a locked keychain, or a command that never reads stdin at all)
-    // breaks the pipe: the end() below then emits EPIPE on the stdin stream,
-    // and without a listener that surfaces as an uncaught 'error' event —
-    // caught only by the app-level handler and logged as a scary stack trace,
-    // or crashing the main process if that handler is ever removed. Swallow
-    // it: the child is gone and the write is pointless.
-    child.stdin.on("error", () => {});
-    child.stdin.end(options.stdin || "");
-
-    let stdout = "";
-    let stderr = "";
-    let stdoutCapped = false;
-    let stderrCapped = false;
-    let settled = false;
-    // Decode UTF-8 incrementally: chunk.toString() alone would garble any
-    // multi-byte character split across two chunks (common with streaming
-    // Codex output, e.g. accented Spanish) into U+FFFD replacement chars.
-    const stdoutDecoder = new StringDecoder("utf8");
-    const stderrDecoder = new StringDecoder("utf8");
-
-    function killProcessGroup(signal) {
-      try {
-        process.kill(-child.pid, signal);
-      } catch {
-        // Process group already gone.
-      }
-    }
-
-    // Armed when the timeout fires: force-kills the group 3s after SIGTERM if
-    // it is still alive. Cancelled once the child actually exits so a dead
-    // group is never SIGKILLed later — a recycled pid could otherwise hit an
-    // unrelated process group.
-    let hardKill = null;
-    function cancelHardKill() {
-      if (hardKill) {
-        clearTimeout(hardKill);
-        hardKill = null;
-      }
-    }
-
-    const timeout = setTimeout(() => {
-      killProcessGroup("SIGTERM");
-      // Give children a moment to exit, then force-kill the whole group.
-      hardKill = setTimeout(() => killProcessGroup("SIGKILL"), 3000);
-      hardKill.unref();
-      // Flush any partial UTF-8 sequence still held by the decoders, same as
-      // the close handler does, so timed-out output is not missing its tail.
-      const tailOut = stdoutDecoder.end();
-      const tailErr = stderrDecoder.end();
-      if (tailOut) stdout = accumulateOutput(stdout, tailOut, MAX_PROCESS_OUTPUT_CHARS).text;
-      if (tailErr) stderr = accumulateOutput(stderr, tailErr, MAX_PROCESS_OUTPUT_CHARS).text;
-      finish({
-        ok: false,
-        code: -2,
-        stdout: stdout.trim(),
-        stderr: `${command} timed out after ${Math.round((options.timeoutMs || 60000) / 1000)} seconds.`,
-      });
-    }, options.timeoutMs || 60000);
-
-    function finish(result) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      let out = result.stdout;
-      let err = result.stderr;
-      // The captured buffer keeps the TAIL (see accumulateOutput), so the
-      // marker goes at the FRONT, before the kept tail — appending it at the
-      // end would put the announcement after the very lines the model needs
-      // (final result, error summary), the same convention truncateOutput uses.
-      if (stdoutCapped && typeof out === "string") out = "...[stdout truncated at 1MB]\n" + out;
-      if (stderrCapped && typeof err === "string") err = "...[stderr truncated at 1MB]\n" + err;
-      resolve({ ...result, stdout: String(out ?? "").trim(), stderr: String(err ?? "").trim() });
-    }
-
-    child.stdout.on("data", (chunk) => {
-      const text = stdoutDecoder.write(chunk);
-      const result = accumulateOutput(stdout, text, MAX_PROCESS_OUTPUT_CHARS);
-      stdout = result.text;
-      stdoutCapped = stdoutCapped || result.capped;
-      // Only stream while the run is still live: once the timeout has settled
-      // the promise, the child may keep emitting until the group is killed
-      // (up to 3s later), and forwarding those late chunks would make the
-      // renderer flush a dead run's tail into the next run's debug log.
-      if (!settled) options.onOutput?.(text);
-    });
-    child.stderr.on("data", (chunk) => {
-      const text = stderrDecoder.write(chunk);
-      const result = accumulateOutput(stderr, text, MAX_PROCESS_OUTPUT_CHARS);
-      stderr = result.text;
-      stderrCapped = stderrCapped || result.capped;
-      if (!settled) options.onOutput?.(text);
-    });
-    child.on("close", (code) => {
-      runningChildren.delete(child);
-      cancelHardKill();
-      // Flush any trailing partial UTF-8 sequence held by the decoders so the
-      // final captured output is never missing its last character.
-      const tailOut = stdoutDecoder.end();
-      const tailErr = stderrDecoder.end();
-      if (tailOut) stdout = accumulateOutput(stdout, tailOut, MAX_PROCESS_OUTPUT_CHARS).text;
-      if (tailErr) stderr = accumulateOutput(stderr, tailErr, MAX_PROCESS_OUTPUT_CHARS).text;
-      finish({ ok: code === 0, code, stdout, stderr });
-    });
-    child.on("error", (error) => {
-      // A failed spawn never emits "close", so drop the tracking entry here.
-      runningChildren.delete(child);
-      cancelHardKill();
-      // spawn() reports a nonexistent cwd as ENOENT with the command in
-      // error.path — the same code a missing binary produces — and runCodex
-      // hands a model-controlled cwd to spawn, so a working directory that
-      // does not exist would otherwise surface as the misleading "codex was
-      // not found on PATH" and make the model (and the user relaying it)
-      // blame the install instead of the path. Check the cwd this spawn
-      // actually used: if it is gone, that is the failure to report. A
-      // missing binary (ENOENT) or a non-executable one (EACCES) stays the
-      // most common first-run failure and keeps its actionable message so
-      // the user knows the command is not installed instead of guessing from
-      // "spawn codex ENOENT".
-      if (error?.code === "ENOENT" && !fs.existsSync(options.cwd || DEFAULT_WORKDIR)) {
-        finish({
-          ok: false,
-          code: -1,
-          stdout,
-          stderr: `The working directory does not exist: ${options.cwd || DEFAULT_WORKDIR}`,
-        });
-        return;
-      }
-      finish({ ok: false, code: -1, stdout, stderr: humanizeSpawnError(command, error) });
-    });
-  });
+  const context = operationContext.getStore();
+  if (context?.signal.aborted) return Promise.resolve({ ok: false, code: -95, stdout: "", stderr: "Session cancelled." });
+  const executable = executablePaths[command];
+  if (!executable) return Promise.resolve({ ok: false, code: -1, stdout: "", stderr: `${command} was not found in trusted executable locations. Set an explicit absolute path in configuration; standalone voice still works.` });
+  return processRunner.run(executable, args, { cwd: DEFAULT_WORKDIR, ...options, env: childEnvironment, signal: context?.signal, onOutput: context ? chunk => context.output(redactSecrets(chunk)) : undefined });
 }
 
 async function readKeychainApiKey() {
-  const result = await runProcess("security", [
-    "find-generic-password",
-    "-s",
-    KEYCHAIN_SERVICE,
-    "-a",
-    KEYCHAIN_ACCOUNT,
-    "-w",
-  ]);
+  // Legacy READ ONLY, once per store load. Never use the generic output/log
+  // channel and never put the API key in argv. No record is deleted or updated.
+  const result = await processRunner.run("/usr/bin/security", ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w"], { timeoutMs: 5000, env: childEnvironment });
   return result.ok ? result.stdout.trim() : "";
-}
-
-// Pass the key via stdin so it never shows up in `ps` output.
-function saveKeychainApiKey(apiKey) {
-  return runProcess(
-    "security",
-    ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w", "-U"],
-    { stdin: apiKey },
-  );
 }
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 460,
+    width: 520,
+    minWidth: 420,
+    minHeight: 540,
     height: 720,
     show: true,
     alwaysOnTop: ALWAYS_ON_TOP,
@@ -404,10 +236,15 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false, // Hiding the panel must not pause active audio/transport.
     },
   });
   // Drop the reference when the window is closed (Cmd+W on macOS) so shortcut
   // handlers never touch a destroyed BrowserWindow.
+  const contents = mainWindow.webContents;
+  contents.once("destroyed", () => operations.destroy(contents));
+  mainWindow.on("hide", () => contents.send("app:visibility", false));
+  mainWindow.on("show", () => contents.send("app:visibility", true));
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
@@ -436,18 +273,8 @@ function toggleWindow() {
 }
 
 async function createRealtimeClientSecret(options = {}) {
-  // The runtime key and the Keychain value are already trimmed at their
-  // sources (set-api-key trims, security -w output is trimmed), but an
-  // OPENAI_API_KEY set in the shell very plausibly carries stray whitespace
-  // (a trailing newline from `export OPENAI_API_KEY=$(cat key.txt)`, a
-  // copy-paste with a surrounding blank line). Handed raw to the
-  // Authorization header, that whitespace makes OpenAI reject a perfectly
-  // good key with a 401. Trim the resolved value once: the trim is a no-op
-  // for the runtime/Keychain paths, and isPlausibleApiKey requires \S+ (no
-  // whitespace), so it can only ever normalize the env path — never weaken a
-  // valid key. A whitespace-only env key also becomes "" here, surfacing the
-  // clean "Add an OpenAI API key..." message instead of a confusing 401.
-  const apiKey = (runtimeApiKey || (await readKeychainApiKey()) || process.env.OPENAI_API_KEY || "").trim();
+  const apiKey = await credentials.resolveKey();
+  operationContext.getStore()?.signal.throwIfAborted();
   if (!apiKey) throw new Error("Add an OpenAI API key in the app or set OPENAI_API_KEY before starting.");
 
   const mode = ["assistant", "translate", "transcribe"].includes(options.mode) ? options.mode : "assistant";
@@ -476,7 +303,7 @@ async function createAssistantClientSecret(apiKey, options = {}) {
           transcription: { model: DEFAULT_TRANSCRIBE_MODEL },
           noise_reduction: { type: "near_field" },
         },
-        output: { voice: DEFAULT_VOICE },
+        output: { voice: normalizeVoice(options.voice, DEFAULT_VOICE) },
       },
       tools: assistantTools(),
       tool_choice: "auto",
@@ -485,7 +312,7 @@ async function createAssistantClientSecret(apiKey, options = {}) {
 
   let response = await postOpenAIJson(apiKey, "https://api.openai.com/v1/realtime/client_secrets", body);
   if (!response.ok) {
-    const message = await response.text();
+    const message = redactSecrets(await response.text());
     if (response.status === 400 && message.toLowerCase().includes("reasoning")) {
       delete body.session.reasoning;
       response = await postOpenAIJson(apiKey, "https://api.openai.com/v1/realtime/client_secrets", body);
@@ -493,7 +320,7 @@ async function createAssistantClientSecret(apiKey, options = {}) {
       throw new Error(`OpenAI Realtime token failed: ${response.status} ${message}`);
     }
   }
-  if (!response.ok) throw new Error(`OpenAI Realtime token failed: ${response.status} ${await response.text()}`);
+  if (!response.ok) throw new Error(`OpenAI Realtime token failed: ${response.status} ${redactSecrets(await response.text())}`);
 
   return normalizeRealtimeToken(await response.json(), {
     mode: "assistant",
@@ -503,7 +330,7 @@ async function createAssistantClientSecret(apiKey, options = {}) {
 }
 
 async function createTranslationClientSecret(apiKey, options = {}) {
-  const targetLanguage = options.targetLanguage || DEFAULT_TARGET_LANGUAGE;
+  const targetLanguage = normalizeTargetLanguage(options.targetLanguage, DEFAULT_TARGET_LANGUAGE);
   const body = {
     session: {
       model: DEFAULT_TRANSLATE_MODEL,
@@ -518,7 +345,7 @@ async function createTranslationClientSecret(apiKey, options = {}) {
   };
   const response = await postOpenAIJson(apiKey, "https://api.openai.com/v1/realtime/translations/client_secrets", body);
   if (!response.ok) {
-    throw new Error(`OpenAI Realtime translation token failed: ${response.status} ${await response.text()}`);
+    throw new Error(`OpenAI Realtime translation token failed: ${response.status} ${redactSecrets(await response.text())}`);
   }
   return normalizeRealtimeToken(await response.json(), {
     mode: "translate",
@@ -533,7 +360,8 @@ async function createTranscriptionClientSecret(apiKey, options = {}) {
     model: DEFAULT_TRANSCRIBE_MODEL,
     prompt: "Codex, CUA Driver, OpenAI Realtime, macOS app control, Spanish and English technical vocabulary.",
   };
-  if (options.sourceLanguage) transcription.language = options.sourceLanguage;
+  const sourceLanguage = normalizeTargetLanguage(options.sourceLanguage, "");
+  if (sourceLanguage) transcription.language = sourceLanguage;
 
   const body = {
     session: {
@@ -549,7 +377,7 @@ async function createTranscriptionClientSecret(apiKey, options = {}) {
   };
   const response = await postOpenAIJson(apiKey, "https://api.openai.com/v1/realtime/client_secrets", body);
   if (!response.ok) {
-    throw new Error(`OpenAI Realtime transcription token failed: ${response.status} ${await response.text()}`);
+    throw new Error(`OpenAI Realtime transcription token failed: ${response.status} ${redactSecrets(await response.text())}`);
   }
   return normalizeRealtimeToken(await response.json(), {
     mode: "transcribe",
@@ -559,23 +387,7 @@ async function createTranscriptionClientSecret(apiKey, options = {}) {
 }
 
 function postOpenAIJson(apiKey, url, body) {
-  return fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "OpenAI-Safety-Identifier": SAFETY_ID,
-    },
-    body: JSON.stringify(body),
-    // Never let a hung network call leave the Connect flow (and the IPC
-    // handler behind it) pending forever.
-    signal: AbortSignal.timeout(OPENAI_REQUEST_TIMEOUT_MS),
-  }).catch((error) => {
-    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
-      throw new Error(`OpenAI request timed out after ${OPENAI_REQUEST_TIMEOUT_MS / 1000}s: ${url}`);
-    }
-    throw error;
-  });
+  return requestOpenAIJson({ apiKey, url, body, safetyId: SAFETY_ID, timeoutMs: OPENAI_REQUEST_TIMEOUT_MS, signal: operationContext.getStore()?.signal });
 }
 
 function normalizeRealtimeToken(payload, meta) {
@@ -698,13 +510,6 @@ function runCodex(input) {
   return runProcess("codex", ["exec", "--cd", workdir, "--sandbox", "read-only", "--skip-git-repo-check", "--", prompt], {
     cwd: workdir,
     timeoutMs: CODEX_TIMEOUT_MS,
-    // A run can outlive the window (Cmd+W while Codex streams output): sending
-    // to a destroyed webContents throws "Object has been destroyed", so guard
-    // the same way toggleWindow/second-instance/activate do instead of relying
-    // on the optional chain alone (mainWindow is only nulled on "closed").
-    onOutput: (chunk) => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("codex-output", chunk);
-    },
   });
 }
 
@@ -736,6 +541,8 @@ function runCuaDriver(input = {}) {
   if (CUA_BLOCKED_TOOLS.has(toolName)) {
     return Promise.resolve({ ok: false, code: -3, stdout: "", stderr: `Blocked cua-driver tool for safety: ${toolName}.` });
   }
+  const registryError = validateCuaRegistry(toolName, input?.json_args);
+  if (registryError) return Promise.resolve({ ok: false, code: -4, stdout: "", stderr: registryError });
   // The serialized args blob becomes a single argv entry (~256 KiB cap on
   // macOS, ARG_MAX 1 MiB for the whole block), so an unbounded json_args from
   // the model would make spawn() fail with E2BIG — reject it cleanly like the
@@ -789,11 +596,6 @@ function runCuaDriver(input = {}) {
   const args = ["call", toolName, argsBlob, "--compact"];
   return runProcess("cua-driver", args, {
     timeoutMs: CUA_TIMEOUT_MS,
-    // Same destroyed-window guard as runCodex: a cua-driver call streaming
-    // output while the window is closing must not throw on webContents.send.
-    onOutput: (chunk) => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("codex-output", chunk);
-    },
   });
 }
 
@@ -1067,7 +869,7 @@ function activateApp(appIdentity) {
 // (e.g. /tmp/src/renderer.html) masquerade as the trusted renderer.
 const RENDERER_URL = pathToFileURL(path.join(__dirname, "renderer.html")).href;
 function isTrustedSender(event) {
-  return event.senderFrame?.url === RENDERER_URL;
+  return event.senderFrame?.url === RENDERER_URL && event.senderFrame === event.sender.mainFrame;
 }
 
 function guard(handler) {
@@ -1096,6 +898,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    credentials = createCredentialStore({ userData: app.getPath("userData"), safeStorage, readLegacy: readKeychainApiKey, envKey: process.env.OPENAI_API_KEY, development: !app.isPackaged, platform: process.platform });
     // The interview mode's "Capture meeting audio" option calls
     // navigator.mediaDevices.getDisplayMedia() in the renderer; Electron
     // denies that request unless the main process registers a display-media
@@ -1160,46 +963,35 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("will-quit", () => {
+let shutdownStarted = false;
+let shutdownFinished = false;
+app.on("before-quit", event => {
+  if (shutdownFinished) return;
+  event.preventDefault();
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  operations.dispose();
   globalShortcut.unregisterAll();
-  // Terminate any still-running child process groups (e.g. a long Codex run)
-  // so nothing keeps executing after the app exits.
-  for (const child of runningChildren) {
-    try {
-      process.kill(-child.pid, "SIGTERM");
-    } catch {
-      // Process group already gone.
-    }
-  }
+  // A native Keychain prompt may remain unanswered. Wait for owned process
+  // cleanup, but never hold app shutdown indefinitely on a credential write.
+  const finishShutdown = () => { if (shutdownFinished) return; shutdownFinished = true; app.quit(); };
+  const shutdownDeadline = setTimeout(finishShutdown, 5000);
+  Promise.allSettled([processRunner.close(), logger.close(), credentials?.settled()]).then(() => {
+    clearTimeout(shutdownDeadline);
+    finishShutdown();
+  });
 });
 
-ipcMain.handle("realtime:create-client-secret", guard((_event, options) => createRealtimeClientSecret(options)));
-ipcMain.handle("realtime:set-api-key", guard(async (_event, apiKey) => {
-  runtimeApiKey = String(apiKey || "").trim();
-  // Require the sk- prefix and no whitespace/control characters; be permissive
-  // about the payload so exotic-but-valid key formats are not rejected.
-  if (!isPlausibleApiKey(runtimeApiKey)) {
-    runtimeApiKey = "";
-    return { ok: false, error: "The API key format does not look valid." };
-  }
-  const saved = await saveKeychainApiKey(runtimeApiKey);
-  // The key still works for this session even if the Keychain write failed
-  // (e.g. locked keychain); report the save status but do not block use.
-  if (!saved.ok) writeLog("keychain save failed", { error: saved.stderr });
-  return { ok: true, saved: saved.ok, error: saved.stderr };
-}));
-ipcMain.handle("realtime:key-status", guard(async () => ({
-  // A whitespace-only OPENAI_API_KEY is not a usable key (createRealtimeClientSecret
-  // trims and would see ""), so it must not count as a key here either —
-  // otherwise the input field stays hidden behind an env key that can never
-  // authenticate and the user has no way to enter a real one.
-  hasEnvKey: Boolean(process.env.OPENAI_API_KEY?.trim()),
-  hasSavedKey: Boolean(await readKeychainApiKey()),
-  hasRuntimeKey: Boolean(runtimeApiKey),
-})));
-ipcMain.handle("codex:run", guard((_event, input) => runCodex(input)));
-ipcMain.handle("cua:run", guard((_event, input) => runCuaDriver(input)));
-ipcMain.handle("mac:run", guard((_event, input) => runMacAction(input)));
+const scoped = (handler, queued = false) => guard((event, input) => operations.run(event.sender, input, context => operationContext.run(context, () => handler(input)), { queued }));
+ipcMain.handle("session:begin", guard((event, input) => operations.begin(event.sender, input?.sessionId)));
+ipcMain.handle("session:cancel", guard((event, input) => operations.cancel(event.sender, input?.sessionId)));
+ipcMain.handle("app:capabilities", guard(() => capabilitySnapshot({ systemPreferences, codex: executablePaths.codex, cua: executablePaths["cua-driver"] })));
+ipcMain.handle("realtime:create-client-secret", scoped(options => createRealtimeClientSecret(options)));
+ipcMain.handle("realtime:set-api-key", guard((_event, apiKey) => credentials.setKey(apiKey)));
+ipcMain.handle("realtime:key-status", guard(() => credentials.status()));
+ipcMain.handle("codex:run", scoped(input => runCodex(input), true));
+ipcMain.handle("cua:run", scoped(input => runCuaDriver(input), true));
+ipcMain.handle("mac:run", scoped(input => runMacAction(input), true));
 ipcMain.handle("log:renderer", guard((_event, message, data) => {
   writeLog(`renderer:${message}`, data);
   return { ok: true };

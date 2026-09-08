@@ -17,7 +17,7 @@
 
 **Local macOS voice layer for OpenAI Realtime, Codex CLI, CUA Driver, and live interview translation.**
 
-Talk to your Mac. It listens, speaks, inspects your code with Codex CLI, operates your apps through CUA Driver, and translates English interviews in real time — all locally, with your own OpenAI API key.
+Talk to your Mac. It listens, speaks, inspects your code with Codex CLI, operates your apps through CUA Driver, and translates English interviews in real time — in a local desktop app, with your own OpenAI API key. Audio and selected tool output are sent to OpenAI; inference is not on-device.
 
 > Named after Samantha — the AI from *Her*. The assistant speaks through OpenAI Realtime with reasoning, tool calls, and a voice you can choose.
 
@@ -42,10 +42,10 @@ Talk to your Mac. It listens, speaks, inspects your code with Codex CLI, operate
 
 ### Privacy & security first
 
-- API key stored in **macOS Keychain** (`codex-voice-bridge.openai-api-key`) — never in source files
+- API key encrypted by **Electron async safeStorage**, with its encryption key protected by macOS Keychain; only ciphertext is written to the app data directory
 - Codex CLI runs in a **read-only sandbox** by default
 - CUA Driver tools are intentionally limited; unsafe tools are blocked
-- Logs stay local at `~/Library/Logs/codex-voice-bridge/bridge.log` and rotate at 2 MB (`bridge.log.1`)
+- Logs stay local at `~/Library/Logs/codex-voice-bridge/bridge.log` and rotate at 2 MiB (`bridge.log.1`); development uses `bridge-dev.log`
 
 ---
 
@@ -54,11 +54,12 @@ Talk to your Mac. It listens, speaks, inspects your code with Codex CLI, operate
 ```bash
 git clone https://github.com/mitre88/codex-voice-bridge.git
 cd codex-voice-bridge
-npm install
+nvm use  # Node 24 (or activate Node 24 with your preferred manager)
+npm ci
 npm start
 ```
 
-On first launch, paste your OpenAI API key into the app. It is saved to Keychain and the field disappears on future launches.
+On first launch, paste your OpenAI API key into the app. A successful save is encrypted, read back, decrypted and compared before atomic replacement. If secure storage is locked or fails, the key remains usable in memory for this launch and a visible warning explains that it was **not saved**. Use **Change key** for an explicit replacement. Development and packaged builds use separate credential directories.
 
 You can also provide the key via environment:
 
@@ -69,12 +70,12 @@ npm start
 
 ## Requirements
 
-- macOS
-- Node.js 20+
+- macOS **13 or later**, Apple Silicon or Intel (separate arm64/x64 packages)
+- Node.js **24** recommended for development; CI covers 22, 24 and 26
 - npm
 - An OpenAI API key with Realtime API access
-- Codex CLI installed and authenticated — for local coding-agent actions
-- CUA Driver installed with Accessibility + Screen Recording granted — for app control
+- Optional: Codex CLI installed and authenticated — only for local coding-agent actions
+- Optional: CUA Driver with the permissions needed for its requested action — only for app control; diagnostics never force a permission prompt
 - Optional but recommended for Interview mode: **BlackHole 2ch** or **Loopback** for virtual audio routing
 
 ## Configuration
@@ -89,6 +90,9 @@ export OPENAI_REALTIME_VOICE="marin"                        # assistant voice
 export OPENAI_REALTIME_TONE="calm"                          # calm | direct | energetic
 export OPENAI_REALTIME_REASONING_EFFORT="low"               # low | minimal | medium | high | xhigh
 export OPENAI_REALTIME_TARGET_LANGUAGE="es"                 # es en fr de pt ja ko zh
+# Optional absolute executable overrides (no login shell is evaluated):
+export CODEX_VOICE_CODEX_PATH="/absolute/path/to/codex"
+export CODEX_VOICE_CUA_DRIVER_PATH="/absolute/path/to/cua-driver"
 export CODEX_VOICE_WORKDIR="/path/to/your/workspace"
 export CODEX_VOICE_SHORTCUT="CommandOrControl+Shift+Space"   # global toggle shortcut
 export CODEX_VOICE_TIMEOUT_MS="120000"                       # codex CLI timeout
@@ -117,12 +121,14 @@ Bidirectional live interpreter for English job interviews. Recommended setup:
 2. Install BlackHole 2ch or Loopback.
 3. In the app, choose `Interview`.
 4. Set `Your mic` to your real microphone.
-5. Set `Their audio` to `Capture meeting audio` and choose the meeting window or screen when prompted.
-6. Set `Spanish to me` to your headphones/default output.
-7. Set `English to call` to `BlackHole 2ch`.
+5. Set **Route 1 · Their English input** to an audio input device, or choose `Capture meeting audio` on a compatible OS. On macOS 13/14, use a virtual audio input; native meeting-audio capture depends on OS/runtime support and permissions.
+6. Set **Route 1 · Spanish to your ears** to your headphones/default output.
+7. Set **Route 2 · Your Spanish → English to call** to `BlackHole 2ch`.
 8. In Zoom, Google Meet, Teams, or the interview app, select `BlackHole 2ch` as your microphone.
 
-Without a virtual audio device, the English translation can still play through your speakers, but the meeting will only hear it if your microphone picks up the speaker output.
+Both routes are prepared together and become active only when both peers and data channels are ready. A failed route rolls back both. A missing or rejected selected output never silently falls back to speakers; choose **Default output** explicitly if that is what you want. Without a virtual audio device the meeting cannot receive a digital English route. Speaker fallback can create feedback and compromise privacy.
+
+**Cancel** immediately releases acquired tracks and peers, drops queued actions, and stops any later media grant before use. macOS may leave a permission prompt or picker open: the Web media APIs do not support cancelling that OS prompt. Disconnection, ended tracks and failed channels require an explicit **Retry**; the app never reopens the microphone automatically.
 
 ### Live Translate
 
@@ -142,28 +148,34 @@ Install CUA Driver, grant Accessibility + Screen Recording, then verify:
 npm run smoke:cua
 ```
 
-The app expects the `cua-driver` command to be available in your `PATH`.
+The app searches validated trusted executable locations (including Homebrew and `~/.local/bin`), not arbitrary login-shell startup files. Use the absolute overrides above for other installations. Open **Advanced & diagnostics** to check microphone/accessibility state and optional executable availability. Finding an executable does not prove authentication or driver readiness. Missing Codex/CUA never blocks standalone voice.
+
+The positive CUA registry is `list_apps`, `launch_app`, `type_text_chars`, `press_key`, and `check_permissions` with `forceprompt: false`. Unknown names and unapproved arguments are refused in the main process. Local actions require approval by default; auto-run is an explicit opt-in.
 
 ## Development
 
 ```bash
-npm install
+npm ci
 npm run check     # syntax check for all source files
 npm run lint      # ESLint
-npm test          # unit tests (node:test)
-npm run smoke:cua # CUA Driver connectivity check (requires CUA Driver)
-npm start
+npm test          # injected behavior tests + existing regressions (node:test)
+npm run test:ui   # isolated Electron harness, fake media/IPC, no real key or API
+npm run build:smoke # unsigned arm64 directory package; does not launch the app
+# npm run smoke:cua and npm start access real local capabilities: run manually only.
 ```
 
-CI on `main` runs `npm ci`, `npm run lint`, `npm test`, and `npm run check` on Node 20.
+CI checks Node 22/24/26 and runs isolated UI + unsigned directory packaging on `macos-15` (arm64) and `macos-15-intel` (x64). These jobs are configured, not evidence of a completed CI run. They do not establish macOS 13 acceptance. See [verification](docs/VERIFICATION.md) for safe commands and outstanding manual gates.
 
 ---
 
 ## Security notes
 
 - Never commit `.env` files or real API keys.
-- API keys pasted into the app are stored in macOS Keychain under `codex-voice-bridge.openai-api-key`.
-- Logs are written to `~/Library/Logs/codex-voice-bridge/bridge.log` and rotate at 2 MB.
+- Credentials use `app.getPath("userData")/credentials/openai-api-key.v1.enc` (development: `credentials-dev`), directory mode 0700/file mode 0600. The app ID, product name and user-data identity are unchanged.
+- Key precedence: entered runtime key → encrypted saved key → valid legacy record **only when the ciphertext file is absent** → environment. An unreadable existing file never resurrects a stale legacy key. Environment keys are never automatically persisted; a 401 never cycles credentials.
+- The old `codex-voice-bridge.openai-api-key` generic-password record is read at most once per packaged launch and migrated only through a verified encrypted save. Invalid values, including the historical literal `-U`, are ignored. The old record is never modified or deleted automatically. Development does not read production legacy records.
+- Stable code signing is required for reliable Keychain identity across releases. Unsigned development packages cannot prove upgrade/migration acceptance.
+- Logs are written to `~/Library/Logs/codex-voice-bridge/bridge.log` and rotate at 2 MiB with one backup. A 2 MiB logger queue bounds backpressure; dropped entries are counted and marked.
 - Tool calls are intentionally limited; some CUA Driver tools are blocked for safety.
 - Codex CLI runs with a read-only sandbox by default.
 
@@ -172,7 +184,16 @@ CI on `main` runs `npm ci`, `npm run lint`, `npm test`, and `npm run check` on N
 ```
 codex-voice-bridge/
 ├── src/
-│   ├── main.js          # Electron main process — Realtime session, tools, Keychain
+│   ├── main.js          # Electron composition, guarded IPC and tools
+│   ├── credentials.js   # Async verified ciphertext storage
+│   ├── operations.js    # Session/request/webContents ownership and action queue
+│   ├── process-runner.js# Owned process groups and 1048576-character output tails
+│   ├── session-controller.js # Injectable media/peer/data-channel lifecycle
+│   ├── logger.js        # Byte-bounded asynchronous log writer
+│   ├── tail-buffer.js   # Character-bounded chunk accumulator
+│   ├── visible-renderer.js # Frame-coalesced visible DOM updates
+│   ├── capabilities.js  # Trusted executable resolution, no prompting
+│   ├── openai-request.js# Cancellable token HTTP boundary
 │   ├── preload.cjs      # Context bridge (secure IPC)
 │   ├── renderer.html    # UI — modes, voices, tones, reasoning, languages
 │   ├── renderer.js      # UI logic — WebRTC, audio routing, mode switching
@@ -195,7 +216,7 @@ codex-voice-bridge/
 ## Roadmap
 
 - [ ] Demo video + walkthrough
-- [ ] More assistant voices and tones
+- [x] Validated assistant voice selector, locked while active
 - [ ] Custom tool registration for user projects
 - [ ] Windows/Linux support (audio routing differs)
 - [ ] Multi-language interview mode
@@ -206,7 +227,7 @@ codex-voice-bridge/
 
 **Which models does it use?** `gpt-realtime-2` (assistant), `gpt-realtime-translate` (translation), `gpt-realtime-whisper` (captions). All configurable via environment variables.
 
-**Is my API key safe?** Yes — it is stored in macOS Keychain, never in the repository or log files.
+**How is my API key protected?** Only encrypted bytes are saved; macOS Keychain protects the encryption key. Secure-save failures are visible and retain no plaintext fallback. This does not protect against a compromised signed app, administrator-level access, or sharing a key in a prompt. See [Security](SECURITY.md).
 
 **Can it control any app?** It operates apps through CUA Driver with a curated tool allowlist. High-risk tools are blocked.
 

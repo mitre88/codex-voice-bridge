@@ -1701,3 +1701,5 @@ test("requireTypeableLength rejects texts that cannot fit the typing budget", ()
   assert.equal(requireTypeableLength(1000, 1000), null);
   assert.match(requireTypeableLength(1001, 1000), /max 1000 characters/);
 });
+
+test("API-key validator rejects unredactable punctuation and control characters",()=>{for(const value of ["sk-abc\u0000def","sk-abc\u007fdef","sk-abc/def",'sk-abc"def'])assert.equal(isPlausibleApiKey(value),false);});

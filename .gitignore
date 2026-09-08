@@ -17,3 +17,8 @@ coverage/
 *.p12
 *.mobileprovision
 *.xcuserstate
+
+.cache/
+.artifacts/
+test-results/
+playwright-report/

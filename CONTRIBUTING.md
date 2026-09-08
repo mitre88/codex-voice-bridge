@@ -12,6 +12,7 @@ Thanks for improving Codex Voice Bridge.
 npm run check
 npm run lint
 npm test
+npm run test:ui # isolated mock Electron harness; no keys, network or microphone
 ```
 
 4. If your change touches CUA Driver integration and you have it installed:
@@ -33,3 +34,5 @@ npm run smoke:cua
 - Do not make destructive macOS actions automatic.
 - Prefer small, reviewable PRs.
 
+
+Use Node 24 (`.nvmrc`). Run source-mutating formatters before final verification. Keep both existing regression contracts and injected behavioral proof when extracting modules; do not delete old checks just to force a pass. CI covers Node 22/24/26, but minimum-OS, native Intel, signed credential upgrade and real audio-routing acceptance still require separate explicit manual runs. See [verification](docs/VERIFICATION.md).

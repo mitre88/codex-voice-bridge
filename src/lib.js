@@ -706,10 +706,10 @@ export function requireNoNullBytes(value, label) {
 }
 
 // OpenAI keys start with "sk-" and contain no whitespace or control characters.
-// Be permissive about the payload (exotic-but-valid formats are not rejected),
-// but refuse anything that is obviously not a key.
+// Accept the known key alphabet, rejecting punctuation/control characters that
+// cannot be redacted safely by the log boundary.
 export function isPlausibleApiKey(value) {
-  return typeof value === "string" && /^sk-\S+$/.test(value);
+  return typeof value === "string" && /^sk-[A-Za-z0-9_.-]+$/.test(value);
 }
 
 export function redactSecrets(value) {
@@ -981,4 +981,31 @@ export function rotateLogIfNeeded(fsLike, logFile, maxBytes = LOG_MAX_BYTES) {
     // First run or file missing: nothing to rotate.
   }
   return false;
+}
+
+// Realtime voice allowlist, shared by configuration, API payload and UI.
+export const REALTIME_VOICES = ["marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"];
+export function normalizeVoice(value, fallback = "marin") {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return REALTIME_VOICES.includes(normalized) ? normalized : fallback;
+}
+
+// Positive main-process registry: model instructions are not authorization.
+const CUA_REGISTRY = {
+  list_apps: [],
+  launch_app: ["name", "app_name", "bundle_id", "url", "urls"],
+  type_text_chars: ["pid", "text", "delay_ms"],
+  press_key: ["pid", "key", "modifiers"],
+  check_permissions: ["forceprompt"],
+};
+export function validateCuaRegistry(tool, args = {}) {
+  if (!Object.hasOwn(CUA_REGISTRY, tool)) return `Unknown cua-driver tool: ${tool}.`;
+  if (!args || typeof args !== "object" || Array.isArray(args)) return "json_args must be an object.";
+  const unknown = Object.keys(args).find(key => !CUA_REGISTRY[tool].includes(key));
+  if (unknown) return `Unsupported ${tool} argument: ${unknown}.`;
+  if (tool === "check_permissions" && args.forceprompt !== false) return "Permission diagnostics require forceprompt: false; prompting is not allowed.";
+  if (tool === "launch_app" && !isSafeCuaLaunchArgs(args)) return "Rejected unsafe launch_app arguments.";
+  if (tool === "type_text_chars" && args.delay_ms !== undefined && (!Number.isFinite(args.delay_ms) || args.delay_ms <= 0 || args.delay_ms > 1000)) return "delay_ms must be a positive number up to 1000.";
+  if (tool === "press_key" && args.modifiers !== undefined && typeof args.modifiers !== "string" && (!Array.isArray(args.modifiers) || args.modifiers.some(value => typeof value !== "string"))) return "modifiers must contain only strings.";
+  return null;
 }
